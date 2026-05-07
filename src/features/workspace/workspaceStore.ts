@@ -54,6 +54,24 @@ type WorkspaceState = {
   clearError: () => void;
 };
 
+const LAST_ACTIVE_COLLECTION_KEY = "conductor:lastActiveCollectionId";
+
+function readLastActiveCollectionId() {
+  try {
+    return window.localStorage.getItem(LAST_ACTIVE_COLLECTION_KEY) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeLastActiveCollectionId(collectionId: string) {
+  try {
+    window.localStorage.setItem(LAST_ACTIVE_COLLECTION_KEY, collectionId);
+  } catch {
+    // Ignore storage failures so selection still works in restricted environments.
+  }
+}
+
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   collections: [],
   tree: [],
@@ -68,7 +86,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     try {
       const collections = await api.listCollections();
       set({ collections, loading: false });
-      const current = get().activeCollectionId ?? collections[0]?.id;
+      const preferredCollectionId =
+        get().activeCollectionId ?? readLastActiveCollectionId();
+      const current = collections.some(
+        (collection) => collection.id === preferredCollectionId,
+      )
+        ? preferredCollectionId
+        : collections[0]?.id;
       if (current) {
         await get().selectCollection(current);
       }
@@ -94,6 +118,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         resolvedPreview: undefined,
         loading: false,
       });
+      writeLastActiveCollectionId(collectionId);
     } catch (error) {
       set({ error: String(error), loading: false });
     }
@@ -113,6 +138,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         resolvedPreview: undefined,
         loading: false,
       });
+      writeLastActiveCollectionId(collectionId);
     } catch (error) {
       set({ error: String(error), loading: false });
     }

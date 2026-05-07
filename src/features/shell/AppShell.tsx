@@ -31,11 +31,7 @@ export function AppShell() {
           <div className="truncate text-sm font-medium tracking-[-0.01em]">
             Conductor
           </div>
-          <div className="hidden text-xs text-muted-foreground sm:block">
-            Fast API workspace
-          </div>
         </div>
-        <div className="text-xs text-muted-foreground">⌘B sidebar · ⌘↵ send</div>
       </div>
 
       {error ? (
