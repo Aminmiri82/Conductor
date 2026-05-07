@@ -28,4 +28,4 @@ thiserror = "2.0.18"
 uuid = { version = "1.23.1", features = ["v4", "serde"] }
 chrono = { version = "0.4.44", features = ["serde"] }
 directories = "6.0.0"
-
+rusqlite = { version = "0.32.1", features = ["bundled", "chrono", "uuid"] }
