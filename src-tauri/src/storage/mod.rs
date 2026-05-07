@@ -32,6 +32,8 @@ pub enum StorageError {
     ConnectionPoisoned,
     #[error("sqlite operation failed: {0}")]
     Sqlite(#[from] rusqlite::Error),
+    #[error("cannot move a folder into itself or one of its descendants")]
+    InvalidTreeMove,
 }
 
 #[derive(Debug, Serialize)]
@@ -66,6 +68,14 @@ impl Database {
             collection_count,
             request_count,
         })
+    }
+
+    pub fn with_connection<T>(
+        &self,
+        operation: impl FnOnce(&mut Connection) -> Result<T, StorageError>,
+    ) -> Result<T, StorageError> {
+        let mut connection = self.connection()?;
+        operation(&mut connection)
     }
 
     fn connection(&self) -> Result<std::sync::MutexGuard<'_, Connection>, StorageError> {

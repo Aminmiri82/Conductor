@@ -1,0 +1,104 @@
+export type KeyValue = {
+  key: string;
+  value: string;
+  enabled: boolean;
+};
+
+export type BodyField = KeyValue & {
+  fieldType: "text" | "file" | string;
+  filePath?: string | null;
+};
+
+export type RequestBody = {
+  mode: "none" | "raw" | "formdata" | "urlencoded" | string;
+  raw: string;
+  rawLanguage?: string | null;
+  formData: BodyField[];
+  urlencoded: KeyValue[];
+};
+
+export type AuthConfig = {
+  authType: "inherit" | "noauth" | "bearer" | "basic" | "apikey" | string;
+  token?: string | null;
+  username?: string | null;
+  password?: string | null;
+  key?: string | null;
+  value?: string | null;
+  addTo?: string | null;
+};
+
+export type RequestDetail = {
+  id: string;
+  collectionId: string;
+  name: string;
+  method: string;
+  url: string;
+  headers: KeyValue[];
+  query: KeyValue[];
+  pathParams: KeyValue[];
+  auth?: AuthConfig | null;
+  inheritedAuth?: AuthConfig | null;
+  effectiveAuth?: AuthConfig | null;
+  body?: RequestBody | null;
+  preRequestScript?: unknown;
+  testScript?: unknown;
+  updatedAt: string;
+};
+
+export type CollectionSummary = {
+  id: string;
+  name: string;
+  source: string;
+  updatedAt: string;
+};
+
+export type CollectionNode = {
+  id: string;
+  collectionId: string;
+  parentId?: string | null;
+  position: number;
+  kind: "folder" | "request";
+  name: string;
+  requestId?: string | null;
+  method?: string | null;
+  children: CollectionNode[];
+};
+
+export type VariableEntry = {
+  scopeKind: string;
+  scopeId: string;
+  key: string;
+  value: string;
+  enabled: boolean;
+  sensitive: boolean;
+};
+
+export type UnresolvedVariable = {
+  key: string;
+  locations: string[];
+};
+
+export type ResponseHeader = {
+  key: string;
+  value: string;
+};
+
+export type ResolvedRequestPreview = {
+  url: string;
+  headers: KeyValue[];
+  query: KeyValue[];
+  body?: RequestBody | null;
+  unresolvedVariables: UnresolvedVariable[];
+};
+
+export type SendRequestResult = {
+  historyId: string;
+  statusCode: number;
+  statusText: string;
+  durationMs: number;
+  headers: ResponseHeader[];
+  bodyText: string;
+  bodyJson?: unknown;
+  updatedVariables: KeyValue[];
+  unresolvedVariables: UnresolvedVariable[];
+};
