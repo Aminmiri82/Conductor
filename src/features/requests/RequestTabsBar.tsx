@@ -1,4 +1,5 @@
 import { Circle, X } from "lucide-react";
+import type { CSSProperties } from "react";
 import { cn } from "@/lib/utils";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 
@@ -13,26 +14,31 @@ export function RequestTabsBar() {
   }
 
   return (
-    <div className="flex h-9 min-w-0 items-end overflow-x-auto border-b border-border/70 bg-[#111014] px-2">
+    <div className="app-scroll flex h-10 min-w-0 items-end overflow-x-auto border-b border-[var(--app-line)] bg-[var(--app-panel)]">
       {tabs.map((tab) => {
         const active = tab.requestId === activeRequestId;
+        const colors = methodColor(tab.method);
         return (
           <button
             key={tab.requestId}
             className={cn(
-              "group flex h-8 min-w-36 max-w-56 items-center gap-2 border-r border-border/50 px-3 text-left text-xs text-muted-foreground hover:bg-[#191820] hover:text-foreground",
+              "group relative flex h-9 min-w-36 max-w-60 items-center gap-2 border-r border-[var(--app-line)] px-3 text-left text-xs text-[var(--app-dim)] hover:bg-[var(--app-panel-2)] hover:text-[var(--app-text)]",
               active &&
-                "border-t border-t-violet-400/80 bg-[#17161d] text-foreground",
+                "bg-[var(--app-panel-2)] text-[var(--app-text)]",
             )}
+            style={{ textTransform: "var(--app-tab-transform)" }}
             onClick={() => void selectRequest(tab.requestId)}
           >
-            <span className="font-mono text-[10px] text-violet-300/80">
+            {active ? (
+              <span className="absolute inset-x-0 top-0 h-0.5 bg-[var(--app-accent)]" />
+            ) : null}
+            <span className="app-mono text-[10px] font-bold" style={colors}>
               {tab.method}
             </span>
             <span className="min-w-0 flex-1 truncate">{tab.name}</span>
             <span className="relative grid size-4 shrink-0 place-items-center rounded hover:bg-accent">
               {tab.dirty ? (
-                <Circle className="size-2.5 fill-violet-300 text-violet-300 group-hover:opacity-0" />
+                <Circle className="size-2.5 fill-[var(--app-accent)] text-[var(--app-accent)] group-hover:opacity-0" />
               ) : null}
               <X
                 className={cn(
@@ -50,4 +56,23 @@ export function RequestTabsBar() {
       })}
     </div>
   );
+}
+
+function methodColor(method: string): CSSProperties {
+  const normalized = method.toUpperCase();
+  const map: Record<string, { color: string; backgroundColor: string }> = {
+    GET: { color: "var(--app-get)", backgroundColor: "var(--app-get-bg)" },
+    POST: { color: "var(--app-post)", backgroundColor: "var(--app-post-bg)" },
+    PUT: { color: "var(--app-put)", backgroundColor: "var(--app-put-bg)" },
+    DELETE: {
+      color: "var(--app-delete)",
+      backgroundColor: "var(--app-delete-bg)",
+    },
+    PATCH: { color: "var(--app-patch)", backgroundColor: "var(--app-patch-bg)" },
+  };
+  return {
+    ...(map[normalized] ?? { color: "var(--app-text)", backgroundColor: "transparent" }),
+    borderRadius: "var(--app-radius)",
+    padding: "2px 5px",
+  };
 }

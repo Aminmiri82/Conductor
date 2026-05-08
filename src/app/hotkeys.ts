@@ -86,12 +86,18 @@ export function useAppHotkeys() {
         event.preventDefault();
         performAction("focus-url");
       }
+      if (key === ",") {
+        event.preventDefault();
+        window.dispatchEvent(new Event("conductor:open-settings"));
+      }
     }
 
     window.addEventListener("keydown", onKeyDown);
-    const unlisten = listen<AppMenuAction>("app-menu-action", (event) => {
-      performAction(event.payload);
-    });
+    const unlisten = isTauriRuntime()
+      ? listen<AppMenuAction>("app-menu-action", (event) => {
+          performAction(event.payload);
+        })
+      : Promise.resolve(() => undefined);
 
     return () => {
       window.removeEventListener("keydown", onKeyDown);
@@ -107,6 +113,10 @@ export function useAppHotkeys() {
     toggleSidebar,
     tree,
   ]);
+}
+
+function isTauriRuntime() {
+  return "__TAURI_INTERNALS__" in window;
 }
 
 function findRequestNode(

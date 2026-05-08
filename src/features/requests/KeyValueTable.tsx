@@ -21,8 +21,14 @@ export function KeyValueTable({
   }
 
   return (
-    <div className="overflow-hidden rounded-md border border-border/70">
-      <div className="grid h-8 grid-cols-[34px_minmax(120px,0.8fr)_minmax(160px,1.2fr)_34px] items-center border-b border-border/70 bg-muted/20 px-1 text-xs text-muted-foreground">
+    <div
+      className="overflow-hidden border bg-[var(--app-panel-2)]"
+      style={{
+        borderColor: "var(--app-line)",
+        borderRadius: "var(--app-radius-lg)",
+      }}
+    >
+      <div className="app-mono grid h-8 grid-cols-[34px_minmax(120px,0.8fr)_minmax(160px,1.2fr)_34px] items-center border-b border-[var(--app-line)] bg-[rgb(255_255_255/.02)] px-1 text-[11px] uppercase tracking-[0.06em] text-[var(--app-dim)]">
         <div />
         <div>Key</div>
         <div>Value</div>
@@ -31,22 +37,22 @@ export function KeyValueTable({
       {rows.map((row, index) => (
         <div
           key={index}
-          className="grid grid-cols-[34px_minmax(120px,0.8fr)_minmax(160px,1.2fr)_34px] items-center border-b border-border/40 px-1 last:border-b-0"
+          className="grid grid-cols-[34px_minmax(120px,0.8fr)_minmax(160px,1.2fr)_34px] items-center border-b border-[var(--app-line)] px-1 last:border-b-0"
         >
           <input
             type="checkbox"
-            className="mx-auto size-3 accent-violet-400"
+            className="mx-auto size-3 accent-[var(--app-accent)]"
             checked={row.enabled}
             onChange={(event) => update(index, { enabled: event.target.checked })}
           />
           <Input
-            className="h-8 rounded-none border-0 bg-transparent font-mono text-xs shadow-none focus-visible:ring-0"
+            className="app-mono h-8 rounded-none border-0 bg-transparent text-xs shadow-none focus-visible:ring-0"
             value={row.key}
             placeholder={placeholder}
             onChange={(event) => update(index, { key: event.target.value })}
           />
           <Input
-            className="h-8 rounded-none border-0 bg-transparent font-mono text-xs shadow-none focus-visible:ring-0"
+            className="app-mono h-8 rounded-none border-0 bg-transparent text-xs shadow-none focus-visible:ring-0"
             value={row.value}
             placeholder="Value"
             onChange={(event) => update(index, { value: event.target.value })}
@@ -54,7 +60,7 @@ export function KeyValueTable({
           <Button
             variant="ghost"
             size="icon"
-            className="size-7 text-muted-foreground"
+            className="size-7 text-[var(--app-dim)]"
             onClick={() => remove(index)}
           >
             <Trash2 className="size-3.5" />
@@ -65,7 +71,7 @@ export function KeyValueTable({
         <Button
           variant="ghost"
           size="sm"
-          className="h-7 gap-1.5 text-xs text-muted-foreground"
+          className="h-7 gap-1.5 text-xs text-[var(--app-dim)]"
           onClick={() => onChange([...rows, { key: "", value: "", enabled: true }])}
         >
           <Plus className="size-3.5" />

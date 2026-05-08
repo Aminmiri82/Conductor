@@ -1,12 +1,15 @@
 import { create } from "zustand";
 import { api } from "@/lib/tauri";
 import type {
+  AppTheme,
   CollectionNode,
   CollectionSummary,
   RequestEditorTab,
   RequestDetail,
   ResolvedRequestPreview,
   SendRequestResult,
+  SettingsTab,
+  UrlDisplayMode,
   WorkspaceUiState,
 } from "@/features/types";
 
@@ -55,6 +58,10 @@ type WorkspaceState = {
   resolveActiveRequest: () => Promise<void>;
   sendActiveRequest: () => Promise<void>;
   setRequestEditorTab: (requestId: string, tab: RequestEditorTab) => void;
+  setWorkspacePreference: <K extends keyof WorkspaceUiState>(
+    key: K,
+    value: WorkspaceUiState[K],
+  ) => void;
   scheduleWorkspaceUiStateFlush: () => void;
   flushWorkspaceUiState: () => Promise<void>;
   toggleSidebar: () => void;
@@ -64,6 +71,10 @@ type WorkspaceState = {
 const WORKSPACE_UI_STATE_KEY = "workspace.ui";
 const WORKSPACE_UI_STATE_FLUSH_DELAY_MS = 300;
 const DEFAULT_WORKSPACE_UI_STATE: WorkspaceUiState = {
+  appTheme: "softpro",
+  accentColor: "#a78bfa",
+  urlDisplayMode: "chip",
+  settingsTab: "appearance",
   requestEditorTabs: {},
 };
 let workspaceUiStateFlushTimer: ReturnType<typeof window.setTimeout> | undefined;
@@ -433,6 +444,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     get().scheduleWorkspaceUiStateFlush();
   },
 
+  setWorkspacePreference: (key, value) => {
+    set((state) => ({
+      workspaceUi: {
+        ...state.workspaceUi,
+        [key]: value,
+      },
+      workspaceUiDirty: true,
+    }));
+    get().scheduleWorkspaceUiStateFlush();
+  },
+
   scheduleWorkspaceUiStateFlush: () => {
     if (workspaceUiStateFlushTimer) {
       window.clearTimeout(workspaceUiStateFlushTimer);
@@ -484,10 +506,24 @@ function normalizeWorkspaceUiState(
 ): WorkspaceUiState {
   if (!value || typeof value !== "object") return DEFAULT_WORKSPACE_UI_STATE;
   return {
+    ...DEFAULT_WORKSPACE_UI_STATE,
     activeCollectionId:
       typeof value.activeCollectionId === "string"
         ? value.activeCollectionId
         : undefined,
+    appTheme: isAppTheme(value.appTheme)
+      ? value.appTheme
+      : DEFAULT_WORKSPACE_UI_STATE.appTheme,
+    accentColor:
+      typeof value.accentColor === "string" && value.accentColor.startsWith("#")
+        ? value.accentColor
+        : DEFAULT_WORKSPACE_UI_STATE.accentColor,
+    urlDisplayMode: isUrlDisplayMode(value.urlDisplayMode)
+      ? value.urlDisplayMode
+      : DEFAULT_WORKSPACE_UI_STATE.urlDisplayMode,
+    settingsTab: isSettingsTab(value.settingsTab)
+      ? value.settingsTab
+      : DEFAULT_WORKSPACE_UI_STATE.settingsTab,
     requestEditorTabs:
       value.requestEditorTabs && typeof value.requestEditorTabs === "object"
         ? normalizeRequestEditorTabs(value.requestEditorTabs)
@@ -502,6 +538,23 @@ function normalizeRequestEditorTabs(
     Object.entries(tabs).filter((entry): entry is [string, RequestEditorTab] =>
       isRequestEditorTab(entry[1]),
     ),
+  );
+}
+
+function isAppTheme(value: unknown): value is AppTheme {
+  return value === "softpro" || value === "conductor" || value === "brutalist";
+}
+
+function isUrlDisplayMode(value: unknown): value is UrlDisplayMode {
+  return value === "flat" || value === "syntax" || value === "chip" || value === "hybrid";
+}
+
+function isSettingsTab(value: unknown): value is SettingsTab {
+  return (
+    value === "appearance" ||
+    value === "variables" ||
+    value === "shortcuts" ||
+    value === "about"
   );
 }
 

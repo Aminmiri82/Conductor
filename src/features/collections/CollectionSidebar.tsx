@@ -1,5 +1,6 @@
 import {
   ChangeEvent,
+  CSSProperties,
   DragEvent,
   createContext,
   useContext,
@@ -170,16 +171,16 @@ export function CollectionSidebar() {
 
   return (
     <DnDContext.Provider value={dnd}>
-      <aside className="flex h-full min-h-0 flex-col border-r border-border/40 bg-[#151419]">
-        <div className="space-y-2 border-b border-border/60 p-3">
+      <aside className="flex h-full min-h-0 flex-col border-r border-[var(--app-line)] bg-[var(--app-panel)]">
+        <div className="space-y-2 border-b border-[var(--app-line)] p-3">
           <div className="flex items-center justify-between">
-            <div className="text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
+            <div className="app-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--app-dim)]">
               Collections
             </div>
             <Button
               variant="ghost"
               size="icon"
-              className="size-7"
+              className="size-7 text-[var(--app-dim)] hover:text-[var(--app-text)]"
               onClick={() => inputRef.current?.click()}
               title="Import Postman collection"
             >
@@ -198,7 +199,7 @@ export function CollectionSidebar() {
               value={activeCollectionId}
               onValueChange={(value) => void selectCollection(value)}
             >
-              <SelectTrigger className="h-8 min-w-0 flex-1 border-border/70 bg-background/45 text-xs">
+              <SelectTrigger className="h-8 min-w-0 flex-1 border-[var(--app-line)] bg-[var(--app-panel-2)] text-xs">
                 <SelectValue placeholder="No collection" />
               </SelectTrigger>
               <SelectContent>
@@ -214,7 +215,7 @@ export function CollectionSidebar() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="size-8 shrink-0"
+                  className="size-8 shrink-0 text-[var(--app-dim)]"
                   disabled={!activeCollectionId}
                   title="Add to collection"
                 >
@@ -235,7 +236,7 @@ export function CollectionSidebar() {
 
         <ScrollArea className="min-h-0 flex-1">
           <div
-            className="p-2"
+            className="app-scroll p-2"
             onDragLeave={(event) => {
               if (event.currentTarget.contains(event.relatedTarget as Node)) return;
               setTarget(null);
@@ -261,7 +262,7 @@ export function CollectionSidebar() {
                 <RootEndDropZone performDrop={performDrop} />
               </>
             ) : (
-              <div className="px-2 py-8 text-center text-xs text-muted-foreground">
+              <div className="px-2 py-8 text-center text-xs text-[var(--app-dim)]">
                 Import a Postman collection to begin.
               </div>
             )}
@@ -295,11 +296,12 @@ function RootEndDropZone({ performDrop }: { performDrop: () => Promise<void> }) 
         void performDrop();
       }}
       className={cn(
-        "mx-1 mt-1 flex h-7 items-center justify-center rounded-md border border-dashed text-[10px] uppercase tracking-[0.08em] transition-colors",
+        "mx-1 mt-1 flex h-7 items-center justify-center border border-dashed text-[10px] uppercase tracking-[0.08em] transition-colors",
         active
-          ? "border-violet-400/70 bg-violet-400/10 text-violet-200"
-          : "border-border/50 text-muted-foreground/60",
+          ? "border-[var(--app-accent)] bg-[color-mix(in_oklab,var(--app-accent)_10%,transparent)] text-[var(--app-accent)]"
+          : "border-[var(--app-line)] text-[var(--app-dim)]/60",
       )}
+      style={{ borderRadius: "var(--app-radius)" }}
     >
       Move to root
     </div>
@@ -415,14 +417,15 @@ function TreeNode({
             onDragOver={onDragOver}
             onDrop={onDrop}
             className={cn(
-              "group relative flex h-7 w-full select-none items-center gap-1.5 rounded-md pr-1 text-left text-xs text-muted-foreground transition-colors",
-              "hover:bg-accent/60 hover:text-foreground",
-              isActive && "bg-primary/15 text-foreground ring-1 ring-primary/25",
+              "group relative flex h-7 w-full select-none items-center gap-1.5 pr-1 text-left text-xs text-[var(--app-dim)] transition-colors",
+              "hover:bg-[var(--app-panel-2)] hover:text-[var(--app-text)]",
+              isActive &&
+                "bg-[color-mix(in_oklab,var(--app-accent)_14%,transparent)] text-[var(--app-text)] ring-1 ring-[color-mix(in_oklab,var(--app-accent)_28%,transparent)]",
               isDragging && "opacity-40",
               showInto &&
-                "bg-violet-400/10 text-foreground ring-1 ring-violet-400/60",
+                "bg-[color-mix(in_oklab,var(--app-accent)_10%,transparent)] text-[var(--app-text)] ring-1 ring-[var(--app-accent)]",
             )}
-            style={{ paddingLeft: indent }}
+            style={{ paddingLeft: indent, borderRadius: "var(--app-radius)" }}
             onClick={() => {
               if (isFolder) {
                 setOpen((value) => !value);
@@ -442,15 +445,18 @@ function TreeNode({
             )}
             {isFolder ? (
               open ? (
-                <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
+                <FolderOpen className="size-3.5 shrink-0 text-[var(--app-accent)] opacity-80" />
               ) : (
-                <Folder className="size-3.5 shrink-0 text-muted-foreground" />
+                <Folder className="size-3.5 shrink-0 text-[var(--app-accent)] opacity-70" />
               )
             ) : (
-              <FileJson className="size-3.5 shrink-0 text-violet-300/80" />
+              <FileJson className="size-3.5 shrink-0 text-[var(--app-dim)]" />
             )}
             {!isFolder ? (
-              <span className="w-10 shrink-0 rounded bg-violet-400/10 px-1 py-0.5 text-center font-mono text-[10px] leading-none text-violet-200">
+              <span
+                className="app-mono w-10 shrink-0 px-1 py-0.5 text-center text-[10px] font-bold leading-none"
+                style={methodColor(node.method ?? "GET")}
+              >
                 {node.method ?? "GET"}
               </span>
             ) : null}
@@ -529,14 +535,35 @@ function DropLine({
     <div
       aria-hidden
       className={cn(
-        "pointer-events-none absolute right-2 z-20 h-0.5 rounded-full bg-violet-400",
+        "pointer-events-none absolute right-2 z-20 h-0.5 rounded-full bg-[var(--app-accent)]",
         position === "top" ? "-top-px" : "-bottom-px",
       )}
       style={{ left: inset }}
     >
-      <span className="absolute -left-1 top-1/2 block size-2 -translate-y-1/2 rounded-full bg-violet-400 ring-2 ring-violet-400/25" />
+      <span className="absolute -left-1 top-1/2 block size-2 -translate-y-1/2 rounded-full bg-[var(--app-accent)] ring-2 ring-[color-mix(in_oklab,var(--app-accent)_25%,transparent)]" />
     </div>
   );
+}
+
+function methodColor(method: string): CSSProperties {
+  const normalized = method.toUpperCase();
+  const map: Record<string, CSSProperties> = {
+    GET: { color: "var(--app-get)", backgroundColor: "var(--app-get-bg)" },
+    POST: { color: "var(--app-post)", backgroundColor: "var(--app-post-bg)" },
+    PUT: { color: "var(--app-put)", backgroundColor: "var(--app-put-bg)" },
+    DELETE: {
+      color: "var(--app-delete)",
+      backgroundColor: "var(--app-delete-bg)",
+    },
+    PATCH: { color: "var(--app-patch)", backgroundColor: "var(--app-patch-bg)" },
+  };
+  return {
+    ...(map[normalized] ?? {
+      color: "var(--app-text)",
+      backgroundColor: "transparent",
+    }),
+    borderRadius: "var(--app-radius)",
+  };
 }
 
 function findNode(nodes: CollectionNode[], id: string): CollectionNode | undefined {

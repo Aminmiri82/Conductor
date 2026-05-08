@@ -29,7 +29,6 @@ export function RequestWorkspace() {
   const saveActiveRequest = useWorkspaceStore((state) => state.saveActiveRequest);
   const sending = useWorkspaceStore((state) => state.sending);
   const saving = useWorkspaceStore((state) => state.saving);
-  const lastSavedAt = useWorkspaceStore((state) => state.lastSavedAt);
   const activeRequestId = useWorkspaceStore((state) => state.activeRequestId);
   const activeTab = useWorkspaceStore((state) =>
     state.tabs.find((tab) => tab.requestId === state.activeRequestId),
@@ -45,10 +44,10 @@ export function RequestWorkspace() {
 
   if (!request) {
     return (
-      <section className="flex h-full items-center justify-center bg-[#101014]">
+      <section className="flex h-full items-center justify-center bg-[var(--app-bg)]">
         <div className="max-w-sm text-center">
           <div className="text-sm font-medium">No request selected</div>
-          <div className="mt-2 text-xs leading-5 text-muted-foreground">
+          <div className="mt-2 text-xs leading-5 text-[var(--app-dim)]">
             Import a collection and choose a request from the sidebar.
           </div>
         </div>
@@ -59,15 +58,15 @@ export function RequestWorkspace() {
   const unresolved = preview?.unresolvedVariables ?? [];
 
   return (
-    <section className="flex h-full min-h-0 flex-col bg-[#101014]">
+    <section className="flex h-full min-h-0 flex-col bg-[var(--app-bg)]">
       <RequestTabsBar />
-      <div className="border-b border-border/70 bg-[#141319] px-3 py-2">
+      <div className="border-b border-[var(--app-line)] bg-[var(--app-bg)] px-4 py-3">
         <RequestUrlBar
           request={request}
           sending={sending}
           saving={saving}
           dirty={Boolean(activeRequestId && activeTab?.dirty)}
-          lastSavedAt={lastSavedAt}
+          unresolvedKeys={unresolved.map((item) => item.key)}
           onChange={updateRequest}
           onSend={() => void sendActiveRequest()}
           onSave={() => void saveActiveRequest()}
@@ -92,7 +91,7 @@ export function RequestWorkspace() {
             }
             className="flex h-full min-h-0 flex-col"
           >
-            <div className="border-b border-border/60 px-3 pt-2">
+            <div className="border-b border-[var(--app-line)] px-4 pt-3">
               <TabsList className="h-8 bg-transparent p-0">
                 <TabsTrigger value="params">Params</TabsTrigger>
                 <TabsTrigger value="headers">Headers</TabsTrigger>
@@ -103,7 +102,7 @@ export function RequestWorkspace() {
             </div>
             <TabsContent value="params" className="min-h-0 flex-1 p-0">
               <ScrollArea className="h-full">
-                <div className="p-3">
+                <div className="p-4">
                   <KeyValueTable
                     rows={request.query}
                     onChange={(query) => updateRequest({ query })}
@@ -114,7 +113,7 @@ export function RequestWorkspace() {
             </TabsContent>
             <TabsContent value="headers" className="min-h-0 flex-1 p-0">
               <ScrollArea className="h-full">
-                <div className="p-3">
+                <div className="p-4">
                   <KeyValueTable
                     rows={request.headers}
                     onChange={(headers) => updateRequest({ headers })}
@@ -125,7 +124,7 @@ export function RequestWorkspace() {
             </TabsContent>
             <TabsContent value="auth" className="min-h-0 flex-1 p-0">
               <ScrollArea className="h-full">
-                <div className="p-3">
+                <div className="p-4">
                   <AuthEditor
                     auth={request.auth ?? { authType: "inherit" }}
                     inheritedAuth={request.inheritedAuth}
@@ -147,18 +146,18 @@ export function RequestWorkspace() {
             </TabsContent>
           </Tabs>
         </ResizablePanel>
-        <ResizableHandle className="bg-border/70" />
+        <ResizableHandle className="bg-[var(--app-line)]" />
         <ResizablePanel defaultSize="42%" minSize="24%">
           <div className="flex h-full min-h-0 flex-col">
-            <div className="flex h-10 items-center justify-between border-b border-border/60 px-3">
+            <div className="flex h-10 items-center justify-between border-b border-[var(--app-line)] px-4">
               <div className="flex items-center gap-2">
-                <div className="text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                <div className="app-mono text-xs font-semibold uppercase tracking-[0.08em] text-[var(--app-dim)]">
                   Response
                 </div>
                 {response ? (
                   <div className="text-xs">
-                    <span className="text-violet-300">{response.statusCode}</span>
-                    <span className="ml-2 text-muted-foreground">
+                    <span className="text-[var(--app-accent)]">{response.statusCode}</span>
+                    <span className="ml-2 text-[var(--app-dim)]">
                       {response.durationMs} ms
                     </span>
                     {response.updatedVariables.length ? (
