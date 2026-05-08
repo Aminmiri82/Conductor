@@ -8,12 +8,14 @@ import {
 } from "@/components/ui/resizable";
 import { CollectionSidebar } from "@/features/collections/CollectionSidebar";
 import { RequestWorkspace } from "@/features/requests/RequestWorkspace";
+import { OpenRequestDialog } from "@/features/requests/OpenRequestDialog";
 import { AppSettings } from "@/features/settings/AppSettings";
 import { AppTopBar } from "@/features/shell/AppTopBar";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 
 export function AppShell() {
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [openRequestOpen, setOpenRequestOpen] = useState(false);
   const sidebarVisible = useWorkspaceStore((state) => state.sidebarVisible);
   const error = useWorkspaceStore((state) => state.error);
   const clearError = useWorkspaceStore((state) => state.clearError);
@@ -22,9 +24,16 @@ export function AppShell() {
     function openSettings() {
       setSettingsOpen(true);
     }
+    function openRequest() {
+      setOpenRequestOpen(true);
+    }
+
     window.addEventListener("conductor:open-settings", openSettings);
-    return () =>
+    window.addEventListener("conductor:open-request", openRequest);
+    return () => {
       window.removeEventListener("conductor:open-settings", openSettings);
+      window.removeEventListener("conductor:open-request", openRequest);
+    };
   }, []);
 
   return (
@@ -61,6 +70,10 @@ export function AppShell() {
           </ResizablePanel>
         </ResizablePanelGroup>
       </div>
+      <OpenRequestDialog
+        open={openRequestOpen}
+        onOpenChange={setOpenRequestOpen}
+      />
       <AppSettings open={settingsOpen} onOpenChange={setSettingsOpen} />
     </main>
   );

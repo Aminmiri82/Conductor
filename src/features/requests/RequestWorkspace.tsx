@@ -1,5 +1,6 @@
 import { save } from "@tauri-apps/plugin-dialog";
 import { AlertTriangle, Download } from "lucide-react";
+import { useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import {
   ResizableHandle,
@@ -17,6 +18,7 @@ import { RequestTabsBar } from "@/features/requests/RequestTabsBar";
 import { ResponseViewer } from "@/features/requests/ResponseViewer";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { api } from "@/lib/tauri";
+import type { KeyValue } from "@/features/types";
 
 export function RequestWorkspace() {
   const request = useWorkspaceStore((state) =>
@@ -41,6 +43,11 @@ export function RequestWorkspace() {
   );
   const response = useWorkspaceStore((state) => state.response);
   const preview = useWorkspaceStore((state) => state.resolvedPreview);
+  const unresolved = preview?.unresolvedVariables ?? [];
+  const variableValues = useMemo(
+    () => (request ? resolveUrlVariableValues(request.url, preview?.url) : {}),
+    [preview?.url, request],
+  );
 
   if (!request) {
     return (
@@ -55,8 +62,6 @@ export function RequestWorkspace() {
     );
   }
 
-  const unresolved = preview?.unresolvedVariables ?? [];
-
   return (
     <section className="flex h-full min-h-0 flex-col bg-[var(--app-bg)]">
       <RequestTabsBar />
@@ -67,6 +72,7 @@ export function RequestWorkspace() {
           saving={saving}
           dirty={Boolean(activeRequestId && activeTab?.dirty)}
           unresolvedKeys={unresolved.map((item) => item.key)}
+          variableValues={variableValues}
           onChange={updateRequest}
           onSend={() => void sendActiveRequest()}
           onSave={() => void saveActiveRequest()}
@@ -102,11 +108,20 @@ export function RequestWorkspace() {
             </div>
             <TabsContent value="params" className="min-h-0 flex-1 p-0">
               <ScrollArea className="h-full">
-                <div className="p-4">
-                  <KeyValueTable
+                <div className="space-y-5 p-4">
+                  <ParameterSection
+                    title="Path Parameters"
+                    rows={request.pathParams}
+                    onChange={(pathParams) => updateRequest({ pathParams })}
+                    placeholder="Path parameter"
+                    empty="No path parameters detected. Use :name in the URL path."
+                  />
+                  <ParameterSection
+                    title="Query Parameters"
                     rows={request.query}
                     onChange={(query) => updateRequest({ query })}
                     placeholder="Query parameter"
+                    empty="No query parameters detected. Use ?name=value in the URL."
                   />
                 </div>
               </ScrollArea>
@@ -193,6 +208,41 @@ export function RequestWorkspace() {
   );
 }
 
+function ParameterSection({
+  title,
+  rows,
+  onChange,
+  placeholder,
+  empty,
+}: {
+  title: string;
+  rows: KeyValue[];
+  onChange: (rows: KeyValue[]) => void;
+  placeholder: string;
+  empty: string;
+}) {
+  return (
+    <section>
+      <div className="app-mono mb-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--app-dim)]">
+        {title}
+      </div>
+      {rows.length ? (
+        <KeyValueTable rows={rows} onChange={onChange} placeholder={placeholder} />
+      ) : (
+        <div
+          className="border px-3 py-3 text-xs text-[var(--app-dim)]"
+          style={{
+            borderColor: "var(--app-line)",
+            borderRadius: "var(--app-radius-lg)",
+          }}
+        >
+          {empty}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function emptyBody() {
   return {
     mode: "none",
@@ -201,6 +251,55 @@ function emptyBody() {
     formData: [],
     urlencoded: [],
   };
+}
+
+function resolveUrlVariableValues(rawUrl: string, resolvedUrl: string | undefined) {
+  if (!resolvedUrl) return {};
+  const tokens = parseUrlTokens(rawUrl);
+  const variableNames = tokens
+    .filter((token): token is { kind: "variable"; name: string } => token.kind === "variable")
+    .map((token) => token.name);
+  if (!variableNames.length) return {};
+
+  const pattern = new RegExp(
+    `^${tokens
+      .map((token) =>
+        token.kind === "text" ? escapeRegExp(token.value) : "(.*?)",
+      )
+      .join("")}$`,
+  );
+  const match = resolvedUrl.match(pattern);
+  if (!match) return {};
+
+  return Object.fromEntries(
+    variableNames.map((name, index) => [name, match[index + 1] ?? ""]),
+  );
+}
+
+function parseUrlTokens(url: string): Array<
+  { kind: "text"; value: string } | { kind: "variable"; name: string }
+> {
+  const tokens: Array<
+    { kind: "text"; value: string } | { kind: "variable"; name: string }
+  > = [];
+  const pattern = /\{\{([^}]+)\}\}/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(url))) {
+    if (match.index > lastIndex) {
+      tokens.push({ kind: "text", value: url.slice(lastIndex, match.index) });
+    }
+    tokens.push({ kind: "variable", name: match[1] });
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < url.length) {
+    tokens.push({ kind: "text", value: url.slice(lastIndex) });
+  }
+  return tokens;
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function downloadJson(value: unknown) {

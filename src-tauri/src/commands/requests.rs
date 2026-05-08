@@ -3,7 +3,7 @@ use std::{collections::HashMap, fs, time::Instant};
 use chrono::Utc;
 use reqwest::{
     header::{HeaderMap, HeaderName, HeaderValue},
-    Method,
+    Method, Url,
 };
 use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Value};
@@ -481,15 +481,21 @@ pub async fn send_request(
         .redirect(reqwest::redirect::Policy::limited(10))
         .build()
         .map_err(|error| error.to_string())?;
-    let method = Method::from_bytes(input.request.method.as_bytes()).map_err(|e| e.to_string())?;
-    let mut builder = client.request(method, preview.url.clone());
-    let mut headers = HeaderMap::new();
     let query_pairs = preview
         .query
         .iter()
         .filter(|query| query.enabled && !query.key.is_empty())
         .map(|query| (query.key.clone(), query.value.clone()))
         .collect::<Vec<_>>();
+    let request_url = if preview.query.is_empty() {
+        preview.url.clone()
+    } else {
+        url_without_query(&preview.url)?
+    };
+
+    let method = Method::from_bytes(input.request.method.as_bytes()).map_err(|e| e.to_string())?;
+    let mut builder = client.request(method, request_url);
+    let mut headers = HeaderMap::new();
     if !query_pairs.is_empty() {
         builder = builder.query(&query_pairs);
     }
@@ -789,8 +795,9 @@ fn resolve_request_with_context(
     variables: &HashMap<String, String>,
 ) -> ResolvedRequestPreview {
     let mut unresolved = HashMap::<String, Vec<String>>::new();
-    let (url, missing) = resolve_text(&request.url, variables);
+    let (mut url, missing) = resolve_text(&request.url, variables);
     add_missing(&mut unresolved, "url", missing);
+    apply_path_params(&mut url, &request.path_params, variables, &mut unresolved);
 
     let headers = request
         .headers
@@ -859,6 +866,61 @@ fn resolve_request_with_context(
             .map(|(key, locations)| UnresolvedVariable { key, locations })
             .collect(),
     }
+}
+
+fn apply_path_params(
+    url: &mut String,
+    path_params: &[KeyValue],
+    variables: &HashMap<String, String>,
+    unresolved: &mut HashMap<String, Vec<String>>,
+) {
+    for param in path_params.iter().filter(|param| param.enabled) {
+        let key = param.key.trim();
+        if key.is_empty() {
+            continue;
+        }
+
+        let (value, missing) = resolve_text(&param.value, variables);
+        add_missing(unresolved, &format!("path:{}", key), missing);
+        if value.is_empty() {
+            continue;
+        }
+
+        *url = replace_path_param(url, key, &value);
+    }
+}
+
+fn replace_path_param(url: &str, key: &str, value: &str) -> String {
+    let needle: String = format!(":{}", key);
+    let mut out = String::with_capacity(url.len() + value.len());
+    let mut rest = url;
+
+    while let Some(index) = rest.find(&needle) {
+        let before = &rest[..index];
+        let after = &rest[index + needle.len()..];
+        out.push_str(before);
+
+        let boundary = after
+            .chars()
+            .next()
+            .map_or(true, |ch| matches!(ch, '/' | '?' | '#' | '&'));
+        if boundary {
+            out.push_str(value);
+            rest = after;
+        } else {
+            out.push_str(&needle);
+            rest = after;
+        }
+    }
+
+    out.push_str(rest);
+    out
+}
+
+fn url_without_query(url: &str) -> Result<String, String> {
+    let mut parsed = Url::parse(url).map_err(|error| error.to_string())?;
+    parsed.set_query(None);
+    Ok(parsed.to_string())
 }
 
 fn resolve_body(

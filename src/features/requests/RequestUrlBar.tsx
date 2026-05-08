@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
-  Check,
   CheckCircle2,
-  Loader2,
   Save,
   SendHorizontal,
 } from "lucide-react";
@@ -27,6 +25,7 @@ export function RequestUrlBar({
   saving,
   dirty,
   unresolvedKeys,
+  variableValues,
   onChange,
   onSend,
   onSave,
@@ -36,6 +35,7 @@ export function RequestUrlBar({
   saving: boolean;
   dirty: boolean;
   unresolvedKeys: string[];
+  variableValues: Record<string, string>;
   onChange: (patch: Partial<RequestDetail>) => void;
   onSend: () => void;
   onSave: () => void;
@@ -75,6 +75,7 @@ export function RequestUrlBar({
         value={request.url}
         mode={urlMode}
         unresolvedKeys={unresolvedKeys}
+        variableValues={variableValues}
         onChange={(url) => onChange({ url })}
       />
       <Button
@@ -83,19 +84,14 @@ export function RequestUrlBar({
         className={`size-8 shrink-0 border hover:text-[var(--app-text)] ${
           dirty
             ? "border-[var(--app-accent)] text-[var(--app-accent)]"
-            : "border-[var(--app-line)] text-emerald-300"
+            : "border-[var(--app-line)] text-[var(--app-dim)]"
         }`}
         style={{ borderRadius: "var(--app-radius)" }}
         onClick={onSave}
         title={saving ? "Saving request" : dirty ? "Unsaved changes" : "Saved"}
+        disabled={saving}
       >
-        {saving ? (
-          <Loader2 className="size-4 animate-spin" />
-        ) : dirty ? (
-          <Save className="size-4" />
-        ) : (
-          <Check className="size-4" />
-        )}
+        <Save className={`size-4 ${saving ? "opacity-60" : ""}`} />
       </Button>
       <Button
         className="h-8 shrink-0 gap-1.5 bg-[var(--app-accent)] px-3 text-xs font-bold uppercase tracking-[0.04em] text-[var(--app-accent-fg)] hover:bg-[var(--app-accent)]/90"
@@ -114,11 +110,13 @@ function VariableUrlInput({
   value,
   mode,
   unresolvedKeys,
+  variableValues,
   onChange,
 }: {
   value: string;
   mode: UrlDisplayMode;
   unresolvedKeys: string[];
+  variableValues: Record<string, string>;
   onChange: (value: string) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -154,7 +152,7 @@ function VariableUrlInput({
   return (
     <button
       data-url-input
-      className="app-mono flex h-8 min-w-0 flex-1 items-center overflow-hidden border bg-[var(--app-panel-2)] px-2.5 text-left text-xs"
+      className="app-mono flex h-8 min-w-0 flex-1 items-center overflow-visible border bg-[var(--app-panel-2)] px-2.5 text-left text-xs"
       style={{
         borderColor: "var(--app-line)",
         borderRadius: "var(--app-radius)",
@@ -174,6 +172,7 @@ function VariableUrlInput({
               mode={mode}
               name={token.name}
               unresolved={unresolved.has(token.name)}
+              resolvedValue={variableValues[token.name]}
             />
           ),
         )}
@@ -186,10 +185,12 @@ function VariableToken({
   name,
   mode,
   unresolved,
+  resolvedValue,
 }: {
   name: string;
   mode: UrlDisplayMode;
   unresolved: boolean;
+  resolvedValue?: string;
 }) {
   if (mode === "hybrid") {
     return (
@@ -204,7 +205,11 @@ function VariableToken({
           <span className="text-[var(--app-dim)]">{"}}"}</span>
         </span>
         <span className="hidden group-hover:inline-flex">
-          <VariableChip name={name} unresolved={unresolved} />
+          <VariableChip
+            name={name}
+            unresolved={unresolved}
+            resolvedValue={resolvedValue}
+          />
         </span>
       </span>
     );
@@ -212,29 +217,42 @@ function VariableToken({
 
   if (mode === "syntax") {
     return (
-      <span>
+      <span className="group/var relative">
         <span className="text-[var(--app-dim)]">{"{{"}</span>
         <span className={unresolved ? "text-amber-300" : "text-[var(--app-accent)]"}>
           {name}
         </span>
         <span className="text-[var(--app-dim)]">{"}}"}</span>
+        <VariableTooltip
+          name={name}
+          unresolved={unresolved}
+          resolvedValue={resolvedValue}
+        />
       </span>
     );
   }
 
-  return <VariableChip name={name} unresolved={unresolved} />;
+  return (
+    <VariableChip
+      name={name}
+      unresolved={unresolved}
+      resolvedValue={resolvedValue}
+    />
+  );
 }
 
 function VariableChip({
   name,
   unresolved,
+  resolvedValue,
 }: {
   name: string;
   unresolved: boolean;
+  resolvedValue?: string;
 }) {
   return (
     <span
-      className="mx-0.5 inline-flex items-center gap-1 border px-1.5 py-0.5 font-medium"
+      className="group/var relative mx-0.5 inline-flex items-center gap-1 border px-1.5 py-0.5 font-medium"
       style={{
         borderRadius: "var(--app-radius)",
         borderColor: unresolved
@@ -252,6 +270,29 @@ function VariableChip({
         <CheckCircle2 className="size-3" />
       )}
       {name}
+      <VariableTooltip
+        name={name}
+        unresolved={unresolved}
+        resolvedValue={resolvedValue}
+      />
+    </span>
+  );
+}
+
+function VariableTooltip({
+  name,
+  unresolved,
+  resolvedValue,
+}: {
+  name: string;
+  unresolved: boolean;
+  resolvedValue?: string;
+}) {
+  return (
+    <span className="pointer-events-none absolute left-0 top-[calc(100%+6px)] z-50 hidden max-w-[520px] whitespace-nowrap border border-[var(--app-line)] bg-[var(--app-panel)] px-2 py-1 text-[11px] font-normal text-[var(--app-text)] shadow-lg group-hover/var:block">
+      <span className="text-[var(--app-dim)]">{name}</span>
+      <span className="px-1 text-[var(--app-dim)]">=</span>
+      <span>{unresolved ? "undefined" : resolvedValue || "resolved value unavailable"}</span>
     </span>
   );
 }

@@ -541,6 +541,7 @@ function ShortcutsPane() {
       title: "Navigation",
       rows: [
         ["Toggle sidebar", ["⌘", "B"]],
+        ["Open request", ["⌘", "O"]],
         ["Open settings", ["⌘", ","]],
         ["Focus URL", ["⌘", "L"]],
       ],

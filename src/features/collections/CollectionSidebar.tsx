@@ -411,6 +411,7 @@ function TreeNode({
           <div
             role="button"
             tabIndex={0}
+            data-sidebar-request-id={node.requestId ?? undefined}
             draggable
             onDragStart={onDragStart}
             onDragEnd={onDragEnd}

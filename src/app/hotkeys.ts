@@ -4,6 +4,8 @@ import type { CollectionNode } from "@/features/types";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 
 type AppMenuAction =
+  | "open-request"
+  | "settings"
   | "new-request"
   | "duplicate-request"
   | "save-request"
@@ -19,6 +21,7 @@ export function useAppHotkeys() {
   const closeRequestTab = useWorkspaceStore((state) => state.closeRequestTab);
   const createRequestIn = useWorkspaceStore((state) => state.createRequestIn);
   const duplicateRequest = useWorkspaceStore((state) => state.duplicateRequest);
+  const selectRequest = useWorkspaceStore((state) => state.selectRequest);
   const activeRequestId = useWorkspaceStore((state) => state.activeRequestId);
   const tree = useWorkspaceStore((state) => state.tree);
 
@@ -26,6 +29,17 @@ export function useAppHotkeys() {
     function performAction(action: AppMenuAction) {
       if (action === "toggle-sidebar") {
         toggleSidebar();
+      }
+      if (action === "open-request") {
+        const focusedRequestId = focusedSidebarRequestId();
+        if (focusedRequestId) {
+          void selectRequest(focusedRequestId);
+        } else {
+          window.dispatchEvent(new Event("conductor:open-request"));
+        }
+      }
+      if (action === "settings") {
+        window.dispatchEvent(new Event("conductor:open-settings"));
       }
       if (action === "save-request") {
         void saveActiveRequest();
@@ -74,6 +88,10 @@ export function useAppHotkeys() {
         event.preventDefault();
         performAction("new-request");
       }
+      if (key === "o") {
+        event.preventDefault();
+        performAction("open-request");
+      }
       if (key === "w" && activeRequestId) {
         event.preventDefault();
         performAction("close-request");
@@ -109,6 +127,7 @@ export function useAppHotkeys() {
     createRequestIn,
     duplicateRequest,
     saveActiveRequest,
+    selectRequest,
     sendActiveRequest,
     toggleSidebar,
     tree,
@@ -117,6 +136,13 @@ export function useAppHotkeys() {
 
 function isTauriRuntime() {
   return "__TAURI_INTERNALS__" in window;
+}
+
+function focusedSidebarRequestId() {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLElement)) return undefined;
+  return active.closest<HTMLElement>("[data-sidebar-request-id]")?.dataset
+    .sidebarRequestId;
 }
 
 function findRequestNode(

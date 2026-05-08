@@ -38,6 +38,7 @@ pub fn run() {
         })
         .on_menu_event(|app, event| {
             let action = match event.id().as_ref() {
+                "open_request" => Some("open-request"),
                 "new_request" => Some("new-request"),
                 "duplicate_request" => Some("duplicate-request"),
                 "save_request" => Some("save-request"),
@@ -45,6 +46,7 @@ pub fn run() {
                 "close_request" => Some("close-request"),
                 "toggle_sidebar" => Some("toggle-sidebar"),
                 "focus_url" => Some("focus-url"),
+                "settings" => Some("settings"),
                 _ => None,
             };
 
@@ -88,6 +90,9 @@ fn build_app_menu<R: tauri::Runtime>(
         &[
             &MenuItemBuilder::with_id("new_request", "New Request")
                 .accelerator("CmdOrCtrl+N")
+                .build(app)?,
+            &MenuItemBuilder::with_id("open_request", "Open Request...")
+                .accelerator("CmdOrCtrl+O")
                 .build(app)?,
             &MenuItemBuilder::with_id("duplicate_request", "Duplicate Request")
                 .accelerator("CmdOrCtrl+D")
@@ -160,6 +165,10 @@ fn build_app_menu<R: tauri::Runtime>(
                 true,
                 &[
                     &PredefinedMenuItem::about(app, None, None)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &MenuItemBuilder::with_id("settings", "Settings...")
+                        .accelerator("CmdOrCtrl+,")
+                        .build(app)?,
                     &PredefinedMenuItem::separator(app)?,
                     &PredefinedMenuItem::services(app, None)?,
                     &PredefinedMenuItem::separator(app)?,

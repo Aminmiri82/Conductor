@@ -1,19 +1,260 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, Search, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { cn } from "@/lib/utils";
+import { useEffect, useMemo, useRef } from "react";
+import { EditorState } from "@codemirror/state";
+import { EditorView, keymap, lineNumbers, type ViewUpdate } from "@codemirror/view";
+import {
+  HighlightStyle,
+  bracketMatching,
+  foldGutter,
+  syntaxHighlighting,
+} from "@codemirror/language";
+import { json } from "@codemirror/lang-json";
+import {
+  SearchQuery,
+  closeSearchPanel,
+  findNext,
+  findPrevious,
+  getSearchQuery,
+  search,
+  searchKeymap,
+  setSearchQuery,
+} from "@codemirror/search";
+import { tags as t } from "@lezer/highlight";
 
-type JsonRow = {
-  id: string;
-  depth: number;
-  key?: string;
-  kind: "open" | "close" | "primitive" | "text";
-  value?: unknown;
-  summary?: string;
-  closing?: string;
-  foldable?: boolean;
-};
+const jsonHighlightStyle = HighlightStyle.define([
+  { tag: t.string, color: "rgb(110 231 183)" },
+  { tag: t.number, color: "rgb(125 211 252)" },
+  { tag: [t.bool, t.null], color: "rgb(252 211 77)" },
+  { tag: t.propertyName, color: "rgb(221 214 254)" },
+  { tag: [t.brace, t.bracket, t.punctuation, t.separator], color: "var(--app-dim)" },
+]);
+
+function createSearchPanel(view: EditorView) {
+  const dom = document.createElement("div");
+  dom.className = "cm-search cm-panel";
+
+  const icon = document.createElement("span");
+  icon.className = "cm-search-icon";
+  icon.textContent = "⌕";
+
+  const input = document.createElement("input");
+  input.className = "cm-textfield";
+  input.placeholder = "Find in response";
+  input.setAttribute("main-field", "true");
+  input.setAttribute("name", "search");
+  input.spellcheck = false;
+  input.autocomplete = "off";
+
+  const counter = document.createElement("span");
+  counter.className = "cm-search-counter";
+
+  const prevBtn = document.createElement("button");
+  prevBtn.type = "button";
+  prevBtn.className = "cm-search-btn";
+  prevBtn.setAttribute("aria-label", "Previous match");
+  prevBtn.textContent = "↑";
+
+  const nextBtn = document.createElement("button");
+  nextBtn.type = "button";
+  nextBtn.className = "cm-search-btn";
+  nextBtn.setAttribute("aria-label", "Next match");
+  nextBtn.textContent = "↓";
+
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "cm-search-btn";
+  closeBtn.setAttribute("aria-label", "Close");
+  closeBtn.textContent = "×";
+
+  dom.append(icon, input, counter, prevBtn, nextBtn, closeBtn);
+
+  input.addEventListener("input", () => {
+    view.dispatch({
+      effects: setSearchQuery.of(new SearchQuery({ search: input.value })),
+    });
+  });
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      if (event.shiftKey) findPrevious(view);
+      else findNext(view);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      closeSearchPanel(view);
+    }
+  });
+  prevBtn.addEventListener("click", () => findPrevious(view));
+  nextBtn.addEventListener("click", () => findNext(view));
+  closeBtn.addEventListener("click", () => closeSearchPanel(view));
+
+  function refreshCounter() {
+    const query = getSearchQuery(view.state);
+    if (!query.search || !query.valid) {
+      counter.textContent = "";
+      return;
+    }
+    const sel = view.state.selection.main;
+    const cursor = query.getCursor(view.state);
+    const cap = 9999;
+    let total = 0;
+    let active = 0;
+    while (total < cap) {
+      const match = cursor.next();
+      if (match.done) break;
+      total++;
+      if (match.value.from === sel.from && match.value.to === sel.to) {
+        active = total;
+      }
+    }
+    counter.textContent = total
+      ? total >= cap
+        ? `${active || "?"}/${cap}+`
+        : `${active || 1}/${total}`
+      : "0/0";
+  }
+
+  return {
+    dom,
+    top: true,
+    mount() {
+      input.focus();
+      input.select();
+      refreshCounter();
+    },
+    update(update: ViewUpdate) {
+      const queryChanged = update.transactions.some((tr) =>
+        tr.effects.some((effect) => effect.is(setSearchQuery)),
+      );
+      if (queryChanged) {
+        const q = getSearchQuery(update.state);
+        if (input.value !== q.search) input.value = q.search;
+      }
+      if (queryChanged || update.docChanged || update.selectionSet) {
+        refreshCounter();
+      }
+    },
+  };
+}
+
+const editorTheme = EditorView.theme(
+  {
+    "&": {
+      position: "relative",
+      height: "100%",
+      background: "transparent",
+      color: "var(--app-text)",
+      fontSize: "12px",
+    },
+    "&.cm-focused": { outline: "none" },
+    ".cm-scroller": {
+      fontFamily:
+        "ui-monospace, SFMono-Regular, Menlo, Monaco, 'Cascadia Mono', 'Roboto Mono', Consolas, 'Liberation Mono', 'Courier New', monospace",
+      lineHeight: "1.5",
+    },
+    ".cm-content": {
+      padding: "8px 0",
+      caretColor: "var(--app-accent)",
+    },
+    ".cm-gutters": {
+      background: "transparent",
+      borderRight: "1px solid var(--app-line)",
+      color: "var(--app-dim)",
+    },
+    ".cm-activeLineGutter, .cm-activeLine": { background: "transparent" },
+    ".cm-foldPlaceholder": {
+      background: "color-mix(in oklab, var(--app-accent) 14%, transparent)",
+      border: "1px solid color-mix(in oklab, var(--app-accent) 38%, transparent)",
+      color: "var(--app-accent)",
+      borderRadius: "4px",
+      padding: "0 4px",
+      margin: "0 2px",
+    },
+    ".cm-selectionBackground, ::selection": {
+      background: "color-mix(in oklab, var(--app-accent) 28%, transparent) !important",
+    },
+    ".cm-cursor": { borderLeftColor: "var(--app-accent)" },
+    ".cm-searchMatch": {
+      background: "color-mix(in oklab, var(--app-accent) 28%, transparent)",
+      borderRadius: "2px",
+    },
+    ".cm-searchMatch-selected": {
+      background: "color-mix(in oklab, var(--app-accent) 55%, transparent)",
+    },
+    ".cm-panels": {
+      position: "absolute",
+      top: "8px",
+      right: "8px",
+      left: "auto",
+      width: "auto",
+      background: "transparent",
+      border: "none",
+      zIndex: "10",
+    },
+    ".cm-panels.cm-panels-top": {
+      borderBottom: "none",
+    },
+    ".cm-panel.cm-search": {
+      display: "flex",
+      alignItems: "center",
+      gap: "2px",
+      padding: "3px 4px 3px 8px",
+      background: "color-mix(in srgb, var(--app-panel) 95%, transparent)",
+      border: "1px solid var(--app-line)",
+      borderRadius: "6px",
+      backdropFilter: "blur(6px)",
+      boxShadow: "0 4px 12px rgb(0 0 0 / 0.25)",
+      font: "inherit",
+    },
+    ".cm-panel.cm-search .cm-search-icon": {
+      color: "var(--app-dim)",
+      fontSize: "13px",
+      lineHeight: "1",
+      paddingRight: "4px",
+    },
+    ".cm-panel.cm-search input.cm-textfield": {
+      width: "200px",
+      height: "24px",
+      padding: "0 4px",
+      margin: "0",
+      background: "transparent",
+      border: "none",
+      color: "var(--app-text)",
+      fontFamily:
+        "ui-monospace, SFMono-Regular, Menlo, Monaco, 'Cascadia Mono', 'Roboto Mono', Consolas, monospace",
+      fontSize: "12px",
+      outline: "none",
+    },
+    ".cm-panel.cm-search input.cm-textfield::placeholder": {
+      color: "var(--app-dim)",
+    },
+    ".cm-panel.cm-search .cm-search-counter": {
+      minWidth: "44px",
+      fontSize: "11px",
+      fontVariantNumeric: "tabular-nums",
+      color: "var(--app-dim)",
+      textAlign: "center",
+      padding: "0 4px",
+    },
+    ".cm-panel.cm-search .cm-search-btn": {
+      display: "grid",
+      placeItems: "center",
+      width: "24px",
+      height: "24px",
+      borderRadius: "4px",
+      background: "transparent",
+      border: "none",
+      color: "var(--app-dim)",
+      cursor: "pointer",
+      fontSize: "13px",
+      lineHeight: "1",
+      padding: "0",
+    },
+    ".cm-panel.cm-search .cm-search-btn:hover": {
+      background: "color-mix(in oklab, var(--app-text) 8%, transparent)",
+      color: "var(--app-text)",
+    },
+  },
+  { dark: true },
+);
 
 export function ResponseViewer({
   value,
@@ -22,266 +263,74 @@ export function ResponseViewer({
   value?: unknown;
   sending: boolean;
 }) {
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const [activeMatch, setActiveMatch] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const viewRef = useRef<EditorView | null>(null);
 
-  const rows = useMemo(() => buildRows(value, collapsed), [collapsed, value]);
-  const matches = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    if (!normalized) return [];
-    return rows
-      .filter((row) => rowText(row).toLowerCase().includes(normalized))
-      .map((row) => row.id);
-  }, [query, rows]);
+  const text = useMemo(() => stringify(value), [value]);
 
   useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
-        event.preventDefault();
-        setSearchOpen(true);
-        requestAnimationFrame(() => inputRef.current?.focus());
-      }
-    }
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    if (!containerRef.current) return;
+    const view = new EditorView({
+      parent: containerRef.current,
+      state: EditorState.create({
+        doc: text,
+        extensions: [
+          EditorState.readOnly.of(true),
+          EditorView.contentAttributes.of({ spellcheck: "false" }),
+          lineNumbers(),
+          foldGutter(),
+          bracketMatching(),
+          json(),
+          syntaxHighlighting(jsonHighlightStyle),
+          search({ top: true, createPanel: createSearchPanel }),
+          keymap.of(searchKeymap),
+          editorTheme,
+          EditorView.lineWrapping,
+        ],
+      }),
+    });
+    viewRef.current = view;
+    return () => {
+      view.destroy();
+      viewRef.current = null;
+    };
   }, []);
 
   useEffect(() => {
-    if (!matches.length) {
-      setActiveMatch(0);
-      return;
-    }
-    const next = Math.min(activeMatch, matches.length - 1);
-    setActiveMatch(next);
-    rowRefs.current[matches[next]]?.scrollIntoView({
-      block: "center",
-      behavior: "smooth",
+    const view = viewRef.current;
+    if (!view) return;
+    if (view.state.doc.toString() === text) return;
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: text },
     });
-  }, [activeMatch, matches]);
-
-  if (sending) {
-    return (
-      <div className="p-3 font-mono text-xs leading-5 text-muted-foreground">
-        Sending request
-      </div>
-    );
-  }
-
-  if (value === undefined) {
-    return (
-      <div className="p-3 font-mono text-xs leading-5 text-muted-foreground">
-        Send a request to see the response.
-      </div>
-    );
-  }
-
-  const activeMatchId = matches[activeMatch];
+  }, [text]);
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col">
-      {searchOpen ? (
-        <div className="absolute right-2 top-2 z-10 flex h-8 w-[360px] items-center gap-1 rounded-md border border-border/70 bg-[#141319]/95 px-1.5 shadow-md">
-          <Search className="size-3.5 text-muted-foreground" />
-          <Input
-            ref={inputRef}
-            className="h-6 flex-1 border-0 bg-transparent px-1 font-mono text-xs shadow-none focus-visible:ring-0"
-            value={query}
-            placeholder="Find in response"
-            onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                setSearchOpen(false);
-              }
-            }}
-          />
-          <div className="w-12 text-center text-[11px] text-muted-foreground">
-            {query ? `${matches.length ? activeMatch + 1 : 0}/${matches.length}` : ""}
-          </div>
-          <Button variant="ghost" size="icon" className="size-7" onClick={() => goToMatch(-1)}>
-            <ChevronDown className="size-3.5 rotate-180" />
-          </Button>
-          <Button variant="ghost" size="icon" className="size-7" onClick={() => goToMatch(1)}>
-            <ChevronDown className="size-3.5" />
-          </Button>
-          <Button variant="ghost" size="icon" className="size-7" onClick={() => setSearchOpen(false)}>
-            <X className="size-3.5" />
-          </Button>
-        </div>
+    <div className="relative h-full min-h-0">
+      <div ref={containerRef} className="h-full min-h-0" />
+      {sending ? (
+        <Overlay>Sending request</Overlay>
+      ) : value === undefined ? (
+        <Overlay>Send a request to see the response.</Overlay>
       ) : null}
-      <div className="min-h-0 flex-1 overflow-auto">
-        <div className="min-h-full w-max min-w-full py-2 font-mono text-xs leading-5">
-          {rows.map((row) => (
-            <div
-              key={row.id}
-              ref={(element) => {
-                rowRefs.current[row.id] = element;
-              }}
-              className={cn(
-                "flex min-h-5 items-start whitespace-pre px-3",
-                row.id === activeMatchId && "bg-violet-400/15",
-              )}
-              style={{ paddingLeft: 12 + row.depth * 18 }}
-            >
-              {row.foldable ? (
-                <button
-                  className="mr-1 mt-0.5 grid size-4 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent"
-                  onClick={() => toggle(row.id)}
-                >
-                  {collapsed.has(row.id) ? (
-                    <ChevronRight className="size-3" />
-                  ) : (
-                    <ChevronDown className="size-3" />
-                  )}
-                </button>
-              ) : (
-                <span className="mr-1 size-4 shrink-0" />
-              )}
-              <JsonRowContent row={row} query={query} />
-            </div>
-          ))}
-        </div>
-      </div>
     </div>
   );
-
-  function toggle(id: string) {
-    setCollapsed((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  function goToMatch(delta: number) {
-    if (!matches.length) return;
-    setActiveMatch((current) => (current + delta + matches.length) % matches.length);
-  }
 }
 
-function JsonRowContent({ row, query }: { row: JsonRow; query: string }) {
-  if (row.kind === "close") {
-    return <span className="text-muted-foreground">{row.closing}</span>;
-  }
-  if (row.kind === "text") {
-    return <Highlighted text={String(row.value ?? "")} query={query} className="text-muted-foreground" />;
-  }
-
+function Overlay({ children }: { children: React.ReactNode }) {
   return (
-    <span className="min-w-0">
-      {row.key ? (
-        <>
-          <Highlighted text={`"${row.key}"`} query={query} className="text-violet-200" />
-          <span className="text-muted-foreground">: </span>
-        </>
-      ) : null}
-      {row.kind === "open" ? (
-        <Highlighted text={row.summary ?? ""} query={query} className="text-muted-foreground" />
-      ) : (
-        <PrimitiveValue value={row.value} query={query} />
-      )}
-    </span>
+    <div className="pointer-events-none absolute inset-0 grid place-items-start p-3 font-mono text-xs leading-5 text-[var(--app-dim)]">
+      {children}
+    </div>
   );
 }
 
-function PrimitiveValue({ value, query }: { value: unknown; query: string }) {
-  if (typeof value === "string") {
-    return <Highlighted text={JSON.stringify(value)} query={query} className="text-emerald-300" />;
+function stringify(value: unknown): string {
+  if (value === undefined) return "";
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
   }
-  if (typeof value === "number") {
-    return <Highlighted text={String(value)} query={query} className="text-sky-300" />;
-  }
-  if (typeof value === "boolean") {
-    return <Highlighted text={String(value)} query={query} className="text-amber-300" />;
-  }
-  if (value === null) {
-    return <Highlighted text="null" query={query} className="text-muted-foreground" />;
-  }
-  return <Highlighted text={String(value)} query={query} className="text-muted-foreground" />;
-}
-
-function Highlighted({
-  text,
-  query,
-  className,
-}: {
-  text: string;
-  query: string;
-  className: string;
-}) {
-  const normalized = query.trim();
-  if (!normalized) return <span className={className}>{text}</span>;
-  const index = text.toLowerCase().indexOf(normalized.toLowerCase());
-  if (index === -1) return <span className={className}>{text}</span>;
-
-  return (
-    <span className={className}>
-      {text.slice(0, index)}
-      <mark className="rounded bg-violet-400/35 text-foreground">
-        {text.slice(index, index + normalized.length)}
-      </mark>
-      {text.slice(index + normalized.length)}
-    </span>
-  );
-}
-
-function buildRows(value: unknown, collapsed: Set<string>) {
-  if (!isJsonValue(value)) {
-    return [{ id: "text", depth: 0, kind: "text", value: String(value) } satisfies JsonRow];
-  }
-  const rows: JsonRow[] = [];
-  appendRows(rows, value, "root", 0);
-  return rows;
-
-  function appendRows(rows: JsonRow[], current: unknown, id: string, depth: number, key?: string) {
-    if (Array.isArray(current)) {
-      rows.push({
-        id,
-        depth,
-        key,
-        kind: "open",
-        summary: collapsed.has(id) ? `[ ... ${current.length} ]` : "[",
-        foldable: true,
-      });
-      if (!collapsed.has(id)) {
-        current.forEach((item, index) => appendRows(rows, item, `${id}.${index}`, depth + 1));
-        rows.push({ id: `${id}.close`, depth, kind: "close", closing: "]" });
-      }
-      return;
-    }
-    if (current && typeof current === "object") {
-      const entries = Object.entries(current as Record<string, unknown>);
-      rows.push({
-        id,
-        depth,
-        key,
-        kind: "open",
-        summary: collapsed.has(id) ? `{ ... ${entries.length} }` : "{",
-        foldable: true,
-      });
-      if (!collapsed.has(id)) {
-        entries.forEach(([childKey, childValue]) =>
-          appendRows(rows, childValue, `${id}.${childKey}`, depth + 1, childKey),
-        );
-        rows.push({ id: `${id}.close`, depth, kind: "close", closing: "}" });
-      }
-      return;
-    }
-    rows.push({ id, depth, key, kind: "primitive", value: current });
-  }
-}
-
-function isJsonValue(value: unknown) {
-  return value === null || ["string", "number", "boolean", "object"].includes(typeof value);
-}
-
-function rowText(row: JsonRow) {
-  if (row.kind === "close") return row.closing ?? "";
-  if (row.kind === "open") return `${row.key ?? ""} ${row.summary ?? ""}`;
-  return `${row.key ?? ""} ${String(row.value ?? "")}`;
 }

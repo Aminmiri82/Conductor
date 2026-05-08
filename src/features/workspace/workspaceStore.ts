@@ -1,5 +1,12 @@
 import { create } from "zustand";
 import { api } from "@/lib/tauri";
+import {
+  applyPathParamRowChanges,
+  buildQueryString,
+  derivePathParamRows,
+  deriveQueryRows,
+  replaceQueryInUrl,
+} from "@/features/requests/urlParams";
 import type {
   AppTheme,
   CollectionNode,
@@ -190,7 +197,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       error: undefined,
     });
     try {
-      const request = await api.getRequest(requestId);
+      const request = normalizeRequestParams(await api.getRequest(requestId));
       set((state) => ({
         requestDraftsById: {
           ...state.requestDraftsById,
@@ -352,7 +359,30 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const requestId = get().activeRequestId;
     const current = requestId ? get().requestDraftsById[requestId] : undefined;
     if (!current) return;
-    const request = { ...current, ...patch };
+    let request: RequestDetail = { ...current, ...patch };
+
+    if (patch.url !== undefined && patch.url !== current.url) {
+      request = {
+        ...request,
+        query: deriveQueryRows(request.url, current.query),
+        pathParams: derivePathParamRows(request.url, current.pathParams),
+      };
+    } else if (patch.query !== undefined) {
+      const nextUrl = replaceQueryInUrl(current.url, buildQueryString(patch.query));
+      request = { ...request, url: nextUrl };
+    } else if (patch.pathParams !== undefined) {
+      const nextUrl = applyPathParamRowChanges(
+        current.url,
+        current.pathParams,
+        patch.pathParams,
+      );
+      request = {
+        ...request,
+        url: nextUrl,
+        pathParams: derivePathParamRows(nextUrl, patch.pathParams),
+      };
+    }
+
     set((state) => ({
       requestDraftsById: {
         ...state.requestDraftsById,
@@ -599,6 +629,14 @@ function requestIdsForNode(node: CollectionNode): string[] {
     ...(node.requestId ? [node.requestId] : []),
     ...node.children.flatMap(requestIdsForNode),
   ];
+}
+
+function normalizeRequestParams(request: RequestDetail): RequestDetail {
+  return {
+    ...request,
+    query: deriveQueryRows(request.url, request.query ?? []),
+    pathParams: derivePathParamRows(request.url, request.pathParams ?? []),
+  };
 }
 
 function upsertTab(
