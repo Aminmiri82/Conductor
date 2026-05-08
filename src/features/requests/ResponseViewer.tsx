@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
 type JsonRow = {
@@ -114,8 +113,8 @@ export function ResponseViewer({
           </Button>
         </div>
       ) : null}
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="min-h-full py-2 font-mono text-xs leading-5">
+      <div className="min-h-0 flex-1 overflow-auto">
+        <div className="min-h-full w-max min-w-full py-2 font-mono text-xs leading-5">
           {rows.map((row) => (
             <div
               key={row.id}
@@ -146,7 +145,7 @@ export function ResponseViewer({
             </div>
           ))}
         </div>
-      </ScrollArea>
+      </div>
     </div>
   );
 
