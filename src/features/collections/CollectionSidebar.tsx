@@ -154,6 +154,20 @@ export function CollectionSidebar() {
     await moveNode(source, parentId, position);
   }
 
+  async function confirmDeleteRequest(requestId: string) {
+    if (!window.confirm("Delete this request?")) return;
+    await deleteRequest(requestId);
+  }
+
+  async function confirmDeleteNode(node: CollectionNode) {
+    const message =
+      node.kind === "folder"
+        ? `Delete folder "${node.name}" and everything inside it?`
+        : `Delete request "${node.name}"?`;
+    if (!window.confirm(message)) return;
+    await deleteNode(node);
+  }
+
   return (
     <DnDContext.Provider value={dnd}>
       <aside className="flex h-full min-h-0 flex-col border-r border-border/40 bg-[#151419]">
@@ -239,8 +253,8 @@ export function CollectionSidebar() {
                     onCreateRequest={createRequestIn}
                     onCreateFolder={createFolderIn}
                     onDuplicateRequest={duplicateRequest}
-                    onDeleteRequest={deleteRequest}
-                    onDeleteNode={deleteNode}
+                    onDeleteRequest={confirmDeleteRequest}
+                    onDeleteNode={confirmDeleteNode}
                     performDrop={performDrop}
                   />
                 ))}

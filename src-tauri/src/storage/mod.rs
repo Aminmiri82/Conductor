@@ -32,6 +32,8 @@ pub enum StorageError {
     ConnectionPoisoned,
     #[error("sqlite operation failed: {0}")]
     Sqlite(#[from] rusqlite::Error),
+    #[error("json operation failed: {0}")]
+    Json(#[from] serde_json::Error),
     #[error("cannot move a folder into itself or one of its descendants")]
     InvalidTreeMove,
 }

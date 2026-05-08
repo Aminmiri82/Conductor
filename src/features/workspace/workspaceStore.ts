@@ -3,9 +3,11 @@ import { api } from "@/lib/tauri";
 import type {
   CollectionNode,
   CollectionSummary,
+  RequestEditorTab,
   RequestDetail,
   ResolvedRequestPreview,
   SendRequestResult,
+  WorkspaceUiState,
 } from "@/features/types";
 
 export type RequestTab = {
@@ -13,21 +15,23 @@ export type RequestTab = {
   name: string;
   method: string;
   dirty: boolean;
-  request: RequestDetail;
 };
 
 type WorkspaceState = {
   collections: CollectionSummary[];
   tree: CollectionNode[];
   tabs: RequestTab[];
+  requestDraftsById: Record<string, RequestDetail>;
   activeCollectionId?: string;
   activeRequestId?: string;
-  activeRequest?: RequestDetail;
+  workspaceUi: WorkspaceUiState;
+  workspaceUiDirty: boolean;
   resolvedPreview?: ResolvedRequestPreview;
   response?: SendRequestResult;
   lastSavedAt?: number;
   sidebarVisible: boolean;
-  loading: boolean;
+  collectionLoading: boolean;
+  requestLoading: boolean;
   saving: boolean;
   sending: boolean;
   error?: string;
@@ -50,44 +54,49 @@ type WorkspaceState = {
   saveActiveRequest: () => Promise<void>;
   resolveActiveRequest: () => Promise<void>;
   sendActiveRequest: () => Promise<void>;
+  setRequestEditorTab: (requestId: string, tab: RequestEditorTab) => void;
+  scheduleWorkspaceUiStateFlush: () => void;
+  flushWorkspaceUiState: () => Promise<void>;
   toggleSidebar: () => void;
   clearError: () => void;
 };
 
-const LAST_ACTIVE_COLLECTION_KEY = "conductor:lastActiveCollectionId";
-
-function readLastActiveCollectionId() {
-  try {
-    return window.localStorage.getItem(LAST_ACTIVE_COLLECTION_KEY) ?? undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function writeLastActiveCollectionId(collectionId: string) {
-  try {
-    window.localStorage.setItem(LAST_ACTIVE_COLLECTION_KEY, collectionId);
-  } catch {
-    // Ignore storage failures so selection still works in restricted environments.
-  }
-}
+const WORKSPACE_UI_STATE_KEY = "workspace.ui";
+const WORKSPACE_UI_STATE_FLUSH_DELAY_MS = 300;
+const DEFAULT_WORKSPACE_UI_STATE: WorkspaceUiState = {
+  requestEditorTabs: {},
+};
+let workspaceUiStateFlushTimer: ReturnType<typeof window.setTimeout> | undefined;
+let workspaceUiStateFlushPromise = Promise.resolve();
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   collections: [],
   tree: [],
   tabs: [],
+  requestDraftsById: {},
+  workspaceUi: DEFAULT_WORKSPACE_UI_STATE,
+  workspaceUiDirty: false,
   sidebarVisible: true,
-  loading: false,
+  collectionLoading: false,
+  requestLoading: false,
   saving: false,
   sending: false,
 
   loadCollections: async () => {
-    set({ loading: true, error: undefined });
+    set({ collectionLoading: true, error: undefined });
     try {
       const collections = await api.listCollections();
-      set({ collections, loading: false });
+      const workspaceUi = normalizeWorkspaceUiState(
+        await api.getWorkspaceState(WORKSPACE_UI_STATE_KEY),
+      );
+      set({
+        collections,
+        workspaceUi,
+        workspaceUiDirty: false,
+        collectionLoading: false,
+      });
       const preferredCollectionId =
-        get().activeCollectionId ?? readLastActiveCollectionId();
+        get().activeCollectionId ?? workspaceUi.activeCollectionId;
       const current = collections.some(
         (collection) => collection.id === preferredCollectionId,
       )
@@ -97,12 +106,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         await get().selectCollection(current);
       }
     } catch (error) {
-      set({ error: String(error), loading: false });
+      set({ error: String(error), collectionLoading: false });
     }
   },
 
   importCollection: async (json) => {
-    set({ loading: true, error: undefined });
+    set({ collectionLoading: true, error: undefined });
     try {
       const collectionId = await api.importPostmanCollection(json);
       const collections = await api.listCollections();
@@ -112,65 +121,79 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         tree,
         activeCollectionId: collectionId,
         activeRequestId: undefined,
-        activeRequest: undefined,
         tabs: [],
+        requestDraftsById: {},
         response: undefined,
         resolvedPreview: undefined,
-        loading: false,
+        workspaceUi: withActiveCollection(get().workspaceUi, collectionId),
+        workspaceUiDirty: true,
+        collectionLoading: false,
+        requestLoading: false,
       });
-      writeLastActiveCollectionId(collectionId);
+      await get().flushWorkspaceUiState();
     } catch (error) {
-      set({ error: String(error), loading: false });
+      set({ error: String(error), collectionLoading: false });
     }
   },
 
   selectCollection: async (collectionId) => {
-    set({ loading: true, error: undefined });
+    set({ collectionLoading: true, error: undefined });
     try {
       const tree = await api.getCollectionTree(collectionId);
       set({
         tree,
         activeCollectionId: collectionId,
         activeRequestId: undefined,
-        activeRequest: undefined,
         tabs: [],
+        requestDraftsById: {},
         response: undefined,
         resolvedPreview: undefined,
-        loading: false,
+        workspaceUi: withActiveCollection(get().workspaceUi, collectionId),
+        workspaceUiDirty: true,
+        collectionLoading: false,
+        requestLoading: false,
       });
-      writeLastActiveCollectionId(collectionId);
+      await get().flushWorkspaceUiState();
     } catch (error) {
-      set({ error: String(error), loading: false });
+      set({ error: String(error), collectionLoading: false });
     }
   },
 
   selectRequest: async (requestId) => {
-    const existingTab = get().tabs.find((tab) => tab.requestId === requestId);
-    if (existingTab) {
+    const existingDraft = get().requestDraftsById[requestId];
+    if (existingDraft) {
       set({
-        activeRequest: existingTab.request,
         activeRequestId: requestId,
         response: undefined,
-        loading: false,
+        requestLoading: false,
       });
       await get().resolveActiveRequest();
       return;
     }
 
-    set({ loading: true, error: undefined });
+    set({
+      activeRequestId: requestId,
+      response: undefined,
+      resolvedPreview: undefined,
+      requestLoading: true,
+      error: undefined,
+    });
     try {
-      const activeRequest = await api.getRequest(requestId);
-      const tabs = upsertTab(get().tabs, activeRequest, false, false);
-      set({
-        activeRequest,
-        activeRequestId: requestId,
-        tabs,
-        response: undefined,
-        loading: false,
-      });
+      const request = await api.getRequest(requestId);
+      set((state) => ({
+        requestDraftsById: {
+          ...state.requestDraftsById,
+          [requestId]: request,
+        },
+        tabs: upsertTab(state.tabs, request, false, false),
+        requestLoading:
+          state.activeRequestId === requestId ? false : state.requestLoading,
+      }));
       await get().resolveActiveRequest();
     } catch (error) {
-      set({ error: String(error), loading: false });
+      if (get().activeRequestId === requestId) {
+        set({ error: String(error), requestLoading: false });
+      }
     }
   },
 
@@ -178,18 +201,22 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const current = get();
     const tabIndex = current.tabs.findIndex((tab) => tab.requestId === requestId);
     const tabs = current.tabs.filter((tab) => tab.requestId !== requestId);
+    const requestDraftsById = omitRequestDrafts(current.requestDraftsById, [
+      requestId,
+    ]);
     if (current.activeRequestId !== requestId) {
-      set({ tabs });
+      set({ tabs, requestDraftsById });
       return;
     }
 
     const nextTab = tabs[Math.max(0, tabIndex - 1)] ?? tabs[0];
     set({
       tabs,
+      requestDraftsById,
       activeRequestId: undefined,
-      activeRequest: undefined,
       response: undefined,
       resolvedPreview: undefined,
+      requestLoading: false,
     });
     if (nextTab) {
       await get().selectRequest(nextTab.requestId);
@@ -247,24 +274,21 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   deleteRequest: async (requestId) => {
     const collectionId = get().activeCollectionId;
     if (!collectionId) return;
-    const confirmed = window.confirm("Delete this request?");
-    if (!confirmed) return;
     set({ error: undefined });
     try {
       await api.deleteRequest(requestId);
       const tree = await api.getCollectionTree(collectionId);
       const current = get();
       const tabs = current.tabs.filter((tab) => tab.requestId !== requestId);
+      const activeDeleted = current.activeRequestId === requestId;
       set({
         tree,
         tabs,
-        activeRequestId:
-          current.activeRequestId === requestId ? undefined : current.activeRequestId,
-        activeRequest:
-          current.activeRequestId === requestId ? undefined : current.activeRequest,
-        response: current.activeRequestId === requestId ? undefined : current.response,
-        resolvedPreview:
-          current.activeRequestId === requestId ? undefined : current.resolvedPreview,
+        requestDraftsById: omitRequestDrafts(current.requestDraftsById, [requestId]),
+        activeRequestId: activeDeleted ? undefined : current.activeRequestId,
+        response: activeDeleted ? undefined : current.response,
+        resolvedPreview: activeDeleted ? undefined : current.resolvedPreview,
+        requestLoading: activeDeleted ? false : current.requestLoading,
       });
     } catch (error) {
       set({ error: String(error) });
@@ -274,12 +298,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   deleteNode: async (node) => {
     const collectionId = get().activeCollectionId;
     if (!collectionId) return;
-    const confirmed = window.confirm(
-      node.kind === "folder"
-        ? `Delete folder "${node.name}" and everything inside it?`
-        : `Delete request "${node.name}"?`,
-    );
-    if (!confirmed) return;
     set({ error: undefined });
     try {
       await api.deleteNode(node.id);
@@ -292,10 +310,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       set({
         tree,
         tabs: current.tabs.filter((tab) => !removedRequestIds.includes(tab.requestId)),
+        requestDraftsById: omitRequestDrafts(
+          current.requestDraftsById,
+          removedRequestIds,
+        ),
         activeRequestId: activeDeleted ? undefined : current.activeRequestId,
-        activeRequest: activeDeleted ? undefined : current.activeRequest,
         response: activeDeleted ? undefined : current.response,
         resolvedPreview: activeDeleted ? undefined : current.resolvedPreview,
+        requestLoading: activeDeleted ? false : current.requestLoading,
       });
     } catch (error) {
       set({ error: String(error) });
@@ -316,69 +338,192 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   updateRequest: (patch) => {
-    const current = get().activeRequest;
+    const requestId = get().activeRequestId;
+    const current = requestId ? get().requestDraftsById[requestId] : undefined;
     if (!current) return;
-    const activeRequest = { ...current, ...patch };
-    set({
-      activeRequest,
-      tabs: upsertTab(get().tabs, activeRequest, true, true),
+    const request = { ...current, ...patch };
+    set((state) => ({
+      requestDraftsById: {
+        ...state.requestDraftsById,
+        [request.id]: request,
+      },
+      tabs: upsertTab(state.tabs, request, true, true),
       lastSavedAt: undefined,
-    });
+    }));
   },
 
   saveActiveRequest: async () => {
-    const request = get().activeRequest;
+    const request = getActiveRequest(get());
     if (!request) return;
     set({ error: undefined, saving: true });
     try {
       await api.saveRequest(request);
-      set({
+      set((state) => ({
         saving: false,
-        lastSavedAt: Date.now(),
-        tabs: upsertTab(get().tabs, request, false, true),
-        tree: renameRequestNode(get().tree, request.id, request.name),
-      });
+        lastSavedAt:
+          state.activeRequestId === request.id ? Date.now() : state.lastSavedAt,
+        tabs: upsertTab(state.tabs, request, false, true),
+        tree: renameRequestNode(state.tree, request.id, request.name),
+      }));
       await get().resolveActiveRequest();
     } catch (error) {
-      set({ error: String(error), saving: false });
+      set({
+        error: get().activeRequestId === request.id ? String(error) : get().error,
+        saving: false,
+      });
     }
   },
 
   resolveActiveRequest: async () => {
-    const request = get().activeRequest;
+    const request = getActiveRequest(get());
     if (!request) return;
     try {
       const resolvedPreview = await api.resolveRequest(request);
-      set({ resolvedPreview });
+      if (get().activeRequestId === request.id) {
+        set({ resolvedPreview });
+      }
     } catch (error) {
-      set({ error: String(error) });
+      if (get().activeRequestId === request.id) {
+        set({ error: String(error) });
+      }
     }
   },
 
   sendActiveRequest: async () => {
-    const request = get().activeRequest;
+    const request = getActiveRequest(get());
     if (!request) return;
     set({ sending: true, saving: true, error: undefined });
     try {
       await api.saveRequest(request);
-      set({
-        tabs: upsertTab(get().tabs, request, false, true),
-        tree: renameRequestNode(get().tree, request.id, request.name),
-        lastSavedAt: Date.now(),
+      set((state) => ({
+        tabs: upsertTab(state.tabs, request, false, true),
+        tree: renameRequestNode(state.tree, request.id, request.name),
+        lastSavedAt:
+          state.activeRequestId === request.id ? Date.now() : state.lastSavedAt,
         saving: false,
-      });
+      }));
       const response = await api.sendRequest(request);
-      set({ response, sending: false });
+      if (get().activeRequestId === request.id) {
+        set({ response, sending: false });
+      } else {
+        set({ sending: false });
+      }
       await get().resolveActiveRequest();
     } catch (error) {
-      set({ error: String(error), sending: false, saving: false });
+      set({
+        error: get().activeRequestId === request.id ? String(error) : get().error,
+        sending: false,
+        saving: false,
+      });
       await get().resolveActiveRequest();
     }
+  },
+
+  setRequestEditorTab: (requestId, tab) => {
+    set((state) => ({
+      workspaceUi: {
+        ...state.workspaceUi,
+        requestEditorTabs: {
+          ...state.workspaceUi.requestEditorTabs,
+          [requestId]: tab,
+        },
+      },
+      workspaceUiDirty: true,
+    }));
+    get().scheduleWorkspaceUiStateFlush();
+  },
+
+  scheduleWorkspaceUiStateFlush: () => {
+    if (workspaceUiStateFlushTimer) {
+      window.clearTimeout(workspaceUiStateFlushTimer);
+    }
+    workspaceUiStateFlushTimer = window.setTimeout(() => {
+      workspaceUiStateFlushTimer = undefined;
+      void get().flushWorkspaceUiState();
+    }, WORKSPACE_UI_STATE_FLUSH_DELAY_MS);
+  },
+
+  flushWorkspaceUiState: async () => {
+    if (workspaceUiStateFlushTimer) {
+      window.clearTimeout(workspaceUiStateFlushTimer);
+      workspaceUiStateFlushTimer = undefined;
+    }
+
+    const runFlush = async () => {
+      const { workspaceUi, workspaceUiDirty } = get();
+      if (!workspaceUiDirty) return;
+      try {
+        await api.setWorkspaceState(WORKSPACE_UI_STATE_KEY, workspaceUi);
+        if (get().workspaceUi === workspaceUi) {
+          set({ workspaceUiDirty: false });
+        }
+      } catch {
+        // Workspace UI state is a best-effort preference cache.
+      }
+    };
+
+    workspaceUiStateFlushPromise = workspaceUiStateFlushPromise.then(
+      runFlush,
+      runFlush,
+    );
+    await workspaceUiStateFlushPromise;
   },
 
   toggleSidebar: () => set((state) => ({ sidebarVisible: !state.sidebarVisible })),
   clearError: () => set({ error: undefined }),
 }));
+
+function getActiveRequest(state: WorkspaceState): RequestDetail | undefined {
+  return state.activeRequestId
+    ? state.requestDraftsById[state.activeRequestId]
+    : undefined;
+}
+
+function normalizeWorkspaceUiState(
+  value: WorkspaceUiState | null | undefined,
+): WorkspaceUiState {
+  if (!value || typeof value !== "object") return DEFAULT_WORKSPACE_UI_STATE;
+  return {
+    activeCollectionId:
+      typeof value.activeCollectionId === "string"
+        ? value.activeCollectionId
+        : undefined,
+    requestEditorTabs:
+      value.requestEditorTabs && typeof value.requestEditorTabs === "object"
+        ? normalizeRequestEditorTabs(value.requestEditorTabs)
+        : {},
+  };
+}
+
+function normalizeRequestEditorTabs(
+  tabs: Record<string, RequestEditorTab>,
+): Record<string, RequestEditorTab> {
+  return Object.fromEntries(
+    Object.entries(tabs).filter((entry): entry is [string, RequestEditorTab] =>
+      isRequestEditorTab(entry[1]),
+    ),
+  );
+}
+
+function isRequestEditorTab(value: unknown): value is RequestEditorTab {
+  return (
+    value === "params" ||
+    value === "headers" ||
+    value === "auth" ||
+    value === "body" ||
+    value === "variables"
+  );
+}
+
+function withActiveCollection(
+  workspaceUi: WorkspaceUiState,
+  collectionId: string,
+): WorkspaceUiState {
+  return {
+    ...workspaceUi,
+    activeCollectionId: collectionId,
+  };
+}
 
 function renameRequestNode(
   nodes: CollectionNode[],
@@ -414,7 +559,6 @@ function upsertTab(
     name: request.name,
     method: request.method,
     dirty,
-    request,
   };
   const exists = tabs.some((item) => item.requestId === request.id);
   if (!exists) return [...tabs, tab];
@@ -422,5 +566,15 @@ function upsertTab(
     item.requestId === request.id
       ? { ...item, ...tab, dirty: replaceDirty ? dirty : item.dirty }
       : item,
+  );
+}
+
+function omitRequestDrafts(
+  drafts: Record<string, RequestDetail>,
+  requestIds: string[],
+): Record<string, RequestDetail> {
+  const removed = new Set(requestIds);
+  return Object.fromEntries(
+    Object.entries(drafts).filter(([requestId]) => !removed.has(requestId)),
   );
 }

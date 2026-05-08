@@ -7,7 +7,7 @@ use commands::requests::{
     list_variables, move_node, resolve_request, save_request, save_text_file, save_variables,
     send_request,
 };
-use commands::storage::database_status;
+use commands::storage::{database_status, get_workspace_state, set_workspace_state};
 use storage::Database;
 use tauri::Manager;
 
@@ -34,6 +34,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             database_status,
+            get_workspace_state,
+            set_workspace_state,
             create_folder,
             create_request,
             delete_node,

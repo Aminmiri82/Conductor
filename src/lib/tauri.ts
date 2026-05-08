@@ -4,12 +4,17 @@ import type {
   CollectionSummary,
   RequestDetail,
   ResolvedRequestPreview,
+  WorkspaceUiState,
   SendRequestResult,
   VariableEntry,
 } from "@/features/types";
 
 export const api = {
   listCollections: () => invoke<CollectionSummary[]>("list_collections"),
+  getWorkspaceState: (key: string) =>
+    invoke<WorkspaceUiState | null>("get_workspace_state", { key }),
+  setWorkspaceState: (key: string, value: WorkspaceUiState) =>
+    invoke<void>("set_workspace_state", { key, value }),
   getCollectionTree: (collectionId: string) =>
     invoke<CollectionNode[]>("get_collection_tree", { collectionId }),
   importPostmanCollection: (postmanJson: string) =>

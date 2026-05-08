@@ -19,7 +19,11 @@ import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { api } from "@/lib/tauri";
 
 export function RequestWorkspace() {
-  const request = useWorkspaceStore((state) => state.activeRequest);
+  const request = useWorkspaceStore((state) =>
+    state.activeRequestId
+      ? state.requestDraftsById[state.activeRequestId]
+      : undefined,
+  );
   const updateRequest = useWorkspaceStore((state) => state.updateRequest);
   const sendActiveRequest = useWorkspaceStore((state) => state.sendActiveRequest);
   const saveActiveRequest = useWorkspaceStore((state) => state.saveActiveRequest);
@@ -29,6 +33,12 @@ export function RequestWorkspace() {
   const activeRequestId = useWorkspaceStore((state) => state.activeRequestId);
   const activeTab = useWorkspaceStore((state) =>
     state.tabs.find((tab) => tab.requestId === state.activeRequestId),
+  );
+  const activeEditorTab = useWorkspaceStore((state) =>
+    request ? (state.workspaceUi.requestEditorTabs[request.id] ?? "params") : "params",
+  );
+  const setRequestEditorTab = useWorkspaceStore(
+    (state) => state.setRequestEditorTab,
   );
   const response = useWorkspaceStore((state) => state.response);
   const preview = useWorkspaceStore((state) => state.resolvedPreview);
@@ -75,7 +85,13 @@ export function RequestWorkspace() {
 
       <ResizablePanelGroup orientation="vertical" className="min-h-0 flex-1">
         <ResizablePanel defaultSize="58%" minSize="34%">
-          <Tabs defaultValue="params" className="flex h-full min-h-0 flex-col">
+          <Tabs
+            value={activeEditorTab}
+            onValueChange={(value) =>
+              setRequestEditorTab(request.id, value as typeof activeEditorTab)
+            }
+            className="flex h-full min-h-0 flex-col"
+          >
             <div className="border-b border-border/60 px-3 pt-2">
               <TabsList className="h-8 bg-transparent p-0">
                 <TabsTrigger value="params">Params</TabsTrigger>

@@ -45,6 +45,13 @@ export type RequestDetail = {
   updatedAt: string;
 };
 
+export type RequestEditorTab = "params" | "headers" | "auth" | "body" | "variables";
+
+export type WorkspaceUiState = {
+  activeCollectionId?: string;
+  requestEditorTabs: Record<string, RequestEditorTab>;
+};
+
 export type CollectionSummary = {
   id: string;
   name: string;
