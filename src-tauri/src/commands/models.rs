@@ -186,8 +186,10 @@ pub struct SendRequestResult {
     pub status_text: String,
     pub duration_ms: u128,
     pub headers: Vec<ResponseHeader>,
-    pub body_text: String,
-    pub body_json: Option<Value>,
+    pub body: String,
+    pub body_bytes: usize,
+    pub body_content_type: Option<String>,
+    pub body_format: String,
     pub updated_variables: Vec<KeyValue>,
     pub unresolved_variables: Vec<UnresolvedVariable>,
 }

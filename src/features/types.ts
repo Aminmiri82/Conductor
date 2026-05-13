@@ -114,8 +114,10 @@ export type SendRequestResult = {
   statusText: string;
   durationMs: number;
   headers: ResponseHeader[];
-  bodyText: string;
-  bodyJson?: unknown;
+  body: string;
+  bodyBytes: number;
+  bodyContentType?: string | null;
+  bodyFormat: "json" | "text" | string;
   updatedVariables: KeyValue[];
   unresolvedVariables: UnresolvedVariable[];
 };

@@ -16,6 +16,7 @@ use tauri::{
 
 pub struct AppState {
     database: Database,
+    http_client: reqwest::Client,
 }
 
 #[tauri::command]
@@ -31,8 +32,14 @@ pub fn run() {
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
             let database = Database::open(app_data_dir)?;
+            let http_client = reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::limited(10))
+                .build()?;
 
-            app.manage(AppState { database });
+            app.manage(AppState {
+                database,
+                http_client,
+            });
             app.set_menu(build_app_menu(app.handle())?)?;
             Ok(())
         })
@@ -81,7 +88,7 @@ pub fn run() {
 }
 
 fn build_app_menu<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
+    app: &tauri::AppHandle<R>
 ) -> tauri::Result<Menu<R>> {
     let file_menu = Submenu::with_items(
         app,

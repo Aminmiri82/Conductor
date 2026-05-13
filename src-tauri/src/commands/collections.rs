@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fs, path::Path};
 
 use chrono::Utc;
 use rusqlite::params;
@@ -14,7 +14,7 @@ use super::models::{CollectionNode, CollectionSummary};
 pub fn list_collections(state: State<'_, AppState>) -> Result<Vec<CollectionSummary>, String> {
     state
         .database
-        .with_connection(|connection| {
+        .with_read_connection(|connection| {
             let mut statement = connection.prepare(
                 "SELECT id, name, source, updated_at FROM collections ORDER BY updated_at DESC",
             )?;
@@ -40,7 +40,7 @@ pub fn get_collection_tree(
 ) -> Result<Vec<CollectionNode>, String> {
     state
         .database
-        .with_connection(|connection| {
+        .with_read_connection(|connection| {
             let mut statement = connection.prepare(
                 "SELECT n.id, n.collection_id, n.parent_id, n.position, n.kind, n.name, n.request_id,
                         r.method
@@ -85,20 +85,29 @@ pub fn import_postman_collection(
         .map(ToString::to_string);
     let collection_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
+    let raw_collection_path = write_raw_import_file(
+        state.database.raw_import_dir(),
+        &collection_id,
+        "collection",
+        &postman_json,
+    )
+    .map_err(|error| error.to_string())?;
 
     state
         .database
         .with_connection(|connection| {
             let tx = connection.transaction()?;
             tx.execute(
-                "INSERT INTO collections (id, name, source, postman_schema, auth_json, raw_postman_json, created_at, updated_at)
+                "INSERT INTO collections
+                 (id, name, source, postman_schema, auth_json, raw_postman_file_path,
+                  created_at, updated_at)
                  VALUES (?, ?, 'postman', ?, ?, ?, ?, ?)",
                 params![
                     collection_id,
                     name,
                     schema,
                     postman_auth(&collection).map(|value| value.to_string()),
-                    postman_json,
+                    raw_collection_path,
                     now,
                     now
                 ],
@@ -177,8 +186,8 @@ fn import_items(
             tx.execute(
                 "INSERT INTO requests
                  (id, collection_id, method, url, headers_json, query_json, path_params_json, auth_json, body_json,
-                  raw_postman_item_json, pre_request_script_json, test_script_json, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?)",
+                  pre_request_script_json, test_script_json, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?)",
                 params![
                     request_id,
                     collection_id,
@@ -188,7 +197,6 @@ fn import_items(
                     query.to_string(),
                     auth.map(|value| value.to_string()),
                     body.map(|value| value.to_string()),
-                    item.to_string(),
                     pre_request_script.map(|value| value.to_string()),
                     test_script.map(|value| value.to_string()),
                     now,
@@ -222,6 +230,25 @@ fn import_items(
     }
 
     Ok(())
+}
+
+fn write_raw_import_file(
+    raw_import_dir: &Path,
+    collection_id: &str,
+    name: &str,
+    contents: &str,
+) -> Result<String, StorageError> {
+    let collection_dir = raw_import_dir.join(collection_id);
+    fs::create_dir_all(&collection_dir).map_err(|source| StorageError::FileOperation {
+        path: collection_dir.clone(),
+        source,
+    })?;
+    let path = collection_dir.join(format!("{name}.json"));
+    fs::write(&path, contents).map_err(|source| StorageError::FileOperation {
+        path: path.clone(),
+        source,
+    })?;
+    Ok(path.display().to_string())
 }
 
 fn insert_variable(

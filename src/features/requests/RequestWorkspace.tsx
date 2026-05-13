@@ -17,21 +17,21 @@ import { VariableEditor } from "@/features/variables/VariableEditor";
 import { RequestTabsBar } from "@/features/requests/RequestTabsBar";
 import { ResponseViewer } from "@/features/requests/ResponseViewer";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
+import { useDraftStore } from "@/features/workspace/draftStore";
+import { useResponseStore } from "@/features/workspace/responseStore";
 import { api } from "@/lib/tauri";
 import type { KeyValue } from "@/features/types";
 
 export function RequestWorkspace() {
-  const request = useWorkspaceStore((state) =>
-    state.activeRequestId
-      ? state.requestDraftsById[state.activeRequestId]
-      : undefined,
+  const activeRequestId = useWorkspaceStore((state) => state.activeRequestId);
+  const request = useDraftStore((state) =>
+    activeRequestId ? state.drafts.get(activeRequestId) : undefined,
   );
   const updateRequest = useWorkspaceStore((state) => state.updateRequest);
   const sendActiveRequest = useWorkspaceStore((state) => state.sendActiveRequest);
   const saveActiveRequest = useWorkspaceStore((state) => state.saveActiveRequest);
   const sending = useWorkspaceStore((state) => state.sending);
   const saving = useWorkspaceStore((state) => state.saving);
-  const activeRequestId = useWorkspaceStore((state) => state.activeRequestId);
   const activeTab = useWorkspaceStore((state) =>
     state.tabs.find((tab) => tab.requestId === state.activeRequestId),
   );
@@ -41,8 +41,12 @@ export function RequestWorkspace() {
   const setRequestEditorTab = useWorkspaceStore(
     (state) => state.setRequestEditorTab,
   );
-  const response = useWorkspaceStore((state) => state.response);
-  const preview = useWorkspaceStore((state) => state.resolvedPreview);
+  const response = useResponseStore((state) =>
+    activeRequestId ? state.responses.get(activeRequestId) : undefined,
+  );
+  const preview = useDraftStore((state) =>
+    activeRequestId ? state.previews.get(activeRequestId) : undefined,
+  );
   const unresolved = preview?.unresolvedVariables ?? [];
   const variableValues = useMemo(
     () => (request ? resolveUrlVariableValues(request.url, preview?.url) : {}),
@@ -196,15 +200,27 @@ export function RequestWorkspace() {
               </Button>
             </div>
             <div className="min-h-0 flex-1">
-              <ResponseViewer
-                sending={sending}
-                value={response ? (response.bodyJson ?? response.bodyText) : undefined}
-              />
+              {response ? (
+                <ResponseViewer
+                  sending={sending}
+                  value={response.body}
+                />
+              ) : (
+                <ResponsePlaceholder sending={sending} />
+              )}
             </div>
           </div>
         </ResizablePanel>
       </ResizablePanelGroup>
     </section>
+  );
+}
+
+function ResponsePlaceholder({ sending }: { sending: boolean }) {
+  return (
+    <div className="h-full min-h-0 p-3 font-mono text-xs leading-5 text-[var(--app-dim)]">
+      {sending ? "Sending request" : "Send a request to see the response."}
+    </div>
   );
 }
 

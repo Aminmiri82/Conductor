@@ -7,14 +7,17 @@ import {
   deriveQueryRows,
   replaceQueryInUrl,
 } from "@/features/requests/urlParams";
+import {
+  getDraft,
+  useDraftStore,
+} from "@/features/workspace/draftStore";
+import { useResponseStore } from "@/features/workspace/responseStore";
 import type {
   AppTheme,
   CollectionNode,
   CollectionSummary,
   RequestEditorTab,
   RequestDetail,
-  ResolvedRequestPreview,
-  SendRequestResult,
   SettingsTab,
   UrlDisplayMode,
   WorkspaceUiState,
@@ -31,14 +34,10 @@ type WorkspaceState = {
   collections: CollectionSummary[];
   tree: CollectionNode[];
   tabs: RequestTab[];
-  requestDraftsById: Record<string, RequestDetail>;
   activeCollectionId?: string;
   activeRequestId?: string;
   workspaceUi: WorkspaceUiState;
   workspaceUiDirty: boolean;
-  resolvedPreview?: ResolvedRequestPreview;
-  response?: SendRequestResult;
-  lastSavedAt?: number;
   sidebarVisible: boolean;
   collectionLoading: boolean;
   requestLoading: boolean;
@@ -91,7 +90,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   collections: [],
   tree: [],
   tabs: [],
-  requestDraftsById: {},
   workspaceUi: DEFAULT_WORKSPACE_UI_STATE,
   workspaceUiDirty: false,
   sidebarVisible: true,
@@ -140,14 +138,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         activeCollectionId: collectionId,
         activeRequestId: undefined,
         tabs: [],
-        requestDraftsById: {},
-        response: undefined,
-        resolvedPreview: undefined,
         workspaceUi: withActiveCollection(get().workspaceUi, collectionId),
         workspaceUiDirty: true,
         collectionLoading: false,
         requestLoading: false,
       });
+      useDraftStore.getState().clearAll();
+      useResponseStore.getState().clearAll();
       await get().flushWorkspaceUiState();
     } catch (error) {
       set({ error: String(error), collectionLoading: false });
@@ -163,14 +160,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         activeCollectionId: collectionId,
         activeRequestId: undefined,
         tabs: [],
-        requestDraftsById: {},
-        response: undefined,
-        resolvedPreview: undefined,
         workspaceUi: withActiveCollection(get().workspaceUi, collectionId),
         workspaceUiDirty: true,
         collectionLoading: false,
         requestLoading: false,
       });
+      useDraftStore.getState().clearAll();
+      useResponseStore.getState().clearAll();
       await get().flushWorkspaceUiState();
     } catch (error) {
       set({ error: String(error), collectionLoading: false });
@@ -178,11 +174,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   selectRequest: async (requestId) => {
-    const existingDraft = get().requestDraftsById[requestId];
+    const existingDraft = getDraft(requestId);
     if (existingDraft) {
       set({
         activeRequestId: requestId,
-        response: undefined,
         requestLoading: false,
       });
       await get().resolveActiveRequest();
@@ -191,18 +186,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
     set({
       activeRequestId: requestId,
-      response: undefined,
-      resolvedPreview: undefined,
       requestLoading: true,
       error: undefined,
     });
     try {
       const request = normalizeRequestParams(await api.getRequest(requestId));
+      useDraftStore.getState().setDraft(request, false);
       set((state) => ({
-        requestDraftsById: {
-          ...state.requestDraftsById,
-          [requestId]: request,
-        },
         tabs: upsertTab(state.tabs, request, false, false),
         requestLoading:
           state.activeRequestId === requestId ? false : state.requestLoading,
@@ -219,21 +209,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const current = get();
     const tabIndex = current.tabs.findIndex((tab) => tab.requestId === requestId);
     const tabs = current.tabs.filter((tab) => tab.requestId !== requestId);
-    const requestDraftsById = omitRequestDrafts(current.requestDraftsById, [
-      requestId,
-    ]);
+    useDraftStore.getState().removeMany([requestId]);
+    useResponseStore.getState().removeMany([requestId]);
     if (current.activeRequestId !== requestId) {
-      set({ tabs, requestDraftsById });
+      set({ tabs });
       return;
     }
 
     const nextTab = tabs[Math.max(0, tabIndex - 1)] ?? tabs[0];
     set({
       tabs,
-      requestDraftsById,
       activeRequestId: undefined,
-      response: undefined,
-      resolvedPreview: undefined,
       requestLoading: false,
     });
     if (nextTab) {
@@ -299,13 +285,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const current = get();
       const tabs = current.tabs.filter((tab) => tab.requestId !== requestId);
       const activeDeleted = current.activeRequestId === requestId;
+      useDraftStore.getState().removeMany([requestId]);
+      useResponseStore.getState().removeMany([requestId]);
       set({
         tree,
         tabs,
-        requestDraftsById: omitRequestDrafts(current.requestDraftsById, [requestId]),
         activeRequestId: activeDeleted ? undefined : current.activeRequestId,
-        response: activeDeleted ? undefined : current.response,
-        resolvedPreview: activeDeleted ? undefined : current.resolvedPreview,
         requestLoading: activeDeleted ? false : current.requestLoading,
       });
     } catch (error) {
@@ -325,16 +310,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const activeDeleted =
         current.activeRequestId !== undefined &&
         removedRequestIds.includes(current.activeRequestId);
+      useDraftStore.getState().removeMany(removedRequestIds);
+      useResponseStore.getState().removeMany(removedRequestIds);
       set({
         tree,
         tabs: current.tabs.filter((tab) => !removedRequestIds.includes(tab.requestId)),
-        requestDraftsById: omitRequestDrafts(
-          current.requestDraftsById,
-          removedRequestIds,
-        ),
         activeRequestId: activeDeleted ? undefined : current.activeRequestId,
-        response: activeDeleted ? undefined : current.response,
-        resolvedPreview: activeDeleted ? undefined : current.resolvedPreview,
         requestLoading: activeDeleted ? false : current.requestLoading,
       });
     } catch (error) {
@@ -357,7 +338,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   updateRequest: (patch) => {
     const requestId = get().activeRequestId;
-    const current = requestId ? get().requestDraftsById[requestId] : undefined;
+    const current = getDraft(requestId);
     if (!current) return;
     let request: RequestDetail = { ...current, ...patch };
 
@@ -383,26 +364,21 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       };
     }
 
+    useDraftStore.getState().setDraft(request, true);
     set((state) => ({
-      requestDraftsById: {
-        ...state.requestDraftsById,
-        [request.id]: request,
-      },
       tabs: upsertTab(state.tabs, request, true, true),
-      lastSavedAt: undefined,
     }));
   },
 
   saveActiveRequest: async () => {
-    const request = getActiveRequest(get());
+    const request = getDraft(get().activeRequestId);
     if (!request) return;
     set({ error: undefined, saving: true });
     try {
       await api.saveRequest(request);
+      useDraftStore.getState().markSaved(request.id);
       set((state) => ({
         saving: false,
-        lastSavedAt:
-          state.activeRequestId === request.id ? Date.now() : state.lastSavedAt,
         tabs: upsertTab(state.tabs, request, false, true),
         tree: renameRequestNode(state.tree, request.id, request.name),
       }));
@@ -416,12 +392,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   resolveActiveRequest: async () => {
-    const request = getActiveRequest(get());
+    const request = getDraft(get().activeRequestId);
     if (!request) return;
     try {
       const resolvedPreview = await api.resolveRequest(request);
       if (get().activeRequestId === request.id) {
-        set({ resolvedPreview });
+        useDraftStore.getState().setPreview(request.id, resolvedPreview);
       }
     } catch (error) {
       if (get().activeRequestId === request.id) {
@@ -431,21 +407,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   sendActiveRequest: async () => {
-    const request = getActiveRequest(get());
+    const request = getDraft(get().activeRequestId);
     if (!request) return;
-    set({ sending: true, saving: true, error: undefined });
+    set({ sending: true, error: undefined });
     try {
-      await api.saveRequest(request);
-      set((state) => ({
-        tabs: upsertTab(state.tabs, request, false, true),
-        tree: renameRequestNode(state.tree, request.id, request.name),
-        lastSavedAt:
-          state.activeRequestId === request.id ? Date.now() : state.lastSavedAt,
-        saving: false,
-      }));
       const response = await api.sendRequest(request);
+      useResponseStore.getState().setResponse(request.id, response);
       if (get().activeRequestId === request.id) {
-        set({ response, sending: false });
+        set({ sending: false });
       } else {
         set({ sending: false });
       }
@@ -454,7 +423,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       set({
         error: get().activeRequestId === request.id ? String(error) : get().error,
         sending: false,
-        saving: false,
       });
       await get().resolveActiveRequest();
     }
@@ -524,12 +492,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   toggleSidebar: () => set((state) => ({ sidebarVisible: !state.sidebarVisible })),
   clearError: () => set({ error: undefined }),
 }));
-
-function getActiveRequest(state: WorkspaceState): RequestDetail | undefined {
-  return state.activeRequestId
-    ? state.requestDraftsById[state.activeRequestId]
-    : undefined;
-}
 
 function normalizeWorkspaceUiState(
   value: WorkspaceUiState | null | undefined,
@@ -657,15 +619,5 @@ function upsertTab(
     item.requestId === request.id
       ? { ...item, ...tab, dirty: replaceDirty ? dirty : item.dirty }
       : item,
-  );
-}
-
-function omitRequestDrafts(
-  drafts: Record<string, RequestDetail>,
-  requestIds: string[],
-): Record<string, RequestDetail> {
-  const removed = new Set(requestIds);
-  return Object.fromEntries(
-    Object.entries(drafts).filter(([requestId]) => !removed.has(requestId)),
   );
 }

@@ -3,7 +3,8 @@ CREATE TABLE IF NOT EXISTS collections (
     name TEXT NOT NULL,
     source TEXT NOT NULL DEFAULT 'postman',
     postman_schema TEXT,
-    raw_postman_json TEXT,
+    auth_json TEXT,
+    raw_postman_file_path TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -18,6 +19,8 @@ CREATE TABLE IF NOT EXISTS requests (
     path_params_json TEXT NOT NULL DEFAULT '[]',
     auth_json TEXT,
     body_json TEXT,
+    pre_request_script_json TEXT,
+    test_script_json TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE
@@ -35,6 +38,7 @@ CREATE TABLE IF NOT EXISTS collection_nodes (
     name TEXT NOT NULL,
     request_id TEXT,
     variables_json TEXT,
+    auth_json TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE,

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs, time::Instant};
+use std::{collections::HashMap, fs as std_fs, time::Instant};
 
 use chrono::Utc;
 use reqwest::{
@@ -25,7 +25,7 @@ pub fn get_request(
 ) -> Result<RequestDetail, String> {
     state
         .database
-        .with_connection(|connection| {
+        .with_read_connection(|connection| {
             let mut request: RequestDetail = connection.query_row(
                 "SELECT r.id, r.collection_id, n.name, r.method, r.url, r.headers_json, r.query_json,
                         r.path_params_json, r.auth_json, r.body_json, r.pre_request_script_json,
@@ -94,9 +94,9 @@ pub fn create_request(
             tx.execute(
                 "INSERT INTO requests
                  (id, collection_id, method, url, headers_json, query_json, path_params_json,
-                  auth_json, body_json, raw_postman_item_json, pre_request_script_json,
+                  auth_json, body_json, pre_request_script_json,
                   test_script_json, created_at, updated_at)
-                 VALUES (?, ?, 'GET', '', '[]', '[]', '[]', NULL, NULL, NULL, NULL, NULL, ?, ?)",
+                 VALUES (?, ?, 'GET', '', '[]', '[]', '[]', NULL, NULL, NULL, NULL, ?, ?)",
                 params![request_id, input.collection_id, now, now],
             )?;
             tx.execute(
@@ -175,7 +175,7 @@ pub fn duplicate_request(
             let tx = connection.transaction()?;
             let source = tx.query_row(
                 "SELECT r.collection_id, r.method, r.url, r.headers_json, r.query_json,
-                        r.path_params_json, r.auth_json, r.body_json, r.raw_postman_item_json,
+                        r.path_params_json, r.auth_json, r.body_json,
                         r.pre_request_script_json, r.test_script_json,
                         n.parent_id, n.position, n.name, n.variables_json, n.auth_json
                  FROM requests r
@@ -192,14 +192,13 @@ pub fn duplicate_request(
                         path_params_json: row.get(5)?,
                         auth_json: row.get(6)?,
                         body_json: row.get(7)?,
-                        raw_postman_item_json: row.get(8)?,
-                        pre_request_script_json: row.get(9)?,
-                        test_script_json: row.get(10)?,
-                        parent_id: row.get(11)?,
-                        position: row.get(12)?,
-                        name: row.get::<_, String>(13)?,
-                        variables_json: row.get(14)?,
-                        node_auth_json: row.get(15)?,
+                        pre_request_script_json: row.get(8)?,
+                        test_script_json: row.get(9)?,
+                        parent_id: row.get(10)?,
+                        position: row.get(11)?,
+                        name: row.get::<_, String>(12)?,
+                        variables_json: row.get(13)?,
+                        node_auth_json: row.get(14)?,
                     })
                 },
             )?;
@@ -213,9 +212,9 @@ pub fn duplicate_request(
             tx.execute(
                 "INSERT INTO requests
                  (id, collection_id, method, url, headers_json, query_json, path_params_json,
-                  auth_json, body_json, raw_postman_item_json, pre_request_script_json,
+                  auth_json, body_json, pre_request_script_json,
                   test_script_json, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 params![
                     new_request_id,
                     source.collection_id,
@@ -226,7 +225,6 @@ pub fn duplicate_request(
                     source.path_params_json,
                     source.auth_json,
                     source.body_json,
-                    source.raw_postman_item_json,
                     source.pre_request_script_json,
                     source.test_script_json,
                     now,
@@ -332,7 +330,7 @@ pub fn move_node(input: MoveNodeInput, state: State<'_, AppState>) -> Result<(),
 
 #[tauri::command]
 pub fn save_text_file(input: SaveTextFileInput) -> Result<(), String> {
-    fs::write(input.path, input.contents).map_err(|error| error.to_string())
+    std_fs::write(input.path, input.contents).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -384,7 +382,7 @@ pub fn list_variables(
 ) -> Result<Vec<VariableEntry>, String> {
     state
         .database
-        .with_connection(|connection| {
+        .with_read_connection(|connection| {
             let mut statement = connection.prepare(
                 "SELECT scope_kind, scope_id, key, value, enabled, sensitive
                  FROM variables
@@ -456,7 +454,7 @@ pub fn resolve_request(
 ) -> Result<ResolvedRequestPreview, String> {
     state
         .database
-        .with_connection(|connection| {
+        .with_read_connection(|connection| {
             let variables = load_variable_context(connection, &request)?;
             Ok(resolve_request_with_context(&request, &variables))
         })
@@ -470,17 +468,13 @@ pub async fn send_request(
 ) -> Result<SendRequestResult, String> {
     let variables = state
         .database
-        .with_connection(|connection| load_variable_context(connection, &input.request))
+        .with_read_connection(|connection| load_variable_context(connection, &input.request))
         .map_err(|error| error.to_string())?;
     let preview = resolve_request_with_context(&input.request, &variables);
     if !preview.unresolved_variables.is_empty() {
         return Err("request has unresolved variables".to_string());
     }
 
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::limited(10))
-        .build()
-        .map_err(|error| error.to_string())?;
     let query_pairs = preview
         .query
         .iter()
@@ -494,7 +488,7 @@ pub async fn send_request(
     };
 
     let method = Method::from_bytes(input.request.method.as_bytes()).map_err(|e| e.to_string())?;
-    let mut builder = client.request(method, request_url);
+    let mut builder = state.http_client.request(method, request_url);
     let mut headers = HeaderMap::new();
     if !query_pairs.is_empty() {
         builder = builder.query(&query_pairs);
@@ -524,8 +518,12 @@ pub async fn send_request(
     let response = builder.send().await.map_err(|error| error.to_string())?;
     let duration_ms = started.elapsed().as_millis();
     let status = response.status();
-    let headers = response
-        .headers()
+    let response_headers = response.headers().clone();
+    let content_type = response_headers
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(ToString::to_string);
+    let headers = response_headers
         .iter()
         .map(|(key, value)| ResponseHeader {
             key: key.to_string(),
@@ -533,7 +531,9 @@ pub async fn send_request(
         })
         .collect::<Vec<_>>();
     let body_text = response.text().await.map_err(|error| error.to_string())?;
+    let body_bytes = body_text.len();
     let body_json = serde_json::from_str::<Value>(&body_text).ok();
+    let (body, body_format) = format_response_body(&body_text, body_json.as_ref());
     let history_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
     let updated_variables =
@@ -571,7 +571,13 @@ pub async fn send_request(
                     status.as_u16() as i64,
                     duration_ms as i64,
                     json!(input.request).to_string(),
-                    json!({"headers": headers, "bodyJson": body_json}).to_string(),
+                    json!({
+                        "headers": headers,
+                        "contentType": content_type,
+                        "bodyBytes": body_bytes,
+                        "bodyFormat": body_format
+                    })
+                    .to_string(),
                     now
                 ],
             )?;
@@ -585,11 +591,21 @@ pub async fn send_request(
         status_text: status.canonical_reason().unwrap_or_default().to_string(),
         duration_ms,
         headers,
-        body_text,
-        body_json,
+        body,
+        body_bytes,
+        body_content_type: content_type,
+        body_format,
         updated_variables,
         unresolved_variables: preview.unresolved_variables,
     })
+}
+
+fn format_response_body(body_text: &str, body_json: Option<&Value>) -> (String, String) {
+    if let Some(json) = body_json {
+        let pretty = serde_json::to_string_pretty(json).unwrap_or_else(|_| body_text.to_string());
+        return (pretty, "json".to_string());
+    }
+    (body_text.to_string(), "text".to_string())
 }
 
 fn load_variable_context(
@@ -695,88 +711,21 @@ fn inherited_auth_for_request(
         parent_id = next_parent_id;
     }
 
-    let collection_auth: Option<(Option<String>, Option<String>)> = connection
+    let collection_auth: Option<Option<String>> = connection
         .query_row(
-            "SELECT auth_json, raw_postman_json FROM collections WHERE id = ?",
+            "SELECT auth_json FROM collections WHERE id = ?",
             params![request.collection_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| row.get(0),
         )
         .optional()?;
 
-    if let Some((auth_json, raw_postman_json)) = collection_auth {
+    if let Some(auth_json) = collection_auth {
         if let Some(auth) = auth_json.as_deref().and_then(parse_json_optional) {
-            return Ok(Some(auth));
-        }
-        if let Some(auth) = raw_postman_json
-            .as_deref()
-            .and_then(parse_json_optional::<Value>)
-            .and_then(|collection| collection.get("auth").cloned())
-            .and_then(|auth| normalize_postman_auth(&auth))
-        {
             return Ok(Some(auth));
         }
     }
 
     Ok(None)
-}
-
-fn normalize_postman_auth(auth: &Value) -> Option<super::models::AuthConfig> {
-    let auth_type = auth.get("type").and_then(Value::as_str).unwrap_or("noauth");
-    match auth_type {
-        "bearer" => Some(super::models::AuthConfig {
-            auth_type: "bearer".to_string(),
-            token: postman_auth_value(auth, "bearer", "token"),
-            username: None,
-            password: None,
-            key: None,
-            value: None,
-            add_to: None,
-        }),
-        "basic" => Some(super::models::AuthConfig {
-            auth_type: "basic".to_string(),
-            token: None,
-            username: postman_auth_value(auth, "basic", "username"),
-            password: postman_auth_value(auth, "basic", "password"),
-            key: None,
-            value: None,
-            add_to: None,
-        }),
-        "apikey" => Some(super::models::AuthConfig {
-            auth_type: "apikey".to_string(),
-            token: None,
-            username: None,
-            password: None,
-            key: postman_auth_value(auth, "apikey", "key")
-                .or_else(|| Some("Authorization".to_string())),
-            value: postman_auth_value(auth, "apikey", "value"),
-            add_to: postman_auth_value(auth, "apikey", "in").or_else(|| Some("header".to_string())),
-        }),
-        "noauth" => Some(super::models::AuthConfig {
-            auth_type: "noauth".to_string(),
-            token: None,
-            username: None,
-            password: None,
-            key: None,
-            value: None,
-            add_to: None,
-        }),
-        _ => None,
-    }
-}
-
-fn postman_auth_value(auth: &Value, auth_type: &str, key: &str) -> Option<String> {
-    auth.get(auth_type)
-        .and_then(Value::as_array)
-        .and_then(|items| {
-            items.iter().find_map(|item| {
-                (item.get("key").and_then(Value::as_str) == Some(key)).then(|| {
-                    item.get("value")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                })
-            })
-        })
-        .map(ToString::to_string)
 }
 
 fn effective_auth(
@@ -1030,13 +979,15 @@ async fn apply_body(
             {
                 if field.field_type == "file" {
                     if let Some(path) = field.file_path.as_ref().filter(|path| !path.is_empty()) {
-                        let bytes = fs::read(path).map_err(|error| error.to_string())?;
                         let file_name = std::path::Path::new(path)
                             .file_name()
                             .and_then(|name| name.to_str())
                             .unwrap_or("upload")
                             .to_string();
-                        let part = reqwest::multipart::Part::bytes(bytes).file_name(file_name);
+                        let part = reqwest::multipart::Part::file(path)
+                            .await
+                            .map_err(|error| error.to_string())?
+                            .file_name(file_name);
                         form = form.part(field.key.clone(), part);
                     }
                 } else {
@@ -1232,7 +1183,6 @@ struct DuplicateSource {
     path_params_json: String,
     auth_json: Option<String>,
     body_json: Option<String>,
-    raw_postman_item_json: Option<String>,
     pre_request_script_json: Option<String>,
     test_script_json: Option<String>,
     parent_id: Option<String>,

@@ -17,7 +17,7 @@ pub fn get_workspace_state(
 ) -> Result<Option<Value>, String> {
     state
         .database
-        .with_connection(|connection| {
+        .with_read_connection(|connection| {
             let value_json = connection
                 .query_row(
                     "SELECT value_json FROM workspace_state WHERE key = ?",
