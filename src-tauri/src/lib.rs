@@ -87,9 +87,7 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
-fn build_app_menu<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>
-) -> tauri::Result<Menu<R>> {
+fn build_app_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>> {
     let file_menu = Submenu::with_items(
         app,
         "File",
