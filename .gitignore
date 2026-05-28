@@ -12,6 +12,11 @@ dist
 dist-ssr
 *.local
 
+# Exported Postman files can contain API tokens and environment secrets.
+postman-collection-example/
+*.postman_collection.json
+*.postman_environment.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
