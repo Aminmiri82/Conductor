@@ -101,8 +101,8 @@ pub struct RequestDetail {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VariableEntry {
-    pub scope_kind: String,
-    pub scope_id: String,
+    pub scope: String,
+    pub collection_id: Option<String>,
     pub key: String,
     pub value: String,
     pub enabled: bool,

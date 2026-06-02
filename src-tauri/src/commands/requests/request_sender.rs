@@ -127,7 +127,7 @@ pub async fn send_request(
             for variable in &updated_variables {
                 connection.execute(
                     "INSERT OR REPLACE INTO variables
-                     (scope_kind, scope_id, key, value, enabled, sensitive, created_at, updated_at)
+                     (scope, collection_id, key, value, enabled, sensitive, created_at, updated_at)
                      VALUES ('collection', ?, ?, ?, 1, 0, ?, ?)",
                     params![
                         input.request.collection_id,

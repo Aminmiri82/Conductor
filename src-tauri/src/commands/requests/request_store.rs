@@ -91,9 +91,9 @@ pub fn create_request(
             )?;
             tx.execute(
                 "INSERT INTO collection_nodes
-                 (id, collection_id, parent_id, position, kind, name, request_id, variables_json,
-                  auth_json, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, 'request', ?, ?, NULL, NULL, ?, ?)",
+                 (id, collection_id, parent_id, position, kind, name, request_id, auth_json,
+                  created_at, updated_at)
+                 VALUES (?, ?, ?, ?, 'request', ?, ?, NULL, ?, ?)",
                 params![
                     node_id,
                     input.collection_id,
@@ -127,7 +127,7 @@ pub fn duplicate_request(
                 "SELECT r.collection_id, r.method, r.url, r.headers_json, r.query_json,
                         r.path_params_json, r.auth_json, r.body_json,
                         r.pre_request_script_json, r.test_script_json,
-                        n.parent_id, n.position, n.name, n.variables_json, n.auth_json
+                        n.parent_id, n.position, n.name, n.auth_json
                  FROM requests r
                  JOIN collection_nodes n ON n.request_id = r.id
                  WHERE r.id = ?",
@@ -147,8 +147,7 @@ pub fn duplicate_request(
                         parent_id: row.get(10)?,
                         position: row.get(11)?,
                         name: row.get::<_, String>(12)?,
-                        variables_json: row.get(13)?,
-                        node_auth_json: row.get(14)?,
+                        node_auth_json: row.get(13)?,
                     })
                 },
             )?;
@@ -183,9 +182,9 @@ pub fn duplicate_request(
             )?;
             tx.execute(
                 "INSERT INTO collection_nodes
-                 (id, collection_id, parent_id, position, kind, name, request_id, variables_json,
-                  auth_json, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, 'request', ?, ?, ?, ?, ?, ?)",
+                 (id, collection_id, parent_id, position, kind, name, request_id, auth_json,
+                  created_at, updated_at)
+                 VALUES (?, ?, ?, ?, 'request', ?, ?, ?, ?, ?)",
                 params![
                     new_node_id,
                     source.collection_id,
@@ -193,7 +192,6 @@ pub fn duplicate_request(
                     insert_position,
                     format!("{} Copy", source.name),
                     new_request_id,
-                    source.variables_json,
                     source.node_auth_json,
                     now,
                     now
@@ -268,7 +266,6 @@ struct DuplicateSource {
     parent_id: Option<String>,
     position: i64,
     name: String,
-    variables_json: Option<String>,
     node_auth_json: Option<String>,
 }
 fn parse_json<T: serde::de::DeserializeOwned>(value: &str) -> T

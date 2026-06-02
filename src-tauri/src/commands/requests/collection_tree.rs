@@ -26,9 +26,9 @@ pub fn create_folder(
             )?;
             tx.execute(
                 "INSERT INTO collection_nodes
-                 (id, collection_id, parent_id, position, kind, name, request_id, variables_json,
-                  auth_json, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, 'folder', ?, NULL, NULL, NULL, ?, ?)",
+                 (id, collection_id, parent_id, position, kind, name, request_id, auth_json,
+                  created_at, updated_at)
+                 VALUES (?, ?, ?, ?, 'folder', ?, NULL, NULL, ?, ?)",
                 params![
                     node_id,
                     input.collection_id,

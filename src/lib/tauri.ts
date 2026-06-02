@@ -58,11 +58,11 @@ export const api = {
     invoke<ResolvedRequestPreview>("resolve_request", { request }),
   sendRequest: (request: RequestDetail) =>
     invoke<SendRequestResult>("send_request", { input: { request } }),
-  listVariables: (scopeKind: string, scopeId: string) =>
-    invoke<VariableEntry[]>("list_variables", { scopeKind, scopeId }),
+  listVariables: (scope: "global" | "collection", collectionId?: string | null) =>
+    invoke<VariableEntry[]>("list_variables", { scope, collectionId }),
   saveVariables: (
-    scopeKind: string,
-    scopeId: string,
+    scope: "global" | "collection",
+    collectionId: string | null | undefined,
     variables: VariableEntry[],
-  ) => invoke<void>("save_variables", { scopeKind, scopeId, variables }),
+  ) => invoke<void>("save_variables", { scope, collectionId, variables }),
 };

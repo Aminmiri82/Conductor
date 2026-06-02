@@ -82,8 +82,8 @@ export type CollectionNode = {
 };
 
 export type VariableEntry = {
-  scopeKind: string;
-  scopeId: string;
+  scope: "global" | "collection";
+  collectionId?: string | null;
   key: string;
   value: string;
   enabled: boolean;

@@ -325,7 +325,8 @@ function VariablesPane({
   const [revealed, setRevealed] = useState<Record<number, boolean>>({});
   const resolveActiveRequest = useWorkspaceStore((state) => state.resolveActiveRequest);
 
-  const scopeId = scope === "collection" ? selectedCollectionId : "global";
+  const collectionId = scope === "collection" ? selectedCollectionId : null;
+  const canEditVariables = scope === "global" || Boolean(collectionId);
 
   useEffect(() => {
     if (selectedCollectionId || !collections[0]) return;
@@ -334,25 +335,25 @@ function VariablesPane({
 
   useEffect(() => {
     let mounted = true;
-    if (!scopeId) {
+    if (!canEditVariables) {
       setVariables([]);
       return;
     }
-    void api.listVariables(scope, scopeId).then((items) => {
+    void api.listVariables(scope, collectionId).then((items) => {
       if (mounted) setVariables(items);
     });
     return () => {
       mounted = false;
     };
-  }, [scope, scopeId]);
+  }, [scope, collectionId, canEditVariables]);
 
   async function save() {
-    if (!scopeId) return;
+    if (!canEditVariables) return;
     setSaving(true);
     await api.saveVariables(
       scope,
-      scopeId,
-      variables.map((variable) => ({ ...variable, scopeKind: scope, scopeId })),
+      collectionId,
+      variables.map((variable) => ({ ...variable, scope, collectionId })),
     );
     setSaving(false);
     await resolveActiveRequest();
@@ -363,7 +364,7 @@ function VariablesPane({
       <div className="mb-4 flex flex-wrap items-start gap-3">
         <SectionTitle
           title="Variables"
-          sub="Resolution order is Collection → Global."
+          sub="Collection variables override global variables."
         />
         <div className="flex-1" />
         <Segmented
@@ -395,7 +396,7 @@ function VariablesPane({
         <Button
           className="h-8 gap-1.5 bg-[var(--app-accent)] px-3 text-xs text-[var(--app-accent-fg)] hover:bg-[var(--app-accent)]/90"
           onClick={save}
-          disabled={!scopeId || saving}
+          disabled={!canEditVariables || saving}
         >
           <Save className="size-3.5" />
           {saving ? "Saving" : "Save"}
@@ -485,12 +486,12 @@ function VariablesPane({
         <button
           className="flex h-9 w-full items-center gap-2 px-3 text-left text-xs text-[var(--app-dim)] hover:bg-[var(--app-panel-2)] hover:text-[var(--app-text)]"
           onClick={() =>
-            scopeId &&
+            canEditVariables &&
             setVariables([
               ...variables,
               {
-                scopeKind: scope,
-                scopeId,
+                scope,
+                collectionId,
                 key: "",
                 value: "",
                 enabled: true,
@@ -498,7 +499,7 @@ function VariablesPane({
               },
             ])
           }
-          disabled={!scopeId}
+          disabled={!canEditVariables}
         >
           <Plus className="size-3.5" />
           Add variable

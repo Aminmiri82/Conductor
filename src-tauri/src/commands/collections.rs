@@ -79,10 +79,6 @@ pub fn import_postman_collection(
         .and_then(Value::as_str)
         .unwrap_or("Imported collection")
         .to_string();
-    let schema = collection
-        .pointer("/info/schema")
-        .and_then(Value::as_str)
-        .map(ToString::to_string);
     let collection_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
     let raw_collection_path = write_raw_import_file(
@@ -99,13 +95,11 @@ pub fn import_postman_collection(
             let tx = connection.transaction()?;
             tx.execute(
                 "INSERT INTO collections
-                 (id, name, source, postman_schema, auth_json, raw_postman_file_path,
-                  created_at, updated_at)
-                 VALUES (?, ?, 'postman', ?, ?, ?, ?, ?)",
+                 (id, name, source, auth_json, raw_postman_file_path, created_at, updated_at)
+                 VALUES (?, ?, 'postman', ?, ?, ?, ?)",
                 params![
                     collection_id,
                     name,
-                    schema,
                     postman_auth(&collection).map(|value| value.to_string()),
                     raw_collection_path,
                     now,
@@ -147,26 +141,19 @@ fn import_items(
         if let Some(children) = item.get("item").and_then(Value::as_array) {
             tx.execute(
                 "INSERT INTO collection_nodes
-                 (id, collection_id, parent_id, position, kind, name, request_id, variables_json, auth_json, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, 'folder', ?, NULL, ?, ?, ?, ?)",
+                 (id, collection_id, parent_id, position, kind, name, request_id, auth_json, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, 'folder', ?, NULL, ?, ?, ?)",
                 params![
                     node_id,
                     collection_id,
                     parent_id,
                     position as i64,
                     name,
-                    item.get("variable").map(Value::to_string),
                     postman_auth(item).map(|value| value.to_string()),
                     now,
                     now
                 ],
             )?;
-
-            if let Some(variables) = item.get("variable").and_then(Value::as_array) {
-                for variable in variables {
-                    insert_variable(tx, "folder", &node_id, variable, now)?;
-                }
-            }
 
             import_items(tx, collection_id, Some(&node_id), children, now)?;
         } else if let Some(request) = item.get("request") {
@@ -206,8 +193,8 @@ fn import_items(
 
             tx.execute(
                 "INSERT INTO collection_nodes
-                 (id, collection_id, parent_id, position, kind, name, request_id, variables_json, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, 'request', ?, ?, ?, ?, ?)",
+                 (id, collection_id, parent_id, position, kind, name, request_id, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, 'request', ?, ?, ?, ?)",
                 params![
                     node_id,
                     collection_id,
@@ -215,17 +202,10 @@ fn import_items(
                     position as i64,
                     name,
                     request_id,
-                    item.get("variable").map(Value::to_string),
                     now,
                     now
                 ],
             )?;
-
-            if let Some(variables) = item.get("variable").and_then(Value::as_array) {
-                for variable in variables {
-                    insert_variable(tx, "request", &request_id, variable, now)?;
-                }
-            }
         }
     }
 
@@ -253,8 +233,8 @@ fn write_raw_import_file(
 
 fn insert_variable(
     tx: &rusqlite::Transaction<'_>,
-    scope_kind: &str,
-    scope_id: &str,
+    scope: &str,
+    collection_id: &str,
     variable: &Value,
     now: &str,
 ) -> Result<(), StorageError> {
@@ -273,9 +253,9 @@ fn insert_variable(
 
     tx.execute(
         "INSERT OR REPLACE INTO variables
-         (scope_kind, scope_id, key, value, enabled, sensitive, created_at, updated_at)
+         (scope, collection_id, key, value, enabled, sensitive, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, 0, ?, ?)",
-        params![scope_kind, scope_id, key, value, enabled as i64, now, now],
+        params![scope, collection_id, key, value, enabled as i64, now, now],
     )?;
     Ok(())
 }
