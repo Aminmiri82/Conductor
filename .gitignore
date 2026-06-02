@@ -12,10 +12,11 @@ dist
 dist-ssr
 *.local
 
-# Exported Postman files can contain API tokens and environment secrets.
 postman-collection-example/
 *.postman_collection.json
 *.postman_environment.json
+
+AGENTS.md
 
 # Editor directories and files
 .vscode/*
@@ -27,3 +28,4 @@ postman-collection-example/
 *.njsproj
 *.sln
 *.sw?
+.cursor/
