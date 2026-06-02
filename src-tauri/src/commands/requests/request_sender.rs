@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use chrono::Utc;
 use reqwest::{
-    header::{HeaderMap, HeaderName, HeaderValue},
+    header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE},
     Method, Url,
 };
 use rusqlite::params;
@@ -73,6 +73,14 @@ pub async fn send_request(
         let name = HeaderName::from_bytes(header.key.as_bytes()).map_err(|e| e.to_string())?;
         let value = HeaderValue::from_str(&header.value).map_err(|e| e.to_string())?;
         headers.insert(name, value);
+    }
+    if let Some(body) = preview.body.as_ref() {
+        if body.mode == "raw"
+            && body.raw_language.as_deref() == Some("json")
+            && !headers.contains_key(CONTENT_TYPE)
+        {
+            headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        }
     }
     builder = builder.headers(headers);
 
