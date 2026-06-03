@@ -1,6 +1,6 @@
 import { save } from "@tauri-apps/plugin-dialog";
 import { AlertTriangle, Download } from "lucide-react";
-import { useMemo } from "react";
+import { lazy, Suspense, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import {
   ResizableHandle,
@@ -15,12 +15,17 @@ import { BodyEditor } from "@/features/requests/BodyEditor";
 import { AuthEditor } from "@/features/requests/AuthEditor";
 import { VariableEditor } from "@/features/variables/VariableEditor";
 import { RequestTabsBar } from "@/features/requests/RequestTabsBar";
-import { ResponseViewer } from "@/features/requests/ResponseViewer";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { useDraftStore } from "@/features/workspace/draftStore";
 import { useResponseStore } from "@/features/workspace/responseStore";
 import { api } from "@/lib/tauri";
 import type { KeyValue } from "@/features/types";
+
+const ResponseViewer = lazy(() =>
+  import("@/features/requests/ResponseViewer").then((module) => ({
+    default: module.ResponseViewer,
+  })),
+);
 
 export function RequestWorkspace() {
   const activeRequestId = useWorkspaceStore((state) => state.activeRequestId);
@@ -201,10 +206,12 @@ export function RequestWorkspace() {
             </div>
             <div className="min-h-0 flex-1">
               {response ? (
-                <ResponseViewer
-                  sending={sending}
-                  value={response.body}
-                />
+                <Suspense fallback={<ResponsePlaceholder sending={sending} />}>
+                  <ResponseViewer
+                    sending={sending}
+                    value={response.body}
+                  />
+                </Suspense>
               ) : (
                 <ResponsePlaceholder sending={sending} />
               )}
