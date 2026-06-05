@@ -17,6 +17,7 @@ postman-collection-example/
 *.postman_environment.json
 
 AGENTS.md
+claude.md
 
 # Editor directories and files
 .vscode/*
