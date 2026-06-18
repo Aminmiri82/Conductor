@@ -19,6 +19,7 @@ import type {
   VariableEntry,
 } from "@/features/types";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
+import { useWorkspaceUiStore } from "@/features/workspace/workspaceUiStore";
 
 const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
   { id: "appearance", label: "Appearance" },
@@ -91,8 +92,8 @@ export function AppSettings({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const workspaceUi = useWorkspaceStore((state) => state.workspaceUi);
-  const setWorkspacePreference = useWorkspaceStore(
+  const workspaceUi = useWorkspaceUiStore((state) => state.workspaceUi);
+  const setWorkspacePreference = useWorkspaceUiStore(
     (state) => state.setWorkspacePreference,
   );
   const activeCollectionId = useWorkspaceStore((state) => state.activeCollectionId);
@@ -169,10 +170,10 @@ export function AppSettings({
 }
 
 function AppearancePane() {
-  const theme = useWorkspaceStore((state) => state.workspaceUi.appTheme);
-  const accent = useWorkspaceStore((state) => state.workspaceUi.accentColor);
-  const urlMode = useWorkspaceStore((state) => state.workspaceUi.urlDisplayMode);
-  const setWorkspacePreference = useWorkspaceStore(
+  const theme = useWorkspaceUiStore((state) => state.workspaceUi.appTheme);
+  const accent = useWorkspaceUiStore((state) => state.workspaceUi.accentColor);
+  const urlMode = useWorkspaceUiStore((state) => state.workspaceUi.urlDisplayMode);
+  const setWorkspacePreference = useWorkspaceUiStore(
     (state) => state.setWorkspacePreference,
   );
 
@@ -315,7 +316,7 @@ function VariablesPane({
 }) {
   const collections = useWorkspaceStore((state) => state.collections);
   const environments = useWorkspaceStore((state) => state.environments);
-  const activeEnvironmentId = useWorkspaceStore(
+  const activeEnvironmentId = useWorkspaceUiStore(
     (state) => state.workspaceUi.activeEnvironmentId,
   );
   const selectEnvironment = useWorkspaceStore((state) => state.selectEnvironment);

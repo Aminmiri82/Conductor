@@ -13,6 +13,7 @@ import {
 import { api } from "@/lib/tauri";
 import type { KeyValue, RequestDetail, VariableEntry } from "@/features/types";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
+import { useWorkspaceUiStore } from "@/features/workspace/workspaceUiStore";
 
 type VariableScope = "environment" | "collection" | "global";
 
@@ -35,15 +36,13 @@ export function VariableEditor({ request }: { request: RequestDetail }) {
   const [savedAt, setSavedAt] = useState<number>();
   const [saving, setSaving] = useState(false);
   const resolveActiveRequest = useWorkspaceStore((state) => state.resolveActiveRequest);
-  const activeEnvironmentId = useWorkspaceStore(
+  const activeEnvironmentId = useWorkspaceUiStore(
     (state) => state.workspaceUi.activeEnvironmentId,
   );
-  const activeEnvironmentName = useWorkspaceStore(
-    (state) =>
-      state.environments.find(
-        (environment) => environment.id === state.workspaceUi.activeEnvironmentId,
-      )?.name,
-  );
+  const environments = useWorkspaceStore((state) => state.environments);
+  const activeEnvironmentName = environments.find(
+    (environment) => environment.id === activeEnvironmentId,
+  )?.name;
 
   useEffect(() => {
     let mounted = true;

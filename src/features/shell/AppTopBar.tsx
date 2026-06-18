@@ -8,13 +8,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
+import { useWorkspaceUiStore } from "@/features/workspace/workspaceUiStore";
 
 export function AppTopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const sidebarVisible = useWorkspaceStore((state) => state.sidebarVisible);
   const toggleSidebar = useWorkspaceStore((state) => state.toggleSidebar);
-  const appTheme = useWorkspaceStore((state) => state.workspaceUi.appTheme);
+  const appTheme = useWorkspaceUiStore((state) => state.workspaceUi.appTheme);
   const environments = useWorkspaceStore((state) => state.environments);
-  const activeEnvironmentId = useWorkspaceStore(
+  const activeEnvironmentId = useWorkspaceUiStore(
     (state) => state.workspaceUi.activeEnvironmentId,
   );
   const selectEnvironment = useWorkspaceStore((state) => state.selectEnvironment);

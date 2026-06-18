@@ -18,6 +18,7 @@ import { RequestTabsBar } from "@/features/requests/RequestTabsBar";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { useDraftStore } from "@/features/workspace/draftStore";
 import { useResponseStore } from "@/features/workspace/responseStore";
+import { useWorkspaceUiStore } from "@/features/workspace/workspaceUiStore";
 import { api } from "@/lib/tauri";
 import type { KeyValue } from "@/features/types";
 
@@ -40,10 +41,10 @@ export function RequestWorkspace() {
   const activeTab = useWorkspaceStore((state) =>
     state.tabs.find((tab) => tab.requestId === state.activeRequestId),
   );
-  const activeEditorTab = useWorkspaceStore((state) =>
+  const activeEditorTab = useWorkspaceUiStore((state) =>
     request ? (state.workspaceUi.requestEditorTabs[request.id] ?? "params") : "params",
   );
-  const setRequestEditorTab = useWorkspaceStore(
+  const setRequestEditorTab = useWorkspaceUiStore(
     (state) => state.setRequestEditorTab,
   );
   const response = useResponseStore((state) =>

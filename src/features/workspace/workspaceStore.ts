@@ -12,16 +12,15 @@ import {
   useDraftStore,
 } from "@/features/workspace/draftStore";
 import { useResponseStore } from "@/features/workspace/responseStore";
+import {
+  getWorkspaceUiState,
+  useWorkspaceUiStore,
+} from "@/features/workspace/workspaceUiStore";
 import type {
-  AppTheme,
   CollectionNode,
   CollectionSummary,
   EnvironmentSummary,
-  RequestEditorTab,
   RequestDetail,
-  SettingsTab,
-  UrlDisplayMode,
-  WorkspaceUiState,
 } from "@/features/types";
 
 export type RequestTab = {
@@ -38,8 +37,6 @@ type WorkspaceState = {
   tabs: RequestTab[];
   activeCollectionId?: string;
   activeRequestId?: string;
-  workspaceUi: WorkspaceUiState;
-  workspaceUiDirty: boolean;
   sidebarVisible: boolean;
   collectionLoading: boolean;
   requestLoading: boolean;
@@ -68,37 +65,15 @@ type WorkspaceState = {
   saveActiveRequest: () => Promise<void>;
   resolveActiveRequest: () => Promise<void>;
   sendActiveRequest: () => Promise<void>;
-  setRequestEditorTab: (requestId: string, tab: RequestEditorTab) => void;
-  setWorkspacePreference: <K extends keyof WorkspaceUiState>(
-    key: K,
-    value: WorkspaceUiState[K],
-  ) => void;
-  scheduleWorkspaceUiStateFlush: () => void;
-  flushWorkspaceUiState: () => Promise<void>;
   toggleSidebar: () => void;
   clearError: () => void;
 };
-
-const WORKSPACE_UI_STATE_KEY = "workspace.ui";
-const WORKSPACE_UI_STATE_FLUSH_DELAY_MS = 300;
-const DEFAULT_WORKSPACE_UI_STATE: WorkspaceUiState = {
-  activeEnvironmentId: null,
-  appTheme: "softpro",
-  accentColor: "#a78bfa",
-  urlDisplayMode: "chip",
-  settingsTab: "appearance",
-  requestEditorTabs: {},
-};
-let workspaceUiStateFlushTimer: ReturnType<typeof window.setTimeout> | undefined;
-let workspaceUiStateFlushPromise = Promise.resolve();
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   collections: [],
   environments: [],
   tree: [],
   tabs: [],
-  workspaceUi: DEFAULT_WORKSPACE_UI_STATE,
-  workspaceUiDirty: false,
   sidebarVisible: true,
   collectionLoading: false,
   requestLoading: false,
@@ -110,19 +85,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     try {
       const collections = await api.listCollections();
       const environments = await api.listEnvironments();
-      const workspaceUi = normalizeWorkspaceUiState(
-        await api.getWorkspaceState(WORKSPACE_UI_STATE_KEY),
-      );
-      const activeEnvironmentId = environments.some(
-        (environment) => environment.id === workspaceUi.activeEnvironmentId,
-      )
-        ? workspaceUi.activeEnvironmentId
-        : null;
+      const workspaceUi = await useWorkspaceUiStore
+        .getState()
+        .loadWorkspaceUiState(environments);
       set({
         collections,
         environments,
-        workspaceUi: { ...workspaceUi, activeEnvironmentId },
-        workspaceUiDirty: false,
         collectionLoading: false,
       });
       const preferredCollectionId =
@@ -143,20 +111,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   loadEnvironments: async () => {
     try {
       const environments = await api.listEnvironments();
-      const previousActiveEnvironmentId = get().workspaceUi.activeEnvironmentId;
-      const activeEnvironmentId = environments.some(
-        (environment) => environment.id === previousActiveEnvironmentId,
-      )
-        ? previousActiveEnvironmentId
-        : null;
-      set((state) => ({
-        environments,
-        workspaceUi: { ...state.workspaceUi, activeEnvironmentId },
-        workspaceUiDirty: state.workspaceUiDirty || activeEnvironmentId !== previousActiveEnvironmentId,
-      }));
-      if (activeEnvironmentId !== previousActiveEnvironmentId) {
-        get().scheduleWorkspaceUiStateFlush();
-      }
+      useWorkspaceUiStore.getState().reconcileActiveEnvironment(environments);
+      set({ environments });
     } catch (error) {
       set({ error: String(error) });
     }
@@ -174,14 +130,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         activeCollectionId: collectionId,
         activeRequestId: undefined,
         tabs: [],
-        workspaceUi: withActiveCollection(get().workspaceUi, collectionId),
-        workspaceUiDirty: true,
         collectionLoading: false,
         requestLoading: false,
       });
+      useWorkspaceUiStore.getState().setActiveCollectionId(collectionId);
       useDraftStore.getState().clearAll();
       useResponseStore.getState().clearAll();
-      await get().flushWorkspaceUiState();
+      await useWorkspaceUiStore.getState().flushWorkspaceUiState();
     } catch (error) {
       set({ error: String(error), collectionLoading: false });
     }
@@ -192,12 +147,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     try {
       const environmentId = await api.importEnvironment(contents, fileName);
       const environments = await api.listEnvironments();
-      set((state) => ({
-        environments,
-        workspaceUi: { ...state.workspaceUi, activeEnvironmentId: environmentId },
-        workspaceUiDirty: true,
-      }));
-      await get().flushWorkspaceUiState();
+      set({ environments });
+      useWorkspaceUiStore.getState().setActiveEnvironmentId(environmentId);
+      await useWorkspaceUiStore.getState().flushWorkspaceUiState();
       await get().resolveActiveRequest();
     } catch (error) {
       set({ error: String(error) });
@@ -213,25 +165,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         activeCollectionId: collectionId,
         activeRequestId: undefined,
         tabs: [],
-        workspaceUi: withActiveCollection(get().workspaceUi, collectionId),
-        workspaceUiDirty: true,
         collectionLoading: false,
         requestLoading: false,
       });
+      useWorkspaceUiStore.getState().setActiveCollectionId(collectionId);
       useDraftStore.getState().clearAll();
       useResponseStore.getState().clearAll();
-      await get().flushWorkspaceUiState();
+      await useWorkspaceUiStore.getState().flushWorkspaceUiState();
     } catch (error) {
       set({ error: String(error), collectionLoading: false });
     }
   },
 
   selectEnvironment: async (environmentId) => {
-    set((state) => ({
-      workspaceUi: { ...state.workspaceUi, activeEnvironmentId: environmentId },
-      workspaceUiDirty: true,
-    }));
-    get().scheduleWorkspaceUiStateFlush();
+    useWorkspaceUiStore.getState().setActiveEnvironmentId(environmentId);
     await get().resolveActiveRequest();
   },
 
@@ -459,7 +406,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     try {
       const resolvedPreview = await api.resolveRequest(
         request,
-        get().workspaceUi.activeEnvironmentId ?? null,
+        getWorkspaceUiState().activeEnvironmentId ?? null,
       );
       if (get().activeRequestId === request.id) {
         useDraftStore.getState().setPreview(request.id, resolvedPreview);
@@ -478,7 +425,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     try {
       const response = await api.sendRequest(
         request,
-        get().workspaceUi.activeEnvironmentId ?? null,
+        getWorkspaceUiState().activeEnvironmentId ?? null,
       );
       useResponseStore.getState().setResponse(request.id, response);
       if (get().activeRequestId === request.id) {
@@ -496,151 +443,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
-  setRequestEditorTab: (requestId, tab) => {
-    set((state) => ({
-      workspaceUi: {
-        ...state.workspaceUi,
-        requestEditorTabs: {
-          ...state.workspaceUi.requestEditorTabs,
-          [requestId]: tab,
-        },
-      },
-      workspaceUiDirty: true,
-    }));
-    get().scheduleWorkspaceUiStateFlush();
-  },
-
-  setWorkspacePreference: (key, value) => {
-    set((state) => ({
-      workspaceUi: {
-        ...state.workspaceUi,
-        [key]: value,
-      },
-      workspaceUiDirty: true,
-    }));
-    get().scheduleWorkspaceUiStateFlush();
-  },
-
-  scheduleWorkspaceUiStateFlush: () => {
-    if (workspaceUiStateFlushTimer) {
-      window.clearTimeout(workspaceUiStateFlushTimer);
-    }
-    workspaceUiStateFlushTimer = window.setTimeout(() => {
-      workspaceUiStateFlushTimer = undefined;
-      void get().flushWorkspaceUiState();
-    }, WORKSPACE_UI_STATE_FLUSH_DELAY_MS);
-  },
-
-  flushWorkspaceUiState: async () => {
-    if (workspaceUiStateFlushTimer) {
-      window.clearTimeout(workspaceUiStateFlushTimer);
-      workspaceUiStateFlushTimer = undefined;
-    }
-
-    const runFlush = async () => {
-      const { workspaceUi, workspaceUiDirty } = get();
-      if (!workspaceUiDirty) return;
-      try {
-        await api.setWorkspaceState(WORKSPACE_UI_STATE_KEY, workspaceUi);
-        if (get().workspaceUi === workspaceUi) {
-          set({ workspaceUiDirty: false });
-        }
-      } catch {
-        // Workspace UI state is a best-effort preference cache.
-      }
-    };
-
-    workspaceUiStateFlushPromise = workspaceUiStateFlushPromise.then(
-      runFlush,
-      runFlush,
-    );
-    await workspaceUiStateFlushPromise;
-  },
-
   toggleSidebar: () => set((state) => ({ sidebarVisible: !state.sidebarVisible })),
   clearError: () => set({ error: undefined }),
 }));
-
-function normalizeWorkspaceUiState(
-  value: WorkspaceUiState | null | undefined,
-): WorkspaceUiState {
-  if (!value || typeof value !== "object") return DEFAULT_WORKSPACE_UI_STATE;
-  return {
-    ...DEFAULT_WORKSPACE_UI_STATE,
-    activeCollectionId:
-      typeof value.activeCollectionId === "string"
-        ? value.activeCollectionId
-        : undefined,
-    activeEnvironmentId:
-      typeof value.activeEnvironmentId === "string"
-        ? value.activeEnvironmentId
-        : null,
-    appTheme: isAppTheme(value.appTheme)
-      ? value.appTheme
-      : DEFAULT_WORKSPACE_UI_STATE.appTheme,
-    accentColor:
-      typeof value.accentColor === "string" && value.accentColor.startsWith("#")
-        ? value.accentColor
-        : DEFAULT_WORKSPACE_UI_STATE.accentColor,
-    urlDisplayMode: isUrlDisplayMode(value.urlDisplayMode)
-      ? value.urlDisplayMode
-      : DEFAULT_WORKSPACE_UI_STATE.urlDisplayMode,
-    settingsTab: isSettingsTab(value.settingsTab)
-      ? value.settingsTab
-      : DEFAULT_WORKSPACE_UI_STATE.settingsTab,
-    requestEditorTabs:
-      value.requestEditorTabs && typeof value.requestEditorTabs === "object"
-        ? normalizeRequestEditorTabs(value.requestEditorTabs)
-        : {},
-  };
-}
-
-function normalizeRequestEditorTabs(
-  tabs: Record<string, RequestEditorTab>,
-): Record<string, RequestEditorTab> {
-  return Object.fromEntries(
-    Object.entries(tabs).filter((entry): entry is [string, RequestEditorTab] =>
-      isRequestEditorTab(entry[1]),
-    ),
-  );
-}
-
-function isAppTheme(value: unknown): value is AppTheme {
-  return value === "softpro" || value === "conductor" || value === "brutalist";
-}
-
-function isUrlDisplayMode(value: unknown): value is UrlDisplayMode {
-  return value === "flat" || value === "syntax" || value === "chip" || value === "hybrid";
-}
-
-function isSettingsTab(value: unknown): value is SettingsTab {
-  return (
-    value === "appearance" ||
-    value === "variables" ||
-    value === "shortcuts" ||
-    value === "about"
-  );
-}
-
-function isRequestEditorTab(value: unknown): value is RequestEditorTab {
-  return (
-    value === "params" ||
-    value === "headers" ||
-    value === "auth" ||
-    value === "body" ||
-    value === "variables"
-  );
-}
-
-function withActiveCollection(
-  workspaceUi: WorkspaceUiState,
-  collectionId: string,
-): WorkspaceUiState {
-  return {
-    ...workspaceUi,
-    activeCollectionId: collectionId,
-  };
-}
 
 function renameRequestNode(
   nodes: CollectionNode[],

@@ -15,7 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { RequestDetail, UrlDisplayMode } from "@/features/types";
-import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
+import { useWorkspaceUiStore } from "@/features/workspace/workspaceUiStore";
 
 const methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 
@@ -40,7 +40,7 @@ export function RequestUrlBar({
   onSend: () => void;
   onSave: () => void;
 }) {
-  const urlMode = useWorkspaceStore((state) => state.workspaceUi.urlDisplayMode);
+  const urlMode = useWorkspaceUiStore((state) => state.workspaceUi.urlDisplayMode);
 
   return (
     <div className="flex min-w-0 items-center gap-2">
