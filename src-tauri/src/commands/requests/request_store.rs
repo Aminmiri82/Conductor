@@ -4,10 +4,16 @@ use serde_json::json;
 use tauri::State;
 use uuid::Uuid;
 
-use crate::commands::models::{CreateRequestInput, DuplicateRequestInput, RequestDetail};
+use crate::commands::models::{
+    CreateRequestInput, CreateRequestResult, DuplicateRequestInput, DuplicateRequestResult,
+    RequestDetail,
+};
 use crate::AppState;
 
-use super::{collection_tree::shift_node_positions, request_auth, request_body};
+use super::{
+    collection_tree::{sort_order_after, sort_order_for_position},
+    request_auth, request_body,
+};
 
 #[tauri::command]
 pub fn get_request(
@@ -66,7 +72,7 @@ pub fn get_request(
 pub fn create_request(
     input: CreateRequestInput,
     state: State<'_, AppState>,
-) -> Result<String, String> {
+) -> Result<CreateRequestResult, String> {
     let now = Utc::now().to_rfc3339();
     let request_id = Uuid::new_v4().to_string();
     let node_id = Uuid::new_v4().to_string();
@@ -75,11 +81,12 @@ pub fn create_request(
         .database
         .with_connection(|connection| {
             let tx = connection.transaction()?;
-            shift_node_positions(
+            let sort_order = sort_order_for_position(
                 &tx,
                 &input.collection_id,
                 input.parent_id.as_deref(),
                 input.position,
+                None,
             )?;
             tx.execute(
                 "INSERT INTO requests
@@ -91,14 +98,14 @@ pub fn create_request(
             )?;
             tx.execute(
                 "INSERT INTO collection_nodes
-                 (id, collection_id, parent_id, position, kind, name, request_id, auth_json,
+                 (id, collection_id, parent_id, sort_order, kind, name, request_id, auth_json,
                   created_at, updated_at)
                  VALUES (?, ?, ?, ?, 'request', ?, ?, NULL, ?, ?)",
                 params![
                     node_id,
                     input.collection_id,
                     input.parent_id,
-                    input.position,
+                    sort_order,
                     input.name,
                     request_id,
                     now,
@@ -106,7 +113,10 @@ pub fn create_request(
                 ],
             )?;
             tx.commit()?;
-            Ok(request_id.clone())
+            Ok(CreateRequestResult {
+                request_id: request_id.clone(),
+                node_id: node_id.clone(),
+            })
         })
         .map_err(|error| error.to_string())
 }
@@ -114,7 +124,7 @@ pub fn create_request(
 pub fn duplicate_request(
     input: DuplicateRequestInput,
     state: State<'_, AppState>,
-) -> Result<String, String> {
+) -> Result<DuplicateRequestResult, String> {
     let now = Utc::now().to_rfc3339();
     let new_request_id = Uuid::new_v4().to_string();
     let new_node_id = Uuid::new_v4().to_string();
@@ -127,7 +137,7 @@ pub fn duplicate_request(
                 "SELECT r.collection_id, r.method, r.url, r.headers_json, r.query_json,
                         r.path_params_json, r.auth_json, r.body_json,
                         r.pre_request_script_json, r.test_script_json,
-                        n.parent_id, n.position, n.name, n.auth_json
+                        n.parent_id, n.sort_order, n.name, n.auth_json
                  FROM requests r
                  JOIN collection_nodes n ON n.request_id = r.id
                  WHERE r.id = ?",
@@ -145,18 +155,17 @@ pub fn duplicate_request(
                         pre_request_script_json: row.get(8)?,
                         test_script_json: row.get(9)?,
                         parent_id: row.get(10)?,
-                        position: row.get(11)?,
+                        sort_order: row.get(11)?,
                         name: row.get::<_, String>(12)?,
                         node_auth_json: row.get(13)?,
                     })
                 },
             )?;
-            let insert_position = source.position + 1;
-            shift_node_positions(
+            let sort_order = sort_order_after(
                 &tx,
                 &source.collection_id,
                 source.parent_id.as_deref(),
-                insert_position,
+                source.sort_order,
             )?;
             tx.execute(
                 "INSERT INTO requests
@@ -182,14 +191,14 @@ pub fn duplicate_request(
             )?;
             tx.execute(
                 "INSERT INTO collection_nodes
-                 (id, collection_id, parent_id, position, kind, name, request_id, auth_json,
+                 (id, collection_id, parent_id, sort_order, kind, name, request_id, auth_json,
                   created_at, updated_at)
                  VALUES (?, ?, ?, ?, 'request', ?, ?, ?, ?, ?)",
                 params![
                     new_node_id,
                     source.collection_id,
                     source.parent_id,
-                    insert_position,
+                    sort_order,
                     format!("{} Copy", source.name),
                     new_request_id,
                     source.node_auth_json,
@@ -198,7 +207,10 @@ pub fn duplicate_request(
                 ],
             )?;
             tx.commit()?;
-            Ok(new_request_id.clone())
+            Ok(DuplicateRequestResult {
+                request_id: new_request_id.clone(),
+                node_id: new_node_id.clone(),
+            })
         })
         .map_err(|error| error.to_string())
 }
@@ -267,7 +279,7 @@ struct DuplicateSource {
     pre_request_script_json: Option<String>,
     test_script_json: Option<String>,
     parent_id: Option<String>,
-    position: i64,
+    sort_order: i64,
     name: String,
     node_auth_json: Option<String>,
 }

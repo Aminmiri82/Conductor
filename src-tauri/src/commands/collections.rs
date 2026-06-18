@@ -10,6 +10,8 @@ use crate::{storage::StorageError, AppState};
 
 use super::models::{CollectionNode, CollectionSummary};
 
+const SORT_ORDER_STEP: i64 = 1024;
+
 #[tauri::command]
 pub fn list_collections(state: State<'_, AppState>) -> Result<Vec<CollectionSummary>, String> {
     state
@@ -42,23 +44,22 @@ pub fn get_collection_tree(
         .database
         .with_read_connection(|connection| {
             let mut statement = connection.prepare(
-                "SELECT n.id, n.collection_id, n.parent_id, n.position, n.kind, n.name, n.request_id,
+                "SELECT n.id, n.collection_id, n.parent_id, n.kind, n.name, n.request_id,
                         r.method
                  FROM collection_nodes n
                  LEFT JOIN requests r ON r.id = n.request_id
                  WHERE n.collection_id = ?
-                 ORDER BY parent_id IS NOT NULL, parent_id, position",
+                 ORDER BY n.parent_id, n.sort_order",
             )?;
             let rows = statement.query_map(params![collection_id], |row| {
                 Ok(FlatNode {
                     id: row.get(0)?,
                     collection_id: row.get(1)?,
                     parent_id: row.get(2)?,
-                    position: row.get(3)?,
-                    kind: row.get(4)?,
-                    name: row.get(5)?,
-                    request_id: row.get(6)?,
-                    method: row.get(7)?,
+                    kind: row.get(3)?,
+                    name: row.get(4)?,
+                    request_id: row.get(5)?,
+                    method: row.get(6)?,
                 })
             })?;
             let nodes = rows.collect::<Result<Vec<_>, _>>()?;
@@ -141,13 +142,13 @@ fn import_items(
         if let Some(children) = item.get("item").and_then(Value::as_array) {
             tx.execute(
                 "INSERT INTO collection_nodes
-                 (id, collection_id, parent_id, position, kind, name, request_id, auth_json, created_at, updated_at)
+                 (id, collection_id, parent_id, sort_order, kind, name, request_id, auth_json, created_at, updated_at)
                  VALUES (?, ?, ?, ?, 'folder', ?, NULL, ?, ?, ?)",
                 params![
                     node_id,
                     collection_id,
                     parent_id,
-                    position as i64,
+                    sort_order_for_import(position),
                     name,
                     postman_auth(item).map(|value| value.to_string()),
                     now,
@@ -193,13 +194,13 @@ fn import_items(
 
             tx.execute(
                 "INSERT INTO collection_nodes
-                 (id, collection_id, parent_id, position, kind, name, request_id, created_at, updated_at)
+                 (id, collection_id, parent_id, sort_order, kind, name, request_id, created_at, updated_at)
                  VALUES (?, ?, ?, ?, 'request', ?, ?, ?, ?)",
                 params![
                     node_id,
                     collection_id,
                     parent_id,
-                    position as i64,
+                    sort_order_for_import(position),
                     name,
                     request_id,
                     now,
@@ -229,6 +230,10 @@ fn write_raw_import_file(
         source,
     })?;
     Ok(path.display().to_string())
+}
+
+fn sort_order_for_import(position: usize) -> i64 {
+    (position as i64 + 1) * SORT_ORDER_STEP
 }
 
 fn insert_variable(
@@ -481,7 +486,6 @@ struct FlatNode {
     id: String,
     collection_id: String,
     parent_id: Option<String>,
-    position: i64,
     kind: String,
     name: String,
     request_id: Option<String>,
@@ -503,17 +507,17 @@ fn build_tree_from_map(
     by_parent: &mut HashMap<Option<String>, Vec<FlatNode>>,
     parent_id: Option<String>,
 ) -> Vec<CollectionNode> {
-    let mut nodes = by_parent.remove(&parent_id).unwrap_or_default();
-    nodes.sort_by_key(|node| node.position);
+    let nodes = by_parent.remove(&parent_id).unwrap_or_default();
     nodes
         .into_iter()
-        .map(|node| {
+        .enumerate()
+        .map(|(position, node)| {
             let children = build_tree_from_map(by_parent, Some(node.id.clone()));
             CollectionNode {
                 id: node.id,
                 collection_id: node.collection_id,
                 parent_id: node.parent_id,
-                position: node.position,
+                position: position as i64,
                 kind: node.kind,
                 name: node.name,
                 request_id: node.request_id,

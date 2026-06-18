@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   CollectionNode,
   CollectionSummary,
+  CreateRequestResult,
+  DuplicateRequestResult,
   EnvironmentSummary,
   RequestDetail,
   ResolvedRequestPreview,
@@ -40,7 +42,7 @@ export const api = {
     position: number,
     name: string,
   ) =>
-    invoke<string>("create_request", {
+    invoke<CreateRequestResult>("create_request", {
       input: { collectionId, parentId, position, name },
     }),
   createFolder: (
@@ -53,7 +55,7 @@ export const api = {
       input: { collectionId, parentId, position, name },
     }),
   duplicateRequest: (requestId: string) =>
-    invoke<string>("duplicate_request", { input: { requestId } }),
+    invoke<DuplicateRequestResult>("duplicate_request", { input: { requestId } }),
   deleteRequest: (requestId: string) =>
     invoke<void>("delete_request", { requestId }),
   deleteNode: (nodeId: string) =>

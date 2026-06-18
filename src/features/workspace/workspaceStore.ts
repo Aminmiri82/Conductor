@@ -242,15 +242,27 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const name = "New Request";
     set({ error: undefined });
     try {
-      const requestId = await api.createRequest(
+      const result = await api.createRequest(
         collectionId,
         parentId,
         position,
         name,
       );
-      const tree = await api.getCollectionTree(collectionId);
-      set({ tree });
-      await get().selectRequest(requestId);
+      const node: CollectionNode = {
+        id: result.nodeId,
+        collectionId,
+        parentId: parentId ?? null,
+        position,
+        kind: "request",
+        name,
+        requestId: result.requestId,
+        method: "GET",
+        children: [],
+      };
+      set((state) => ({
+        tree: insertNodeAt(state.tree, parentId ?? null, position, node),
+      }));
+      await get().selectRequest(result.requestId);
     } catch (error) {
       set({ error: String(error) });
     }
@@ -262,9 +274,21 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const name = "New Folder";
     set({ error: undefined });
     try {
-      await api.createFolder(collectionId, parentId, position, name);
-      const tree = await api.getCollectionTree(collectionId);
-      set({ tree });
+      const nodeId = await api.createFolder(collectionId, parentId, position, name);
+      const node: CollectionNode = {
+        id: nodeId,
+        collectionId,
+        parentId: parentId ?? null,
+        position,
+        kind: "folder",
+        name,
+        requestId: null,
+        method: null,
+        children: [],
+      };
+      set((state) => ({
+        tree: insertNodeAt(state.tree, parentId ?? null, position, node),
+      }));
     } catch (error) {
       set({ error: String(error) });
     }
@@ -274,11 +298,31 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const collectionId = get().activeCollectionId;
     if (!collectionId) return;
     set({ error: undefined });
+    const sourceNode = findRequestNodeByRequestId(get().tree, requestId);
     try {
-      const duplicatedRequestId = await api.duplicateRequest(requestId);
-      const tree = await api.getCollectionTree(collectionId);
-      set({ tree });
-      await get().selectRequest(duplicatedRequestId);
+      const result = await api.duplicateRequest(requestId);
+      if (sourceNode) {
+        const node: CollectionNode = {
+          ...sourceNode,
+          id: result.nodeId,
+          position: sourceNode.position + 1,
+          name: `${sourceNode.name} Copy`,
+          requestId: result.requestId,
+          children: [],
+        };
+        set((state) => ({
+          tree: insertNodeAt(
+            state.tree,
+            sourceNode.parentId ?? null,
+            sourceNode.position + 1,
+            node,
+          ),
+        }));
+      } else {
+        const tree = await api.getCollectionTree(collectionId);
+        set({ tree });
+      }
+      await get().selectRequest(result.requestId);
     } catch (error) {
       set({ error: String(error) });
     }
@@ -290,14 +334,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ error: undefined });
     try {
       await api.deleteRequest(requestId);
-      const tree = await api.getCollectionTree(collectionId);
       const current = get();
       const tabs = current.tabs.filter((tab) => tab.requestId !== requestId);
       const activeDeleted = current.activeRequestId === requestId;
       useDraftStore.getState().removeMany([requestId]);
       useResponseStore.getState().removeMany([requestId]);
       set({
-        tree,
+        tree: removeRequestNode(current.tree, requestId),
         tabs,
         activeRequestId: activeDeleted ? undefined : current.activeRequestId,
         requestLoading: activeDeleted ? false : current.requestLoading,
@@ -313,7 +356,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ error: undefined });
     try {
       await api.deleteNode(node.id);
-      const tree = await api.getCollectionTree(collectionId);
       const removedRequestIds = requestIdsForNode(node);
       const current = get();
       const activeDeleted =
@@ -322,7 +364,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       useDraftStore.getState().removeMany(removedRequestIds);
       useResponseStore.getState().removeMany(removedRequestIds);
       set({
-        tree,
+        tree: removeNodeById(current.tree, node.id),
         tabs: current.tabs.filter((tab) => !removedRequestIds.includes(tab.requestId)),
         activeRequestId: activeDeleted ? undefined : current.activeRequestId,
         requestLoading: activeDeleted ? false : current.requestLoading,
@@ -338,8 +380,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ error: undefined });
     try {
       await api.moveNode(node.id, parentId, position);
-      const tree = await api.getCollectionTree(collectionId);
-      set({ tree });
+      set((state) => ({
+        tree: moveNodeInTree(state.tree, node, parentId ?? null, position),
+      }));
     } catch (error) {
       set({ error: String(error) });
     }
@@ -461,6 +504,119 @@ function renameRequestNode(
     }
     return node;
   });
+}
+
+function insertNodeAt(
+  nodes: CollectionNode[],
+  parentId: string | null,
+  position: number,
+  node: CollectionNode,
+): CollectionNode[] {
+  if (parentId === null) {
+    return insertIntoSiblings(nodes, position, { ...node, parentId: null });
+  }
+
+  let changed = false;
+  const next = nodes.map((item) => {
+    if (item.id === parentId) {
+      changed = true;
+      return {
+        ...item,
+        children: insertIntoSiblings(item.children, position, {
+          ...node,
+          parentId,
+        }),
+      };
+    }
+    if (!item.children.length) return item;
+    const children = insertNodeAt(item.children, parentId, position, node);
+    return children === item.children ? item : { ...item, children };
+  });
+  return changed || next.some((item, index) => item !== nodes[index]) ? next : nodes;
+}
+
+function insertIntoSiblings(
+  siblings: CollectionNode[],
+  position: number,
+  node: CollectionNode,
+): CollectionNode[] {
+  const index = Math.max(0, Math.min(position, siblings.length));
+  const next = [...siblings.slice(0, index), node, ...siblings.slice(index)];
+  return reindexSiblings(next);
+}
+
+function removeNodeById(nodes: CollectionNode[], nodeId: string): CollectionNode[] {
+  let changed = false;
+  const next: CollectionNode[] = [];
+  for (const node of nodes) {
+    if (node.id === nodeId) {
+      changed = true;
+      continue;
+    }
+    if (node.children.length) {
+      const children = removeNodeById(node.children, nodeId);
+      if (children !== node.children) {
+        changed = true;
+        next.push({ ...node, children });
+        continue;
+      }
+    }
+    next.push(node);
+  }
+  return changed ? reindexSiblings(next) : nodes;
+}
+
+function removeRequestNode(nodes: CollectionNode[], requestId: string): CollectionNode[] {
+  let changed = false;
+  const next: CollectionNode[] = [];
+  for (const node of nodes) {
+    if (node.requestId === requestId) {
+      changed = true;
+      continue;
+    }
+    if (node.children.length) {
+      const children = removeRequestNode(node.children, requestId);
+      if (children !== node.children) {
+        changed = true;
+        next.push({ ...node, children });
+        continue;
+      }
+    }
+    next.push(node);
+  }
+  return changed ? reindexSiblings(next) : nodes;
+}
+
+function moveNodeInTree(
+  nodes: CollectionNode[],
+  node: CollectionNode,
+  parentId: string | null,
+  position: number,
+): CollectionNode[] {
+  const withoutNode = removeNodeById(nodes, node.id);
+  return insertNodeAt(withoutNode, parentId, position, {
+    ...node,
+    parentId,
+    position,
+  });
+}
+
+function findRequestNodeByRequestId(
+  nodes: CollectionNode[],
+  requestId: string,
+): CollectionNode | undefined {
+  for (const node of nodes) {
+    if (node.requestId === requestId) return node;
+    const child = findRequestNodeByRequestId(node.children, requestId);
+    if (child) return child;
+  }
+  return undefined;
+}
+
+function reindexSiblings(nodes: CollectionNode[]): CollectionNode[] {
+  return nodes.map((node, position) =>
+    node.position === position ? node : { ...node, position },
+  );
 }
 
 function requestIdsForNode(node: CollectionNode): string[] {

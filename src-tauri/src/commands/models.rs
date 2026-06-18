@@ -217,6 +217,13 @@ pub struct CreateRequestInput {
     pub name: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateRequestResult {
+    pub request_id: String,
+    pub node_id: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateFolderInput {
@@ -230,6 +237,13 @@ pub struct CreateFolderInput {
 #[serde(rename_all = "camelCase")]
 pub struct DuplicateRequestInput {
     pub request_id: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateRequestResult {
+    pub request_id: String,
+    pub node_id: String,
 }
 
 #[derive(Debug, Deserialize)]

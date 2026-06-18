@@ -3,8 +3,10 @@ import {
   CSSProperties,
   DragEvent,
   createContext,
+  useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -32,7 +34,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
   SelectContent,
@@ -45,6 +46,10 @@ import type { CollectionNode } from "@/features/types";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 
 type DropIntent = "before" | "after" | "into";
+type VisibleTreeNode = {
+  node: CollectionNode;
+  depth: number;
+};
 type DropTarget =
   | { kind: "node"; nodeId: string; intent: DropIntent }
   | { kind: "root-end" }
@@ -53,6 +58,7 @@ type DropTarget =
 type DnDValue = {
   draggingId: string | null;
   draggingNode: CollectionNode | null;
+  draggingDescendantIds: Set<string>;
   beginDrag: (node: CollectionNode) => void;
   endDrag: () => void;
   target: DropTarget;
@@ -60,6 +66,8 @@ type DnDValue = {
 };
 
 const DnDContext = createContext<DnDValue | null>(null);
+const TREE_ROW_HEIGHT = 28;
+const TREE_OVERSCAN = 8;
 
 function useDnD(): DnDValue {
   const value = useContext(DnDContext);
@@ -69,6 +77,7 @@ function useDnD(): DnDValue {
 
 export function CollectionSidebar() {
   const inputRef = useRef<HTMLInputElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const collections = useWorkspaceStore((state) => state.collections);
   const tree = useWorkspaceStore((state) => state.tree);
   const activeCollectionId = useWorkspaceStore((state) => state.activeCollectionId);
@@ -84,25 +93,82 @@ export function CollectionSidebar() {
   const moveNode = useWorkspaceStore((state) => state.moveNode);
 
   const [draggingNode, setDraggingNode] = useState<CollectionNode | null>(null);
+  const [draggingDescendantIds, setDraggingDescendantIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [target, setTarget] = useState<DropTarget>(null);
+  const [openIds, setOpenIds] = useState<Set<string>>(() => new Set());
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
 
   const dnd = useMemo<DnDValue>(
     () => ({
       draggingId: draggingNode?.id ?? null,
       draggingNode,
+      draggingDescendantIds,
       beginDrag: (node) => {
         setDraggingNode(node);
+        setDraggingDescendantIds(collectNodeIds(node));
         setTarget(null);
       },
       endDrag: () => {
         setDraggingNode(null);
+        setDraggingDescendantIds(new Set());
         setTarget(null);
       },
       target,
       setTarget,
     }),
-    [draggingNode, target],
+    [draggingDescendantIds, draggingNode, target],
   );
+
+  const visibleNodes = useMemo(
+    () => flattenVisibleNodes(tree, openIds),
+    [openIds, tree],
+  );
+  const rootDropHeight = dnd.draggingId ? 32 : 8;
+  const totalTreeHeight = visibleNodes.length * TREE_ROW_HEIGHT + rootDropHeight;
+  const startIndex = Math.max(
+    0,
+    Math.floor(scrollTop / TREE_ROW_HEIGHT) - TREE_OVERSCAN,
+  );
+  const endIndex = Math.min(
+    visibleNodes.length,
+    Math.ceil((scrollTop + viewportHeight) / TREE_ROW_HEIGHT) + TREE_OVERSCAN,
+  );
+  const renderedNodes = visibleNodes.slice(startIndex, endIndex);
+
+  const toggleOpen = useCallback((nodeId: string) => {
+    setOpenIds((current) => {
+      const next = new Set(current);
+      if (next.has(nodeId)) {
+        next.delete(nodeId);
+      } else {
+        next.add(nodeId);
+      }
+      return next;
+    });
+  }, []);
+
+  const openFolder = useCallback((nodeId: string) => {
+    setOpenIds((current) => {
+      if (current.has(nodeId)) return current;
+      const next = new Set(current);
+      next.add(nodeId);
+      return next;
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+
+    const updateSize = () => setViewportHeight(element.clientHeight);
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
 
   async function onFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -234,52 +300,65 @@ export function CollectionSidebar() {
           </div>
         </div>
 
-        <ScrollArea className="min-h-0 flex-1">
-          <div
-            className="app-scroll p-2"
-            onDragLeave={(event) => {
-              if (event.currentTarget.contains(event.relatedTarget as Node)) return;
-              setTarget(null);
-            }}
-          >
-            {tree.length ? (
-              <>
-                {tree.map((node) => (
-                  <TreeNode
-                    key={node.id}
-                    node={node}
-                    depth={0}
-                    activeRequestId={activeRequestId}
-                    onSelectRequest={selectRequest}
-                    onCreateRequest={createRequestIn}
-                    onCreateFolder={createFolderIn}
-                    onDuplicateRequest={duplicateRequest}
-                    onDeleteRequest={confirmDeleteRequest}
-                    onDeleteNode={confirmDeleteNode}
-                    performDrop={performDrop}
-                  />
-                ))}
-                <RootEndDropZone performDrop={performDrop} />
-              </>
-            ) : (
-              <div className="px-2 py-8 text-center text-xs text-[var(--app-dim)]">
-                Import a Postman collection to begin.
-              </div>
-            )}
-          </div>
-        </ScrollArea>
+        <div
+          ref={scrollRef}
+          className="app-scroll min-h-0 flex-1 overflow-auto p-2"
+          onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+          onDragLeave={(event) => {
+            if (event.currentTarget.contains(event.relatedTarget as Node)) return;
+            setTarget(null);
+          }}
+        >
+          {tree.length ? (
+            <div className="relative" style={{ height: totalTreeHeight }}>
+              {renderedNodes.map((item, index) => (
+                <TreeRow
+                  key={item.node.id}
+                  node={item.node}
+                  depth={item.depth}
+                  top={(startIndex + index) * TREE_ROW_HEIGHT}
+                  open={openIds.has(item.node.id)}
+                  activeRequestId={activeRequestId}
+                  onToggleOpen={toggleOpen}
+                  onOpenFolder={openFolder}
+                  onSelectRequest={selectRequest}
+                  onCreateRequest={createRequestIn}
+                  onCreateFolder={createFolderIn}
+                  onDuplicateRequest={duplicateRequest}
+                  onDeleteRequest={confirmDeleteRequest}
+                  onDeleteNode={confirmDeleteNode}
+                  performDrop={performDrop}
+                />
+              ))}
+              <RootEndDropZone
+                top={visibleNodes.length * TREE_ROW_HEIGHT}
+                performDrop={performDrop}
+              />
+            </div>
+          ) : (
+            <div className="px-2 py-8 text-center text-xs text-[var(--app-dim)]">
+              Import a Postman collection to begin.
+            </div>
+          )}
+        </div>
       </aside>
     </DnDContext.Provider>
   );
 }
 
-function RootEndDropZone({ performDrop }: { performDrop: () => Promise<void> }) {
+function RootEndDropZone({
+  top,
+  performDrop,
+}: {
+  top: number;
+  performDrop: () => Promise<void>;
+}) {
   const dnd = useDnD();
   const dragging = dnd.draggingId;
   const active = dnd.target?.kind === "root-end";
 
   if (!dragging) {
-    return <div aria-hidden className="h-2" />;
+    return <div aria-hidden className="absolute h-2" style={{ top, left: 0, right: 0 }} />;
   }
 
   return (
@@ -296,22 +375,26 @@ function RootEndDropZone({ performDrop }: { performDrop: () => Promise<void> }) 
         void performDrop();
       }}
       className={cn(
-        "mx-1 mt-1 flex h-7 items-center justify-center border border-dashed text-[10px] uppercase tracking-[0.08em] transition-colors",
+        "absolute mx-1 mt-1 flex h-7 items-center justify-center border border-dashed text-[10px] uppercase tracking-[0.08em] transition-colors",
         active
           ? "border-[var(--app-accent)] bg-[color-mix(in_oklab,var(--app-accent)_10%,transparent)] text-[var(--app-accent)]"
           : "border-[var(--app-line)] text-[var(--app-dim)]/60",
       )}
-      style={{ borderRadius: "var(--app-radius)" }}
+      style={{ top, left: 0, right: 0, borderRadius: "var(--app-radius)" }}
     >
       Move to root
     </div>
   );
 }
 
-type TreeNodeProps = {
+type TreeRowProps = {
   node: CollectionNode;
   depth: number;
+  top: number;
+  open: boolean;
   activeRequestId?: string;
+  onToggleOpen: (nodeId: string) => void;
+  onOpenFolder: (nodeId: string) => void;
   onSelectRequest: (requestId: string) => Promise<void>;
   onCreateRequest: (parentId: string | null | undefined, position: number) => Promise<void>;
   onCreateFolder: (parentId: string | null | undefined, position: number) => Promise<void>;
@@ -321,10 +404,14 @@ type TreeNodeProps = {
   performDrop: () => Promise<void>;
 };
 
-function TreeNode({
+function TreeRow({
   node,
   depth,
+  top,
+  open,
   activeRequestId,
+  onToggleOpen,
+  onOpenFolder,
   onSelectRequest,
   onCreateRequest,
   onCreateFolder,
@@ -332,17 +419,12 @@ function TreeNode({
   onDeleteRequest,
   onDeleteNode,
   performDrop,
-}: TreeNodeProps) {
+}: TreeRowProps) {
   const dnd = useDnD();
-  const [open, setOpen] = useState(false);
   const isFolder = node.kind === "folder";
   const isActive = node.requestId === activeRequestId;
   const isDragging = dnd.draggingId === node.id;
-
-  const draggingNode = dnd.draggingNode;
-  const isInvalidTarget = draggingNode
-    ? containsNode(draggingNode, node.id)
-    : false;
+  const isInvalidTarget = dnd.draggingDescendantIds.has(node.id);
 
   const target = dnd.target;
   const targetingMe = target?.kind === "node" && target.nodeId === node.id;
@@ -352,9 +434,9 @@ function TreeNode({
 
   useEffect(() => {
     if (!showInto || !isFolder || open) return;
-    const id = window.setTimeout(() => setOpen(true), 600);
+    const id = window.setTimeout(() => onOpenFolder(node.id), 600);
     return () => window.clearTimeout(id);
-  }, [showInto, isFolder, open]);
+  }, [isFolder, node.id, onOpenFolder, open, showInto]);
 
   const indent = 8 + depth * 13;
   const lineInset = indent + 2;
@@ -404,7 +486,10 @@ function TreeNode({
   }
 
   return (
-    <div className="relative">
+    <div
+      className="absolute left-0 right-0"
+      style={{ top, height: TREE_ROW_HEIGHT }}
+    >
       {showBefore ? <DropLine inset={lineInset} position="top" /> : null}
       <ContextMenu>
         <ContextMenuTrigger asChild>
@@ -429,7 +514,7 @@ function TreeNode({
             style={{ paddingLeft: indent, borderRadius: "var(--app-radius)" }}
             onClick={() => {
               if (isFolder) {
-                setOpen((value) => !value);
+                onToggleOpen(node.id);
               } else if (node.requestId) {
                 void onSelectRequest(node.requestId);
               }
@@ -503,23 +588,6 @@ function TreeNode({
           ) : null}
         </ContextMenuContent>
       </ContextMenu>
-      {isFolder && open
-        ? node.children.map((child) => (
-            <TreeNode
-              key={child.id}
-              node={child}
-              depth={depth + 1}
-              activeRequestId={activeRequestId}
-              onSelectRequest={onSelectRequest}
-              onCreateRequest={onCreateRequest}
-              onCreateFolder={onCreateFolder}
-              onDuplicateRequest={onDuplicateRequest}
-              onDeleteRequest={onDeleteRequest}
-              onDeleteNode={onDeleteNode}
-              performDrop={performDrop}
-            />
-          ))
-        : null}
       {showAfter ? <DropLine inset={lineInset} position="bottom" /> : null}
     </div>
   );
@@ -565,6 +633,34 @@ function methodColor(method: string): CSSProperties {
     }),
     borderRadius: "var(--app-radius)",
   };
+}
+
+function flattenVisibleNodes(
+  nodes: CollectionNode[],
+  openIds: Set<string>,
+  depth = 0,
+  rows: VisibleTreeNode[] = [],
+): VisibleTreeNode[] {
+  for (const node of nodes) {
+    rows.push({ node, depth });
+    if (node.kind === "folder" && openIds.has(node.id)) {
+      flattenVisibleNodes(node.children, openIds, depth + 1, rows);
+    }
+  }
+  return rows;
+}
+
+function collectNodeIds(node: CollectionNode): Set<string> {
+  const ids = new Set<string>();
+  collectNodeIdsInto(node, ids);
+  return ids;
+}
+
+function collectNodeIdsInto(node: CollectionNode, ids: Set<string>) {
+  ids.add(node.id);
+  for (const child of node.children) {
+    collectNodeIdsInto(child, ids);
+  }
 }
 
 function findNode(nodes: CollectionNode[], id: string): CollectionNode | undefined {

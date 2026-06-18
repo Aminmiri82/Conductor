@@ -97,6 +97,13 @@ export type CollectionNode = {
   children: CollectionNode[];
 };
 
+export type CreateRequestResult = {
+  requestId: string;
+  nodeId: string;
+};
+
+export type DuplicateRequestResult = CreateRequestResult;
+
 export type VariableEntry = {
   scope: "global" | "collection" | "environment";
   collectionId?: string | null;

@@ -1,4 +1,5 @@
 import { FileJson } from "lucide-react";
+import { useMemo } from "react";
 import {
   Command,
   CommandDialog,
@@ -27,7 +28,7 @@ export function OpenRequestDialog({
 }) {
   const tree = useWorkspaceStore((state) => state.tree);
   const selectRequest = useWorkspaceStore((state) => state.selectRequest);
-  const requests = flattenRequests(tree);
+  const requests = useMemo(() => flattenRequests(tree), [tree]);
 
   return (
     <CommandDialog

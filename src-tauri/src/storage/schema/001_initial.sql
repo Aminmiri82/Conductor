@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS collection_nodes (
     id TEXT PRIMARY KEY,
     collection_id TEXT NOT NULL,
     parent_id TEXT,
-    position INTEGER NOT NULL,
+    sort_order INTEGER NOT NULL,
     kind TEXT NOT NULL CHECK (kind IN ('folder', 'request')),
     name TEXT NOT NULL,
     request_id TEXT,
@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS collection_nodes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_collection_nodes_parent
-    ON collection_nodes(collection_id, parent_id, position);
+    ON collection_nodes(collection_id, parent_id, sort_order);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_collection_nodes_id_collection
     ON collection_nodes(id, collection_id);
