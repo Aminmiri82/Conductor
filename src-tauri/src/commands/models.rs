@@ -44,6 +44,8 @@ pub struct BodyField {
     pub field_type: String,
     #[serde(default)]
     pub file_path: Option<String>,
+    #[serde(default)]
+    pub content_type: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -58,6 +60,53 @@ pub struct RequestBody {
     pub form_data: Vec<BodyField>,
     #[serde(default)]
     pub urlencoded: Vec<KeyValue>,
+    #[serde(default)]
+    pub graphql: Option<GraphqlBody>,
+    #[serde(default)]
+    pub file: Option<FileBody>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GraphqlBody {
+    #[serde(default)]
+    pub query: String,
+    #[serde(default)]
+    pub variables: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct FileBody {
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub content_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum RequestBodyMode {
+    None,
+    Raw,
+    FormData,
+    UrlEncoded,
+    Graphql,
+    File,
+    Unsupported,
+}
+
+impl RequestBody {
+    pub fn body_mode(&self) -> RequestBodyMode {
+        match self.mode.as_str() {
+            "none" => RequestBodyMode::None,
+            "raw" => RequestBodyMode::Raw,
+            "formdata" => RequestBodyMode::FormData,
+            "urlencoded" => RequestBodyMode::UrlEncoded,
+            "graphql" => RequestBodyMode::Graphql,
+            "file" => RequestBodyMode::File,
+            _ => RequestBodyMode::Unsupported,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

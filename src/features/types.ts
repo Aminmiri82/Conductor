@@ -7,14 +7,23 @@ export type KeyValue = {
 export type BodyField = KeyValue & {
   fieldType: "text" | "file" | string;
   filePath?: string | null;
+  contentType?: string | null;
 };
 
 export type RequestBody = {
-  mode: "none" | "raw" | "formdata" | "urlencoded" | string;
+  mode: "none" | "raw" | "formdata" | "urlencoded" | "graphql" | "file" | string;
   raw: string;
   rawLanguage?: string | null;
   formData: BodyField[];
   urlencoded: KeyValue[];
+  graphql?: {
+    query: string;
+    variables: string;
+  } | null;
+  file?: {
+    path?: string | null;
+    contentType?: string | null;
+  } | null;
 };
 
 export type AuthConfig = {

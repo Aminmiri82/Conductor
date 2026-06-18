@@ -16,10 +16,6 @@ What Conductor does **not** yet do compared to Postman. Grouped by impact.
 - Only `bearer`, `basic`, `apikey`, `noauth` are supported.
 - **Missing:** OAuth 2.0, OAuth 1.0, AWS SigV4, Digest, NTLM, Hawk — dropped on import.
 
-## Request bodies
-- Supported: `raw`, `formdata`, `urlencoded`.
-- **Missing:** GraphQL body mode, binary/file body mode.
-
 ## Collections
 - **Saved example responses (`item.response[]`) are ignored on import.**
 - No export back to Postman format (import-only — no round-trip).

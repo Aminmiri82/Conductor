@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use crate::commands::models::{
-    BodyField, KeyValue, RequestBody, RequestDetail, ResolvedRequestPreview, UnresolvedVariable,
+    BodyField, FileBody, GraphqlBody, KeyValue, RequestBody, RequestDetail, ResolvedRequestPreview,
+    UnresolvedVariable,
 };
 
 use super::request_auth;
@@ -148,12 +149,23 @@ fn resolve_body(
             .map(|field| {
                 let (value, missing) = resolve_text(&field.value, variables);
                 add_missing(unresolved, &format!("form:{}", field.key), missing);
+                let (file_path, missing) =
+                    resolve_optional_text(field.file_path.as_ref(), variables);
+                add_missing(unresolved, &format!("form-file:{}", field.key), missing);
+                let (content_type, missing) =
+                    resolve_optional_text(field.content_type.as_ref(), variables);
+                add_missing(
+                    unresolved,
+                    &format!("form-content-type:{}", field.key),
+                    missing,
+                );
                 BodyField {
                     key: field.key.clone(),
                     value,
                     enabled: field.enabled,
                     field_type: field.field_type.clone(),
-                    file_path: field.file_path.clone(),
+                    file_path,
+                    content_type,
                 }
             })
             .collect(),
@@ -170,6 +182,36 @@ fn resolve_body(
                 }
             })
             .collect(),
+        graphql: body.graphql.as_ref().map(|graphql| {
+            let (query, missing) = resolve_text(&graphql.query, variables);
+            add_missing(unresolved, "graphql:query", missing);
+            let (graphql_variables, missing) = resolve_text(&graphql.variables, variables);
+            add_missing(unresolved, "graphql:variables", missing);
+            GraphqlBody {
+                query,
+                variables: graphql_variables,
+            }
+        }),
+        file: body.file.as_ref().map(|file| {
+            let (path, missing) = resolve_optional_text(file.path.as_ref(), variables);
+            add_missing(unresolved, "body:file", missing);
+            let (content_type, missing) =
+                resolve_optional_text(file.content_type.as_ref(), variables);
+            add_missing(unresolved, "body:file-content-type", missing);
+            FileBody { path, content_type }
+        }),
+    }
+}
+fn resolve_optional_text(
+    text: Option<&String>,
+    variables: &HashMap<String, String>,
+) -> (Option<String>, Vec<String>) {
+    match text {
+        Some(text) => {
+            let (resolved, missing) = resolve_text(text, variables);
+            (Some(resolved), missing)
+        }
+        None => (None, Vec::new()),
     }
 }
 pub(super) fn resolve_text(

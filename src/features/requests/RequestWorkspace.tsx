@@ -273,6 +273,8 @@ function emptyBody() {
     rawLanguage: "json",
     formData: [],
     urlencoded: [],
+    graphql: { query: "", variables: "" },
+    file: { path: null, contentType: null },
   };
 }
 

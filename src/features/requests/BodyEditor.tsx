@@ -1,5 +1,5 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { FileUp, Plus, Trash2 } from "lucide-react";
+import { FileUp, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -33,6 +33,8 @@ export function BodyEditor({
             <SelectItem value="raw">Raw</SelectItem>
             <SelectItem value="formdata">Form data</SelectItem>
             <SelectItem value="urlencoded">URL encoded</SelectItem>
+            <SelectItem value="graphql">GraphQL</SelectItem>
+            <SelectItem value="file">Binary file</SelectItem>
           </SelectContent>
         </Select>
         {body.mode === "raw" ? (
@@ -77,12 +79,123 @@ export function BodyEditor({
             />
           </div>
         ) : null}
+        {body.mode === "graphql" ? (
+          <GraphqlEditor
+            query={body.graphql?.query ?? ""}
+            variables={body.graphql?.variables ?? ""}
+            onChange={(graphql) => onChange({ ...body, graphql })}
+          />
+        ) : null}
+        {body.mode === "file" ? (
+          <BinaryFileEditor
+            path={body.file?.path ?? null}
+            contentType={body.file?.contentType ?? ""}
+            onChange={(file) => onChange({ ...body, file })}
+          />
+        ) : null}
         {body.mode === "none" ? (
           <div className="p-8 text-center text-xs text-muted-foreground">
             This request does not send a body.
           </div>
         ) : null}
       </ScrollArea>
+    </div>
+  );
+}
+
+function GraphqlEditor({
+  query,
+  variables,
+  onChange,
+}: {
+  query: string;
+  variables: string;
+  onChange: (graphql: { query: string; variables: string }) => void;
+}) {
+  return (
+    <div className="grid min-h-[420px] grid-cols-[minmax(0,1.25fr)_minmax(220px,0.75fr)] divide-x divide-border/50">
+      <div className="min-w-0">
+        <div className="border-b border-border/50 px-3 py-2 text-xs font-medium text-muted-foreground">
+          Query
+        </div>
+        <Textarea
+          className="min-h-[380px] resize-none rounded-none border-0 bg-transparent p-3 font-mono text-xs leading-5 shadow-none focus-visible:ring-0"
+          value={query}
+          spellCheck={false}
+          onChange={(event) => onChange({ query: event.target.value, variables })}
+        />
+      </div>
+      <div className="min-w-0">
+        <div className="border-b border-border/50 px-3 py-2 text-xs font-medium text-muted-foreground">
+          Variables
+        </div>
+        <Textarea
+          className="min-h-[380px] resize-none rounded-none border-0 bg-transparent p-3 font-mono text-xs leading-5 shadow-none focus-visible:ring-0"
+          value={variables}
+          placeholder="{}"
+          spellCheck={false}
+          onChange={(event) => onChange({ query, variables: event.target.value })}
+        />
+      </div>
+    </div>
+  );
+}
+
+function BinaryFileEditor({
+  path,
+  contentType,
+  onChange,
+}: {
+  path: string | null;
+  contentType: string;
+  onChange: (file: { path: string | null; contentType: string | null }) => void;
+}) {
+  async function chooseFile() {
+    const selected = await open({ multiple: false });
+    if (typeof selected === "string") {
+      onChange({ path: selected, contentType });
+    }
+  }
+
+  return (
+    <div className="space-y-3 p-3">
+      <div className="overflow-hidden rounded-md border border-border/70">
+        <div className="grid h-8 grid-cols-[120px_minmax(0,1fr)_34px] items-center border-b border-border/70 bg-muted/20 px-2 text-xs text-muted-foreground">
+          <div>File</div>
+          <div>Path</div>
+          <div />
+        </div>
+        <div className="grid grid-cols-[120px_minmax(0,1fr)_34px] items-center px-2">
+          <Button
+            variant="ghost"
+            className="h-8 justify-start gap-2 px-1 text-xs text-muted-foreground"
+            onClick={() => void chooseFile()}
+          >
+            <FileUp className="size-3.5 shrink-0" />
+            Choose
+          </Button>
+          <div className="truncate px-2 font-mono text-xs text-muted-foreground">
+            {path || "No file selected"}
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7 text-muted-foreground"
+            disabled={!path}
+            onClick={() => onChange({ path: null, contentType })}
+          >
+            <X className="size-3.5" />
+          </Button>
+        </div>
+      </div>
+      <Input
+        className="h-8 max-w-sm border-border/70 bg-background/40 font-mono text-xs"
+        value={contentType}
+        placeholder="Content-Type"
+        onChange={(event) =>
+          onChange({ path, contentType: event.target.value || null })
+        }
+      />
     </div>
   );
 }
@@ -137,6 +250,7 @@ function FormDataEditor({
                 fieldType,
                 value: fieldType === "file" ? "" : row.value,
                 filePath: null,
+                contentType: null,
               })
             }
           >
@@ -149,14 +263,24 @@ function FormDataEditor({
             </SelectContent>
           </Select>
           {row.fieldType === "file" ? (
-            <Button
-              variant="ghost"
-              className="h-8 justify-start truncate px-2 font-mono text-xs text-muted-foreground"
-              onClick={() => void chooseFile(index)}
-            >
-              <FileUp className="mr-2 size-3.5 shrink-0" />
-              <span className="truncate">{row.filePath || "Choose file"}</span>
-            </Button>
+            <div className="flex min-w-0 items-center gap-1">
+              <Button
+                variant="ghost"
+                className="h-8 min-w-0 flex-1 justify-start truncate px-2 font-mono text-xs text-muted-foreground"
+                onClick={() => void chooseFile(index)}
+              >
+                <FileUp className="mr-2 size-3.5 shrink-0" />
+                <span className="truncate">{row.filePath || "Choose file"}</span>
+              </Button>
+              <Input
+                className="h-8 w-32 rounded-none border-0 bg-transparent font-mono text-xs shadow-none focus-visible:ring-0"
+                value={row.contentType ?? ""}
+                placeholder="Content-Type"
+                onChange={(event) =>
+                  update(index, { contentType: event.target.value || null })
+                }
+              />
+            </div>
           ) : (
             <Input
               className="h-8 rounded-none border-0 bg-transparent font-mono text-xs shadow-none focus-visible:ring-0"
@@ -182,7 +306,14 @@ function FormDataEditor({
           onClick={() =>
             onChange([
               ...rows,
-              { key: "", value: "", enabled: true, fieldType: "text", filePath: null },
+              {
+                key: "",
+                value: "",
+                enabled: true,
+                fieldType: "text",
+                filePath: null,
+                contentType: null,
+              },
             ])
           }
         >

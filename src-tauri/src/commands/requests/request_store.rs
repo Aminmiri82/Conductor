@@ -225,6 +225,9 @@ pub fn save_request(request: RequestDetail, state: State<'_, AppState>) -> Resul
                         field.file_path = None;
                     }
                 }
+                if let Some(file) = &mut body.file {
+                    file.path = None;
+                }
             }
 
             connection.execute(

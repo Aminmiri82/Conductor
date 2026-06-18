@@ -323,7 +323,9 @@ fn postman_body(request: &Value) -> Option<Value> {
             "raw": body.get("raw").and_then(Value::as_str).unwrap_or_default(),
             "rawLanguage": body.pointer("/options/raw/language").and_then(Value::as_str),
             "formData": [],
-            "urlencoded": []
+            "urlencoded": [],
+            "graphql": null,
+            "file": null
         })),
         "formdata" => Some(json!({
             "mode": "formdata",
@@ -338,11 +340,14 @@ fn postman_body(request: &Value) -> Option<Value> {
                         "value": if field_type == "file" { "" } else { field.get("value").and_then(Value::as_str).unwrap_or_default() },
                         "enabled": !field.get("disabled").and_then(Value::as_bool).unwrap_or(false),
                         "fieldType": field_type,
-                        "filePath": null
+                        "filePath": null,
+                        "contentType": field.get("contentType").and_then(Value::as_str)
                     }))
                 }).collect::<Vec<_>>()
             }).unwrap_or_default(),
-            "urlencoded": []
+            "urlencoded": [],
+            "graphql": null,
+            "file": null
         })),
         "urlencoded" => Some(json!({
             "mode": "urlencoded",
@@ -358,10 +363,36 @@ fn postman_body(request: &Value) -> Option<Value> {
                         "enabled": !field.get("disabled").and_then(Value::as_bool).unwrap_or(false)
                     }))
                 }).collect::<Vec<_>>()
-            }).unwrap_or_default()
+            }).unwrap_or_default(),
+            "graphql": null,
+            "file": null
+        })),
+        "graphql" => Some(json!({
+            "mode": "graphql",
+            "raw": "",
+            "rawLanguage": null,
+            "formData": [],
+            "urlencoded": [],
+            "graphql": {
+                "query": body.pointer("/graphql/query").and_then(Value::as_str).unwrap_or_default(),
+                "variables": body.pointer("/graphql/variables").and_then(Value::as_str).unwrap_or_default()
+            },
+            "file": null
+        })),
+        "file" => Some(json!({
+            "mode": "file",
+            "raw": "",
+            "rawLanguage": null,
+            "formData": [],
+            "urlencoded": [],
+            "graphql": null,
+            "file": {
+                "path": null,
+                "contentType": body.pointer("/file/contentType").and_then(Value::as_str)
+            }
         })),
         _ => Some(
-            json!({"mode": mode, "raw": "", "rawLanguage": null, "formData": [], "urlencoded": []}),
+            json!({"mode": mode, "raw": "", "rawLanguage": null, "formData": [], "urlencoded": [], "graphql": null, "file": null}),
         ),
     }
 }
@@ -469,4 +500,50 @@ fn build_tree_from_map(
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn postman_graphql_body_preserves_query_and_variables() {
+        let request = json!({
+            "body": {
+                "mode": "graphql",
+                "graphql": {
+                    "query": "query Viewer($id: ID!) { viewer(id: $id) { name } }",
+                    "variables": "{\"id\":\"123\"}"
+                }
+            }
+        });
+
+        let body = postman_body(&request).expect("body should import");
+
+        assert_eq!(body["mode"], "graphql");
+        assert_eq!(
+            body["graphql"]["query"],
+            "query Viewer($id: ID!) { viewer(id: $id) { name } }"
+        );
+        assert_eq!(body["graphql"]["variables"], "{\"id\":\"123\"}");
+    }
+
+    #[test]
+    fn postman_file_body_does_not_preserve_imported_path() {
+        let request = json!({
+            "body": {
+                "mode": "file",
+                "file": {
+                    "src": "/Users/example/private.bin",
+                    "contentType": "application/octet-stream"
+                }
+            }
+        });
+
+        let body = postman_body(&request).expect("body should import");
+
+        assert_eq!(body["mode"], "file");
+        assert!(body["file"]["path"].is_null());
+        assert_eq!(body["file"]["contentType"], "application/octet-stream");
+    }
 }
