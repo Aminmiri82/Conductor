@@ -12,6 +12,14 @@ pub struct CollectionSummary {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct EnvironmentSummary {
+    pub id: String,
+    pub name: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CollectionNode {
     pub id: String,
     pub collection_id: String,
@@ -152,10 +160,14 @@ pub struct RequestDetail {
 pub struct VariableEntry {
     pub scope: String,
     pub collection_id: Option<String>,
+    pub environment_id: Option<String>,
     pub key: String,
     pub value: String,
+    pub initial_value: Option<String>,
     pub enabled: bool,
     pub sensitive: bool,
+    #[serde(default)]
+    pub variable_type: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -179,6 +191,21 @@ pub struct ResolvedRequestPreview {
 #[serde(rename_all = "camelCase")]
 pub struct SendRequestInput {
     pub request: RequestDetail,
+    #[serde(default)]
+    pub environment_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateEnvironmentInput {
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameEnvironmentInput {
+    pub environment_id: String,
+    pub name: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -240,6 +267,7 @@ pub struct SendRequestResult {
     pub body_content_type: Option<String>,
     pub body_format: String,
     pub updated_variables: Vec<KeyValue>,
+    pub variable_warnings: Vec<String>,
     pub unresolved_variables: Vec<UnresolvedVariable>,
 }
 

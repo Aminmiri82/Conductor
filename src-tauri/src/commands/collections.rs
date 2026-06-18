@@ -243,21 +243,43 @@ fn insert_variable(
     };
     let value = variable
         .get("value")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
+        .map(value_to_string)
+        .unwrap_or_default();
     let enabled = !variable
         .get("disabled")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let variable_type = variable
+        .get("type")
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
 
     tx.execute(
         "INSERT OR REPLACE INTO variables
-         (scope, collection_id, key, value, enabled, sensitive, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 0, ?, ?)",
-        params![scope, collection_id, key, value, enabled as i64, now, now],
+         (scope, collection_id, environment_id, key, initial_value, current_value,
+          enabled, sensitive, variable_type, created_at, updated_at)
+         VALUES (?, ?, NULL, ?, ?, ?, ?, 0, ?, ?, ?)",
+        params![
+            scope,
+            collection_id,
+            key,
+            value,
+            value,
+            enabled as i64,
+            variable_type,
+            now,
+            now
+        ],
     )?;
     Ok(())
+}
+
+fn value_to_string(value: &Value) -> String {
+    match value {
+        Value::Null => String::new(),
+        Value::String(value) => value.clone(),
+        other => other.to_string(),
+    }
 }
 
 fn postman_url_raw(request: &Value) -> String {

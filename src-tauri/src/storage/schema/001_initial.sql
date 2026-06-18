@@ -62,21 +62,35 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_collection_nodes_request_id
     ON collection_nodes(request_id)
     WHERE request_id IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS environments (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'manual',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS variables (
-    scope TEXT NOT NULL CHECK (scope IN ('global', 'collection')),
+    scope TEXT NOT NULL CHECK (scope IN ('global', 'collection', 'environment')),
     collection_id TEXT,
+    environment_id TEXT,
     key TEXT NOT NULL,
-    value TEXT NOT NULL,
+    initial_value TEXT,
+    current_value TEXT NOT NULL,
     enabled INTEGER NOT NULL DEFAULT 1,
     sensitive INTEGER NOT NULL DEFAULT 0,
+    variable_type TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     CHECK (
-        (scope = 'global' AND collection_id IS NULL)
+        (scope = 'global' AND collection_id IS NULL AND environment_id IS NULL)
         OR
-        (scope = 'collection' AND collection_id IS NOT NULL)
+        (scope = 'collection' AND collection_id IS NOT NULL AND environment_id IS NULL)
+        OR
+        (scope = 'environment' AND collection_id IS NULL AND environment_id IS NOT NULL)
     ),
-    FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE
+    FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE,
+    FOREIGN KEY (environment_id) REFERENCES environments(id) ON DELETE CASCADE
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_variables_global_key
@@ -87,8 +101,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_variables_collection_key
     ON variables(collection_id, key)
     WHERE scope = 'collection';
 
+CREATE UNIQUE INDEX IF NOT EXISTS ux_variables_environment_key
+    ON variables(environment_id, key)
+    WHERE scope = 'environment';
+
 CREATE INDEX IF NOT EXISTS idx_variables_context
-    ON variables(scope, collection_id, enabled);
+    ON variables(scope, collection_id, environment_id, enabled);
 
 CREATE TABLE IF NOT EXISTS workspace_state (
     key TEXT PRIMARY KEY,

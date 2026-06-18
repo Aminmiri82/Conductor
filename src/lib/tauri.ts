@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   CollectionNode,
   CollectionSummary,
+  EnvironmentSummary,
   RequestDetail,
   ResolvedRequestPreview,
   WorkspaceUiState,
@@ -11,6 +12,18 @@ import type {
 
 export const api = {
   listCollections: () => invoke<CollectionSummary[]>("list_collections"),
+  listEnvironments: () => invoke<EnvironmentSummary[]>("list_environments"),
+  createEnvironment: (name: string) =>
+    invoke<string>("create_environment", { input: { name } }),
+  renameEnvironment: (environmentId: string, name: string) =>
+    invoke<void>("rename_environment", { input: { environmentId, name } }),
+  deleteEnvironment: (environmentId: string) =>
+    invoke<void>("delete_environment", { environmentId }),
+  importEnvironment: (contents: string, fileName?: string | null) =>
+    invoke<string>("import_postman_environment", {
+      postmanJson: contents,
+      fileName,
+    }),
   getWorkspaceState: (key: string) =>
     invoke<WorkspaceUiState | null>("get_workspace_state", { key }),
   setWorkspaceState: (key: string, value: WorkspaceUiState) =>
@@ -54,15 +67,19 @@ export const api = {
     invoke<void>("save_text_file", { input: { path, contents } }),
   saveRequest: (request: RequestDetail) =>
     invoke<void>("save_request", { request }),
-  resolveRequest: (request: RequestDetail) =>
-    invoke<ResolvedRequestPreview>("resolve_request", { request }),
-  sendRequest: (request: RequestDetail) =>
-    invoke<SendRequestResult>("send_request", { input: { request } }),
-  listVariables: (scope: "global" | "collection", collectionId?: string | null) =>
-    invoke<VariableEntry[]>("list_variables", { scope, collectionId }),
+  resolveRequest: (request: RequestDetail, environmentId?: string | null) =>
+    invoke<ResolvedRequestPreview>("resolve_request", { request, environmentId }),
+  sendRequest: (request: RequestDetail, environmentId?: string | null) =>
+    invoke<SendRequestResult>("send_request", { input: { request, environmentId } }),
+  listVariables: (
+    scope: "global" | "collection" | "environment",
+    collectionId?: string | null,
+    environmentId?: string | null,
+  ) => invoke<VariableEntry[]>("list_variables", { scope, collectionId, environmentId }),
   saveVariables: (
-    scope: "global" | "collection",
+    scope: "global" | "collection" | "environment",
     collectionId: string | null | undefined,
+    environmentId: string | null | undefined,
     variables: VariableEntry[],
-  ) => invoke<void>("save_variables", { scope, collectionId, variables }),
+  ) => invoke<void>("save_variables", { scope, collectionId, environmentId, variables }),
 };

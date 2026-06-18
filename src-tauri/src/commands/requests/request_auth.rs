@@ -1,12 +1,10 @@
-use std::collections::HashMap;
-
 use reqwest::header::{HeaderName, HeaderValue};
 use rusqlite::{params, OptionalExtension};
 
 use crate::commands::models::{AuthConfig, RequestDetail};
 use crate::storage::StorageError;
 
-use super::variable_resolver::resolve_text;
+use super::{variable_resolver::resolve_text, variables::VariableContext};
 
 pub(super) fn inherited_auth_for_request(
     connection: &rusqlite::Connection,
@@ -67,7 +65,7 @@ pub(super) fn effective_auth(
 pub(super) fn apply_auth(
     mut builder: reqwest::RequestBuilder,
     auth: Option<&AuthConfig>,
-    variables: &HashMap<String, String>,
+    variables: &VariableContext,
 ) -> Result<reqwest::RequestBuilder, String> {
     let Some(auth) = auth else {
         return Ok(builder);

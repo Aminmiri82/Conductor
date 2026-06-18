@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Check, Eye, EyeOff, Plus, Save, Trash2, X } from "lucide-react";
+import { type ChangeEvent, useEffect, useRef, useState } from "react";
+import { Check, Eye, EyeOff, Plus, Save, Trash2, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -314,19 +314,33 @@ function VariablesPane({
   activeCollectionId?: string;
 }) {
   const collections = useWorkspaceStore((state) => state.collections);
-  const [scope, setScope] = useState<"collection" | "global">(
+  const environments = useWorkspaceStore((state) => state.environments);
+  const activeEnvironmentId = useWorkspaceStore(
+    (state) => state.workspaceUi.activeEnvironmentId,
+  );
+  const selectEnvironment = useWorkspaceStore((state) => state.selectEnvironment);
+  const loadEnvironments = useWorkspaceStore((state) => state.loadEnvironments);
+  const importEnvironment = useWorkspaceStore((state) => state.importEnvironment);
+  const [scope, setScope] = useState<"environment" | "collection" | "global">(
     activeCollectionId || collections[0] ? "collection" : "global",
   );
   const [selectedCollectionId, setSelectedCollectionId] = useState(
     activeCollectionId ?? collections[0]?.id ?? "",
   );
+  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState(
+    activeEnvironmentId ?? environments[0]?.id ?? "",
+  );
   const [variables, setVariables] = useState<VariableEntry[]>([]);
   const [saving, setSaving] = useState(false);
+  const [environmentName, setEnvironmentName] = useState("");
   const [revealed, setRevealed] = useState<Record<number, boolean>>({});
+  const environmentInputRef = useRef<HTMLInputElement>(null);
   const resolveActiveRequest = useWorkspaceStore((state) => state.resolveActiveRequest);
 
   const collectionId = scope === "collection" ? selectedCollectionId : null;
-  const canEditVariables = scope === "global" || Boolean(collectionId);
+  const environmentId = scope === "environment" ? selectedEnvironmentId : null;
+  const canEditVariables =
+    scope === "global" || Boolean(collectionId) || Boolean(environmentId);
 
   useEffect(() => {
     if (selectedCollectionId || !collections[0]) return;
@@ -334,29 +348,94 @@ function VariablesPane({
   }, [collections, selectedCollectionId]);
 
   useEffect(() => {
+    if (activeEnvironmentId) {
+      setSelectedEnvironmentId(activeEnvironmentId);
+      return;
+    }
+    if (selectedEnvironmentId || !environments[0]) return;
+    setSelectedEnvironmentId(environments[0].id);
+  }, [activeEnvironmentId, environments, selectedEnvironmentId]);
+
+  useEffect(() => {
+    const environment = environments.find(
+      (environment) => environment.id === selectedEnvironmentId,
+    );
+    setEnvironmentName(environment?.name ?? "");
+  }, [environments, selectedEnvironmentId]);
+
+  useEffect(() => {
     let mounted = true;
     if (!canEditVariables) {
       setVariables([]);
       return;
     }
-    void api.listVariables(scope, collectionId).then((items) => {
+    void api.listVariables(scope, collectionId, environmentId).then((items) => {
       if (mounted) setVariables(items);
     });
     return () => {
       mounted = false;
     };
-  }, [scope, collectionId, canEditVariables]);
+  }, [scope, collectionId, environmentId, canEditVariables]);
 
   async function save() {
     if (!canEditVariables) return;
     setSaving(true);
+    const currentEnvironmentName = environments.find(
+      (environment) => environment.id === selectedEnvironmentId,
+    )?.name;
+    if (
+      scope === "environment" &&
+      selectedEnvironmentId &&
+      environmentName.trim() &&
+      environmentName.trim() !== currentEnvironmentName
+    ) {
+      await api.renameEnvironment(selectedEnvironmentId, environmentName);
+      await loadEnvironments();
+    }
     await api.saveVariables(
       scope,
       collectionId,
-      variables.map((variable) => ({ ...variable, scope, collectionId })),
+      environmentId,
+      variables.map((variable) => ({ ...variable, scope, collectionId, environmentId })),
     );
     setSaving(false);
     await resolveActiveRequest();
+  }
+
+  async function createEnvironment() {
+    const environmentId = await api.createEnvironment("New environment");
+    await loadEnvironments();
+    setScope("environment");
+    setSelectedEnvironmentId(environmentId);
+    await selectEnvironment(environmentId);
+  }
+
+  async function onEnvironmentFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    await importEnvironment(text, file.name);
+    setScope("environment");
+    event.target.value = "";
+  }
+
+  async function deleteSelectedEnvironment() {
+    if (!selectedEnvironmentId) return;
+    const environment = environments.find(
+      (environment) => environment.id === selectedEnvironmentId,
+    );
+    const confirmed = window.confirm(
+      `Delete environment "${environment?.name ?? "selected environment"}"?`,
+    );
+    if (!confirmed) return;
+
+    const nextEnvironmentId =
+      environments.find((environment) => environment.id !== selectedEnvironmentId)?.id ??
+      null;
+    await api.deleteEnvironment(selectedEnvironmentId);
+    await loadEnvironments();
+    setSelectedEnvironmentId(nextEnvironmentId ?? "");
+    await selectEnvironment(nextEnvironmentId);
   }
 
   return (
@@ -364,17 +443,81 @@ function VariablesPane({
       <div className="mb-4 flex flex-wrap items-start gap-3">
         <SectionTitle
           title="Variables"
-          sub="Collection variables override global variables."
+          sub="Environment variables override collection and global variables."
         />
         <div className="flex-1" />
         <Segmented
           value={scope}
           options={[
+            ["environment", "Environment"],
             ["collection", "Collection"],
             ["global", "Global"],
           ]}
           onChange={(value) => setScope(value as typeof scope)}
         />
+        {scope === "environment" ? (
+          <>
+            <Select
+              value={selectedEnvironmentId}
+              onValueChange={(environmentId) => {
+                setSelectedEnvironmentId(environmentId);
+                void selectEnvironment(environmentId);
+              }}
+              disabled={!environments.length}
+            >
+              <SelectTrigger className="h-8 w-56 border-[var(--app-line)] bg-[var(--app-panel-2)] text-xs">
+                <SelectValue placeholder="Select environment" />
+              </SelectTrigger>
+              <SelectContent>
+                {environments.map((environment) => (
+                  <SelectItem key={environment.id} value={environment.id}>
+                    {environment.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <input
+              ref={environmentInputRef}
+              type="file"
+              accept="application/json,.json,.env,text/plain"
+              className="hidden"
+              onChange={(event) => void onEnvironmentFileChange(event)}
+            />
+            <Input
+              className="h-8 w-48 border-[var(--app-line)] bg-[var(--app-panel-2)] text-xs"
+              value={environmentName}
+              onChange={(event) => setEnvironmentName(event.target.value)}
+              disabled={!selectedEnvironmentId}
+              placeholder="Environment name"
+            />
+            <Button
+              variant="ghost"
+              className="h-8 gap-1.5 px-2.5 text-xs"
+              onClick={createEnvironment}
+            >
+              <Plus className="size-3.5" />
+              New env
+            </Button>
+            <Button
+              variant="ghost"
+              className="h-8 gap-1.5 px-2.5 text-xs"
+              onClick={() => environmentInputRef.current?.click()}
+            >
+              <Upload className="size-3.5" />
+              Import env
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 text-[var(--app-dim)] hover:text-destructive"
+              onClick={() => void deleteSelectedEnvironment()}
+              disabled={!selectedEnvironmentId}
+              title="Delete environment"
+            >
+              <Trash2 className="size-3.5" />
+            </Button>
+          </>
+        ) : null}
         {scope === "collection" ? (
           <Select
             value={selectedCollectionId}
@@ -492,10 +635,13 @@ function VariablesPane({
               {
                 scope,
                 collectionId,
+                environmentId,
                 key: "",
                 value: "",
+                initialValue: null,
                 enabled: true,
                 sensitive: false,
+                variableType: null,
               },
             ])
           }
@@ -508,6 +654,11 @@ function VariablesPane({
       {scope === "collection" && !collections.length ? (
         <div className="mt-3 text-xs text-[var(--app-dim)]">
           Import a collection to manage collection variables.
+        </div>
+      ) : null}
+      {scope === "environment" && !environments.length ? (
+        <div className="mt-3 text-xs text-[var(--app-dim)]">
+          Create or import an environment to manage environment variables.
         </div>
       ) : null}
     </div>

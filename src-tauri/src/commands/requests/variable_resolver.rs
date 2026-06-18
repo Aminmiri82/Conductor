@@ -5,11 +5,11 @@ use crate::commands::models::{
     UnresolvedVariable,
 };
 
-use super::request_auth;
+use super::{request_auth, variables::VariableContext};
 
 pub(super) fn resolve_request_with_context(
     request: &RequestDetail,
-    variables: &HashMap<String, String>,
+    variables: &VariableContext,
 ) -> ResolvedRequestPreview {
     let mut unresolved = HashMap::<String, Vec<String>>::new();
     let (mut url, missing) = resolve_text(&request.url, variables);
@@ -88,7 +88,7 @@ pub(super) fn resolve_request_with_context(
 fn apply_path_params(
     url: &mut String,
     path_params: &[KeyValue],
-    variables: &HashMap<String, String>,
+    variables: &VariableContext,
     unresolved: &mut HashMap<String, Vec<String>>,
 ) {
     for param in path_params.iter().filter(|param| param.enabled) {
@@ -134,7 +134,7 @@ fn replace_path_param(url: &str, key: &str, value: &str) -> String {
 }
 fn resolve_body(
     body: &RequestBody,
-    variables: &HashMap<String, String>,
+    variables: &VariableContext,
     unresolved: &mut HashMap<String, Vec<String>>,
 ) -> RequestBody {
     let (raw, missing) = resolve_text(&body.raw, variables);
@@ -204,7 +204,7 @@ fn resolve_body(
 }
 fn resolve_optional_text(
     text: Option<&String>,
-    variables: &HashMap<String, String>,
+    variables: &VariableContext,
 ) -> (Option<String>, Vec<String>) {
     match text {
         Some(text) => {
@@ -214,10 +214,7 @@ fn resolve_optional_text(
         None => (None, Vec::new()),
     }
 }
-pub(super) fn resolve_text(
-    text: &str,
-    variables: &HashMap<String, String>,
-) -> (String, Vec<String>) {
+pub(super) fn resolve_text(text: &str, variables: &VariableContext) -> (String, Vec<String>) {
     let mut output = String::with_capacity(text.len());
     let mut missing = Vec::new();
     let mut rest = text;
@@ -228,7 +225,7 @@ pub(super) fn resolve_text(
         if let Some(end) = after_start.find("}}") {
             let key = after_start[2..end].trim();
             if let Some(value) = variables.get(key) {
-                output.push_str(value);
+                output.push_str(&value);
             } else {
                 output.push_str(&after_start[..end + 2]);
                 missing.push(key.to_string());

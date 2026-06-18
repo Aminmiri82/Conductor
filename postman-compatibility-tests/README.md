@@ -2,11 +2,6 @@
 
 What Conductor does **not** yet do compared to Postman. Grouped by impact.
 
-## Variables & environments
-- **No environments.** Only `global` and `collection` variable scopes exist. No environment
-  scope, no environment switching (dev/staging/prod), no environment files.
-- No data/local/iteration variable scopes (used by the runner).
-
 ## Scripts
 - **Pre-request and test scripts are not executed.** They're stored on import, but only a regex
   scrapes `pm.environment.set(...)` / `pm.collectionVariables.set(...)` / `postman.setEnvironmentVariable(...)`

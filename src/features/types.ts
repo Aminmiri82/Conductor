@@ -64,6 +64,7 @@ export type SettingsTab = "appearance" | "variables" | "shortcuts" | "about";
 
 export type WorkspaceUiState = {
   activeCollectionId?: string;
+  activeEnvironmentId?: string | null;
   appTheme: AppTheme;
   accentColor: string;
   urlDisplayMode: UrlDisplayMode;
@@ -75,6 +76,12 @@ export type CollectionSummary = {
   id: string;
   name: string;
   source: string;
+  updatedAt: string;
+};
+
+export type EnvironmentSummary = {
+  id: string;
+  name: string;
   updatedAt: string;
 };
 
@@ -91,12 +98,15 @@ export type CollectionNode = {
 };
 
 export type VariableEntry = {
-  scope: "global" | "collection";
+  scope: "global" | "collection" | "environment";
   collectionId?: string | null;
+  environmentId?: string | null;
   key: string;
   value: string;
+  initialValue?: string | null;
   enabled: boolean;
   sensitive: boolean;
+  variableType?: string | null;
 };
 
 export type UnresolvedVariable = {
@@ -128,5 +138,6 @@ export type SendRequestResult = {
   bodyContentType?: string | null;
   bodyFormat: "json" | "text" | string;
   updatedVariables: KeyValue[];
+  variableWarnings: string[];
   unresolvedVariables: UnresolvedVariable[];
 };

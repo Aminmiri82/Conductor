@@ -11,22 +11,25 @@ use tauri::State;
 use uuid::Uuid;
 
 use crate::commands::models::{
-    RequestDetail, ResolvedRequestPreview, ResponseHeader, SendRequestInput, SendRequestResult,
+    KeyValue, RequestDetail, ResolvedRequestPreview, ResponseHeader, SendRequestInput,
+    SendRequestResult,
 };
 use crate::AppState;
 
-use super::variables::load_variable_context;
+use super::postman_scripts::ScriptVariableScope;
+use super::variables::{load_variable_context, save_script_variable};
 use super::{postman_scripts, request_auth, request_body, variable_resolver};
 
 #[tauri::command]
 pub fn resolve_request(
     request: RequestDetail,
+    environment_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<ResolvedRequestPreview, String> {
     state
         .database
         .with_read_connection(|connection| {
-            let variables = load_variable_context(connection, &request)?;
+            let variables = load_variable_context(connection, &request, environment_id.as_deref())?;
             Ok(variable_resolver::resolve_request_with_context(
                 &request, &variables,
             ))
@@ -40,7 +43,9 @@ pub async fn send_request(
 ) -> Result<SendRequestResult, String> {
     let variables = state
         .database
-        .with_read_connection(|connection| load_variable_context(connection, &input.request))
+        .with_read_connection(|connection| {
+            load_variable_context(connection, &input.request, input.environment_id.as_deref())
+        })
         .map_err(|error| error.to_string())?;
     let preview = variable_resolver::resolve_request_with_context(&input.request, &variables);
     if !preview.unresolved_variables.is_empty() {
@@ -111,27 +116,58 @@ pub async fn send_request(
     let (body, body_format) = format_response_body(&body_text, body_json.as_ref());
     let history_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
-    let updated_variables = postman_scripts::collect_postman_script_variables(
+    let script_writes = postman_scripts::collect_postman_script_variables(
         input.request.test_script.as_ref(),
         body_json.as_ref(),
     );
+    let mut updated_variables = Vec::new();
+    let mut variable_warnings = Vec::new();
 
     state
         .database
         .with_connection(|connection| {
-            for variable in &updated_variables {
-                connection.execute(
-                    "INSERT OR REPLACE INTO variables
-                     (scope, collection_id, key, value, enabled, sensitive, created_at, updated_at)
-                     VALUES ('collection', ?, ?, ?, 1, 0, ?, ?)",
-                    params![
-                        input.request.collection_id,
-                        variable.key,
-                        variable.value,
-                        now,
-                        now
-                    ],
-                )?;
+            for variable in &script_writes {
+                match variable.scope {
+                    ScriptVariableScope::Collection => {
+                        save_script_variable(
+                            connection,
+                            "collection",
+                            Some(&input.request.collection_id),
+                            None,
+                            &variable.key,
+                            &variable.value,
+                            &now,
+                        )?;
+                        updated_variables.push(KeyValue {
+                            key: variable.key.clone(),
+                            value: variable.value.clone(),
+                            enabled: true,
+                        });
+                    }
+                    ScriptVariableScope::Environment => {
+                        if let Some(environment_id) = input.environment_id.as_deref() {
+                            save_script_variable(
+                                connection,
+                                "environment",
+                                None,
+                                Some(environment_id),
+                                &variable.key,
+                                &variable.value,
+                                &now,
+                            )?;
+                            updated_variables.push(KeyValue {
+                                key: variable.key.clone(),
+                                value: variable.value.clone(),
+                                enabled: true,
+                            });
+                        } else {
+                            variable_warnings.push(format!(
+                                "Skipped environment variable '{}' because no environment is active",
+                                variable.key
+                            ));
+                        }
+                    }
+                }
             }
 
             connection.execute(
@@ -173,6 +209,7 @@ pub async fn send_request(
         body_content_type: content_type,
         body_format,
         updated_variables,
+        variable_warnings,
         unresolved_variables: preview.unresolved_variables,
     })
 }

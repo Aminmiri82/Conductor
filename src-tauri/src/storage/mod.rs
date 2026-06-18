@@ -47,6 +47,8 @@ pub enum StorageError {
     },
     #[error("cannot move a folder into itself or one of its descendants")]
     InvalidTreeMove,
+    #[error("{0}")]
+    InvalidInput(String),
 }
 
 #[derive(Debug, Serialize)]

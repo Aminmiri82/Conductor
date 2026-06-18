@@ -16,6 +16,7 @@ import type {
   AppTheme,
   CollectionNode,
   CollectionSummary,
+  EnvironmentSummary,
   RequestEditorTab,
   RequestDetail,
   SettingsTab,
@@ -32,6 +33,7 @@ export type RequestTab = {
 
 type WorkspaceState = {
   collections: CollectionSummary[];
+  environments: EnvironmentSummary[];
   tree: CollectionNode[];
   tabs: RequestTab[];
   activeCollectionId?: string;
@@ -45,8 +47,11 @@ type WorkspaceState = {
   sending: boolean;
   error?: string;
   loadCollections: () => Promise<void>;
+  loadEnvironments: () => Promise<void>;
   importCollection: (json: string) => Promise<void>;
+  importEnvironment: (contents: string, fileName?: string | null) => Promise<void>;
   selectCollection: (collectionId: string) => Promise<void>;
+  selectEnvironment: (environmentId: string | null) => Promise<void>;
   selectRequest: (requestId: string) => Promise<void>;
   closeRequestTab: (requestId: string) => Promise<void>;
   createRequestIn: (parentId: string | null | undefined, position: number) => Promise<void>;
@@ -77,6 +82,7 @@ type WorkspaceState = {
 const WORKSPACE_UI_STATE_KEY = "workspace.ui";
 const WORKSPACE_UI_STATE_FLUSH_DELAY_MS = 300;
 const DEFAULT_WORKSPACE_UI_STATE: WorkspaceUiState = {
+  activeEnvironmentId: null,
   appTheme: "softpro",
   accentColor: "#a78bfa",
   urlDisplayMode: "chip",
@@ -88,6 +94,7 @@ let workspaceUiStateFlushPromise = Promise.resolve();
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   collections: [],
+  environments: [],
   tree: [],
   tabs: [],
   workspaceUi: DEFAULT_WORKSPACE_UI_STATE,
@@ -102,12 +109,19 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ collectionLoading: true, error: undefined });
     try {
       const collections = await api.listCollections();
+      const environments = await api.listEnvironments();
       const workspaceUi = normalizeWorkspaceUiState(
         await api.getWorkspaceState(WORKSPACE_UI_STATE_KEY),
       );
+      const activeEnvironmentId = environments.some(
+        (environment) => environment.id === workspaceUi.activeEnvironmentId,
+      )
+        ? workspaceUi.activeEnvironmentId
+        : null;
       set({
         collections,
-        workspaceUi,
+        environments,
+        workspaceUi: { ...workspaceUi, activeEnvironmentId },
         workspaceUiDirty: false,
         collectionLoading: false,
       });
@@ -123,6 +137,28 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       }
     } catch (error) {
       set({ error: String(error), collectionLoading: false });
+    }
+  },
+
+  loadEnvironments: async () => {
+    try {
+      const environments = await api.listEnvironments();
+      const previousActiveEnvironmentId = get().workspaceUi.activeEnvironmentId;
+      const activeEnvironmentId = environments.some(
+        (environment) => environment.id === previousActiveEnvironmentId,
+      )
+        ? previousActiveEnvironmentId
+        : null;
+      set((state) => ({
+        environments,
+        workspaceUi: { ...state.workspaceUi, activeEnvironmentId },
+        workspaceUiDirty: state.workspaceUiDirty || activeEnvironmentId !== previousActiveEnvironmentId,
+      }));
+      if (activeEnvironmentId !== previousActiveEnvironmentId) {
+        get().scheduleWorkspaceUiStateFlush();
+      }
+    } catch (error) {
+      set({ error: String(error) });
     }
   },
 
@@ -151,6 +187,23 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
+  importEnvironment: async (contents, fileName) => {
+    set({ error: undefined });
+    try {
+      const environmentId = await api.importEnvironment(contents, fileName);
+      const environments = await api.listEnvironments();
+      set((state) => ({
+        environments,
+        workspaceUi: { ...state.workspaceUi, activeEnvironmentId: environmentId },
+        workspaceUiDirty: true,
+      }));
+      await get().flushWorkspaceUiState();
+      await get().resolveActiveRequest();
+    } catch (error) {
+      set({ error: String(error) });
+    }
+  },
+
   selectCollection: async (collectionId) => {
     set({ collectionLoading: true, error: undefined });
     try {
@@ -171,6 +224,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     } catch (error) {
       set({ error: String(error), collectionLoading: false });
     }
+  },
+
+  selectEnvironment: async (environmentId) => {
+    set((state) => ({
+      workspaceUi: { ...state.workspaceUi, activeEnvironmentId: environmentId },
+      workspaceUiDirty: true,
+    }));
+    get().scheduleWorkspaceUiStateFlush();
+    await get().resolveActiveRequest();
   },
 
   selectRequest: async (requestId) => {
@@ -395,7 +457,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const request = getDraft(get().activeRequestId);
     if (!request) return;
     try {
-      const resolvedPreview = await api.resolveRequest(request);
+      const resolvedPreview = await api.resolveRequest(
+        request,
+        get().workspaceUi.activeEnvironmentId ?? null,
+      );
       if (get().activeRequestId === request.id) {
         useDraftStore.getState().setPreview(request.id, resolvedPreview);
       }
@@ -411,7 +476,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     if (!request) return;
     set({ sending: true, error: undefined });
     try {
-      const response = await api.sendRequest(request);
+      const response = await api.sendRequest(
+        request,
+        get().workspaceUi.activeEnvironmentId ?? null,
+      );
       useResponseStore.getState().setResponse(request.id, response);
       if (get().activeRequestId === request.id) {
         set({ sending: false });
@@ -503,6 +571,10 @@ function normalizeWorkspaceUiState(
       typeof value.activeCollectionId === "string"
         ? value.activeCollectionId
         : undefined,
+    activeEnvironmentId:
+      typeof value.activeEnvironmentId === "string"
+        ? value.activeEnvironmentId
+        : null,
     appTheme: isAppTheme(value.appTheme)
       ? value.appTheme
       : DEFAULT_WORKSPACE_UI_STATE.appTheme,

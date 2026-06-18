@@ -1,11 +1,22 @@
 use serde_json::Value;
 
-use crate::commands::models::KeyValue;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum ScriptVariableScope {
+    Collection,
+    Environment,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct ScriptVariableWrite {
+    pub scope: ScriptVariableScope,
+    pub key: String,
+    pub value: String,
+}
 
 pub(super) fn collect_postman_script_variables(
     script: Option<&Value>,
     body_json: Option<&Value>,
-) -> Vec<KeyValue> {
+) -> Vec<ScriptVariableWrite> {
     let Some(lines) = script
         .and_then(|script| script.get("exec"))
         .and_then(Value::as_array)
@@ -19,13 +30,22 @@ pub(super) fn collect_postman_script_variables(
         .filter_map(|line| parse_postman_variable_set(line, body_json))
         .collect()
 }
-fn parse_postman_variable_set(line: &str, body_json: Option<&Value>) -> Option<KeyValue> {
-    let marker = if line.contains("postman.setEnvironmentVariable") {
-        "postman.setEnvironmentVariable"
+fn parse_postman_variable_set(
+    line: &str,
+    body_json: Option<&Value>,
+) -> Option<ScriptVariableWrite> {
+    let (marker, scope) = if line.contains("postman.setEnvironmentVariable") {
+        (
+            "postman.setEnvironmentVariable",
+            ScriptVariableScope::Environment,
+        )
     } else if line.contains("pm.environment.set") {
-        "pm.environment.set"
+        ("pm.environment.set", ScriptVariableScope::Environment)
     } else if line.contains("pm.collectionVariables.set") {
-        "pm.collectionVariables.set"
+        (
+            "pm.collectionVariables.set",
+            ScriptVariableScope::Collection,
+        )
     } else {
         return None;
     };
@@ -39,11 +59,7 @@ fn parse_postman_variable_set(line: &str, body_json: Option<&Value>) -> Option<K
     let key = unquote(key_part.trim())?;
     let value = resolve_script_expression(value_part.trim(), body_json)?;
 
-    Some(KeyValue {
-        key,
-        value,
-        enabled: true,
-    })
+    Some(ScriptVariableWrite { scope, key, value })
 }
 fn resolve_script_expression(expression: &str, body_json: Option<&Value>) -> Option<String> {
     if let Some(value) = unquote(expression) {

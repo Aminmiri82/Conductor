@@ -190,6 +190,12 @@ export function RequestWorkspace() {
                         {response.updatedVariables.length === 1 ? "" : "s"} saved
                       </span>
                     ) : null}
+                    {response.variableWarnings.length ? (
+                      <span className="ml-2 text-amber-300">
+                        {response.variableWarnings.length} variable warning
+                        {response.variableWarnings.length === 1 ? "" : "s"}
+                      </span>
+                    ) : null}
                   </div>
                 ) : null}
               </div>

@@ -12,7 +12,10 @@ pub use request_sender::{resolve_request, send_request};
 pub use request_store::{
     create_request, delete_request, duplicate_request, get_request, save_request,
 };
-pub use variables::{list_variables, save_variables};
+pub use variables::{
+    create_environment, delete_environment, import_postman_environment, list_environments,
+    list_variables, rename_environment, save_variables,
+};
 
 use std::fs as std_fs;
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Save } from "lucide-react";
+import { Save, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -14,12 +14,13 @@ import { api } from "@/lib/tauri";
 import type { KeyValue, RequestDetail, VariableEntry } from "@/features/types";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 
-type VariableScope = "collection" | "global";
+type VariableScope = "environment" | "collection" | "global";
 
 type RequestVariableRow = {
   key: string;
   value: string;
   scope: VariableScope;
+  originalScope: VariableScope | null;
   enabled: boolean;
   sensitive: boolean;
 };
@@ -28,48 +29,94 @@ export function VariableEditor({ request }: { request: RequestDetail }) {
   const variableNames = useMemo(() => extractRequestVariableNames(request), [request]);
   const [globalVariables, setGlobalVariables] = useState<VariableEntry[]>([]);
   const [collectionVariables, setCollectionVariables] = useState<VariableEntry[]>([]);
+  const [environmentVariables, setEnvironmentVariables] = useState<VariableEntry[]>([]);
   const [rows, setRows] = useState<RequestVariableRow[]>([]);
+  const [removedVariables, setRemovedVariables] = useState<Set<string>>(new Set());
   const [savedAt, setSavedAt] = useState<number>();
   const [saving, setSaving] = useState(false);
   const resolveActiveRequest = useWorkspaceStore((state) => state.resolveActiveRequest);
+  const activeEnvironmentId = useWorkspaceStore(
+    (state) => state.workspaceUi.activeEnvironmentId,
+  );
+  const activeEnvironmentName = useWorkspaceStore(
+    (state) =>
+      state.environments.find(
+        (environment) => environment.id === state.workspaceUi.activeEnvironmentId,
+      )?.name,
+  );
 
   useEffect(() => {
     let mounted = true;
 
     void Promise.all([
-      api.listVariables("global", null),
-      api.listVariables("collection", request.collectionId),
-    ]).then(([globals, collection]) => {
+      api.listVariables("global", null, null),
+      api.listVariables("collection", request.collectionId, null),
+      activeEnvironmentId
+        ? api.listVariables("environment", null, activeEnvironmentId)
+        : Promise.resolve([]),
+    ]).then(([globals, collection, environment]) => {
       if (!mounted) return;
       setGlobalVariables(globals);
       setCollectionVariables(collection);
-      setRows(buildRows(variableNames, globals, collection));
+      setEnvironmentVariables(environment);
+      setRows(buildRows(variableNames, globals, collection, environment, activeEnvironmentId));
+      setRemovedVariables(new Set());
       setSavedAt(undefined);
     });
 
     return () => {
       mounted = false;
     };
-  }, [request.collectionId, variableNames]);
+  }, [activeEnvironmentId, request.collectionId, variableNames]);
 
   async function save() {
     setSaving(true);
-    const nextGlobalVariables = mergeVariables(globalVariables, rows, "global", null);
+    const nextGlobalVariables = mergeVariables(
+      globalVariables,
+      rows,
+      "global",
+      null,
+      null,
+      removedVariables,
+    );
     const nextCollectionVariables = mergeVariables(
       collectionVariables,
       rows,
       "collection",
       request.collectionId,
+      null,
+      removedVariables,
     );
+    const nextEnvironmentVariables = activeEnvironmentId
+      ? mergeVariables(
+          environmentVariables,
+          rows,
+          "environment",
+          null,
+          activeEnvironmentId,
+          removedVariables,
+        )
+      : environmentVariables;
 
-    await api.saveVariables("global", null, nextGlobalVariables);
+    await api.saveVariables("global", null, null, nextGlobalVariables);
     await api.saveVariables(
       "collection",
       request.collectionId,
+      null,
       nextCollectionVariables,
     );
+    if (activeEnvironmentId) {
+      await api.saveVariables(
+        "environment",
+        null,
+        activeEnvironmentId,
+        nextEnvironmentVariables,
+      );
+    }
     setGlobalVariables(nextGlobalVariables);
     setCollectionVariables(nextCollectionVariables);
+    setEnvironmentVariables(nextEnvironmentVariables);
+    setRemovedVariables(new Set());
     setSaving(false);
     setSavedAt(Date.now());
     await resolveActiveRequest();
@@ -80,6 +127,7 @@ export function VariableEditor({ request }: { request: RequestDetail }) {
       <div className="flex min-h-12 items-center justify-between gap-3 border-b border-[var(--app-line)] px-4 py-2">
         <div className="min-w-0 text-xs text-[var(--app-dim)]">
           Shows variables referenced in this request. Manage the full list in Settings.
+          {activeEnvironmentName ? ` Active environment: ${activeEnvironmentName}.` : ""}
         </div>
         <div className="flex items-center gap-2">
           <span className="w-16 text-right text-xs text-[var(--app-dim)]">
@@ -98,18 +146,19 @@ export function VariableEditor({ request }: { request: RequestDetail }) {
       <ScrollArea className="min-h-0 flex-1">
         <div className="p-4">
           <div className="overflow-hidden border border-[var(--app-line)] bg-[var(--app-panel)]">
-            <div className="grid h-9 grid-cols-[32px_minmax(130px,.8fr)_112px_minmax(170px,1.2fr)_80px] items-center border-b border-[var(--app-line)] bg-[rgb(255_255_255/.02)] px-1 text-[11px] uppercase tracking-[0.06em] text-[var(--app-dim)]">
+            <div className="grid h-9 grid-cols-[32px_minmax(130px,.8fr)_112px_minmax(170px,1.2fr)_80px_44px] items-center border-b border-[var(--app-line)] bg-[rgb(255_255_255/.02)] px-1 text-[11px] uppercase tracking-[0.06em] text-[var(--app-dim)]">
               <div />
               <div>Key</div>
               <div>Scope</div>
               <div>Value</div>
               <div>Secret</div>
+              <div />
             </div>
             {rows.length ? (
               rows.map((row, index) => (
                 <div
                   key={row.key}
-                  className="grid grid-cols-[32px_minmax(130px,.8fr)_112px_minmax(170px,1.2fr)_80px] items-center border-b border-[var(--app-line)] px-1 last:border-b-0"
+                  className="grid grid-cols-[32px_minmax(130px,.8fr)_112px_minmax(170px,1.2fr)_80px_44px] items-center border-b border-[var(--app-line)] px-1 last:border-b-0"
                 >
                   <input
                     type="checkbox"
@@ -132,6 +181,9 @@ export function VariableEditor({ request }: { request: RequestDetail }) {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
+                      {activeEnvironmentId ? (
+                        <SelectItem value="environment">Environment</SelectItem>
+                      ) : null}
                       <SelectItem value="collection">Collection</SelectItem>
                       <SelectItem value="global">Global</SelectItem>
                     </SelectContent>
@@ -150,6 +202,15 @@ export function VariableEditor({ request }: { request: RequestDetail }) {
                       updateRow(index, { sensitive: event.target.checked })
                     }
                   />
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7 text-[var(--app-dim)] hover:text-destructive"
+                    onClick={() => removeRow(index)}
+                    title="Remove variable"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
                 </div>
               ))
             ) : (
@@ -169,24 +230,50 @@ export function VariableEditor({ request }: { request: RequestDetail }) {
     );
     setSavedAt(undefined);
   }
+
+  function removeRow(index: number) {
+    const row = rows[index];
+    if (!row) return;
+    const scopeToRemove = row.originalScope ?? row.scope;
+    setRemovedVariables((current) =>
+      new Set(current).add(scopedVariableId(scopeToRemove, row.key)),
+    );
+    setRows((current) => current.filter((_, i) => i !== index));
+    setSavedAt(undefined);
+  }
 }
 
 function buildRows(
   keys: string[],
   globalVariables: VariableEntry[],
   collectionVariables: VariableEntry[],
+  environmentVariables: VariableEntry[],
+  activeEnvironmentId: string | null | undefined,
 ): RequestVariableRow[] {
   const globals = new Map(globalVariables.map((variable) => [variable.key, variable]));
   const collection = new Map(
     collectionVariables.map((variable) => [variable.key, variable]),
   );
+  const environment = new Map(
+    environmentVariables.map((variable) => [variable.key, variable]),
+  );
 
   return keys.map((key) => {
-    const variable = collection.get(key) ?? globals.get(key);
+    const variable = environment.get(key) ?? collection.get(key) ?? globals.get(key);
+    const scope = environment.has(key)
+      ? "environment"
+      : collection.has(key)
+        ? "collection"
+        : globals.has(key)
+          ? "global"
+          : activeEnvironmentId
+            ? "environment"
+            : "collection";
     return {
       key,
       value: variable?.value ?? "",
-      scope: collection.has(key) ? "collection" : globals.has(key) ? "global" : "collection",
+      scope,
+      originalScope: variable ? scope : null,
       enabled: variable?.enabled ?? true,
       sensitive: variable?.sensitive ?? false,
     };
@@ -198,20 +285,26 @@ function mergeVariables(
   rows: RequestVariableRow[],
   scope: VariableScope,
   collectionId: string | null,
+  environmentId: string | null,
+  removedVariables: Set<string>,
 ): VariableEntry[] {
   const rowsByKey = new Map(rows.map((row) => [row.key, row]));
   const merged = existing
-    .filter((variable) => !(scope === "collection" && rowsByKey.get(variable.key)?.scope === "global"))
+    .filter((variable) => {
+      if (removedVariables.has(scopedVariableId(scope, variable.key))) return false;
+      const row = rowsByKey.get(variable.key);
+      return !row || row.originalScope !== scope || row.scope === scope;
+    })
     .map((variable) => {
       const row = rowsByKey.get(variable.key);
       if (!row || row.scope !== scope) return variable;
-      return rowToVariable(row, scope, collectionId);
+      return rowToVariable(row, scope, collectionId, environmentId);
     });
   const existingKeys = new Set(merged.map((variable) => variable.key));
 
   for (const row of rows) {
     if (row.scope === scope && !existingKeys.has(row.key)) {
-      merged.push(rowToVariable(row, scope, collectionId));
+      merged.push(rowToVariable(row, scope, collectionId, environmentId));
     }
   }
 
@@ -222,15 +315,23 @@ function rowToVariable(
   row: RequestVariableRow,
   scope: VariableScope,
   collectionId: string | null,
+  environmentId: string | null,
 ): VariableEntry {
   return {
     scope,
     collectionId: scope === "collection" ? collectionId : null,
+    environmentId: scope === "environment" ? environmentId : null,
     key: row.key,
     value: row.value,
+    initialValue: null,
     enabled: row.enabled,
     sensitive: row.sensitive,
+    variableType: null,
   };
+}
+
+function scopedVariableId(scope: VariableScope, key: string) {
+  return `${scope}:${key}`;
 }
 
 function extractRequestVariableNames(request: RequestDetail): string[] {

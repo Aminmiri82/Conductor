@@ -1,11 +1,23 @@
 import { PanelLeftClose, PanelLeftOpen, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 
 export function AppTopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const sidebarVisible = useWorkspaceStore((state) => state.sidebarVisible);
   const toggleSidebar = useWorkspaceStore((state) => state.toggleSidebar);
   const appTheme = useWorkspaceStore((state) => state.workspaceUi.appTheme);
+  const environments = useWorkspaceStore((state) => state.environments);
+  const activeEnvironmentId = useWorkspaceStore(
+    (state) => state.workspaceUi.activeEnvironmentId,
+  );
+  const selectEnvironment = useWorkspaceStore((state) => state.selectEnvironment);
   const isGraphicTheme = appTheme !== "softpro";
 
   return (
@@ -29,6 +41,24 @@ export function AppTopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
         </div>
       </div>
       <div className="flex-1" />
+      <Select
+        value={activeEnvironmentId ?? "__none__"}
+        onValueChange={(value) =>
+          void selectEnvironment(value === "__none__" ? null : value)
+        }
+      >
+        <SelectTrigger className="h-8 w-48 border-[var(--app-line)] bg-[var(--app-panel-2)] text-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__none__">No environment</SelectItem>
+          {environments.map((environment) => (
+            <SelectItem key={environment.id} value={environment.id}>
+              {environment.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
       <Button
         variant="ghost"
         size="icon"
