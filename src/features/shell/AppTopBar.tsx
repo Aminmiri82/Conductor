@@ -18,7 +18,9 @@ export function AppTopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const activeEnvironmentId = useWorkspaceUiStore(
     (state) => state.workspaceUi.activeEnvironmentId,
   );
-  const selectEnvironment = useWorkspaceStore((state) => state.selectEnvironment);
+  const selectEnvironment = useWorkspaceStore(
+    (state) => state.selectEnvironment,
+  );
   const isGraphicTheme = appTheme !== "softpro";
 
   return (

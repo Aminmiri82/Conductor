@@ -38,6 +38,10 @@ export const useResponseStore = create<ResponseState>((set) => ({
   },
 }));
 
-export function getResponse(requestId: string | undefined): SendRequestResult | undefined {
-  return requestId ? useResponseStore.getState().responses.get(requestId) : undefined;
+export function getResponse(
+  requestId: string | undefined,
+): SendRequestResult | undefined {
+  return requestId
+    ? useResponseStore.getState().responses.get(requestId)
+    : undefined;
 }

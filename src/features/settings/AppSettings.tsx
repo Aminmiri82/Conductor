@@ -1,5 +1,14 @@
 import { type ChangeEvent, useEffect, useRef, useState } from "react";
-import { Check, Eye, EyeOff, Plus, Save, Trash2, Upload, X } from "lucide-react";
+import {
+  Check,
+  Eye,
+  EyeOff,
+  Plus,
+  Save,
+  Trash2,
+  Upload,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -33,7 +42,13 @@ const THEMES: {
   name: string;
   mode: string;
   defaultAccent: string;
-  palette: { bg: string; panel: string; accent: string; text: string; dim: string };
+  palette: {
+    bg: string;
+    panel: string;
+    accent: string;
+    text: string;
+    dim: string;
+  };
 }[] = [
   {
     id: "softpro",
@@ -96,7 +111,9 @@ export function AppSettings({
   const setWorkspacePreference = useWorkspaceUiStore(
     (state) => state.setWorkspacePreference,
   );
-  const activeCollectionId = useWorkspaceStore((state) => state.activeCollectionId);
+  const activeCollectionId = useWorkspaceStore(
+    (state) => state.activeCollectionId,
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -172,7 +189,9 @@ export function AppSettings({
 function AppearancePane() {
   const theme = useWorkspaceUiStore((state) => state.workspaceUi.appTheme);
   const accent = useWorkspaceUiStore((state) => state.workspaceUi.accentColor);
-  const urlMode = useWorkspaceUiStore((state) => state.workspaceUi.urlDisplayMode);
+  const urlMode = useWorkspaceUiStore(
+    (state) => state.workspaceUi.urlDisplayMode,
+  );
   const setWorkspacePreference = useWorkspaceUiStore(
     (state) => state.setWorkspacePreference,
   );
@@ -279,8 +298,7 @@ function AppearancePane() {
                   accent === item.id
                     ? "2px solid var(--app-text)"
                     : "2px solid transparent",
-                boxShadow:
-                  accent === item.id ? `0 0 0 2px ${item.id}` : "none",
+                boxShadow: accent === item.id ? `0 0 0 2px ${item.id}` : "none",
               }}
             />
             {item.name}
@@ -319,9 +337,13 @@ function VariablesPane({
   const activeEnvironmentId = useWorkspaceUiStore(
     (state) => state.workspaceUi.activeEnvironmentId,
   );
-  const selectEnvironment = useWorkspaceStore((state) => state.selectEnvironment);
+  const selectEnvironment = useWorkspaceStore(
+    (state) => state.selectEnvironment,
+  );
   const loadEnvironments = useWorkspaceStore((state) => state.loadEnvironments);
-  const importEnvironment = useWorkspaceStore((state) => state.importEnvironment);
+  const importEnvironment = useWorkspaceStore(
+    (state) => state.importEnvironment,
+  );
   const [scope, setScope] = useState<"environment" | "collection" | "global">(
     activeCollectionId || collections[0] ? "collection" : "global",
   );
@@ -336,7 +358,9 @@ function VariablesPane({
   const [environmentName, setEnvironmentName] = useState("");
   const [revealed, setRevealed] = useState<Record<number, boolean>>({});
   const environmentInputRef = useRef<HTMLInputElement>(null);
-  const resolveActiveRequest = useWorkspaceStore((state) => state.resolveActiveRequest);
+  const resolveActiveRequest = useWorkspaceStore(
+    (state) => state.resolveActiveRequest,
+  );
 
   const collectionId = scope === "collection" ? selectedCollectionId : null;
   const environmentId = scope === "environment" ? selectedEnvironmentId : null;
@@ -397,7 +421,12 @@ function VariablesPane({
       scope,
       collectionId,
       environmentId,
-      variables.map((variable) => ({ ...variable, scope, collectionId, environmentId })),
+      variables.map((variable) => ({
+        ...variable,
+        scope,
+        collectionId,
+        environmentId,
+      })),
     );
     setSaving(false);
     await resolveActiveRequest();
@@ -431,8 +460,9 @@ function VariablesPane({
     if (!confirmed) return;
 
     const nextEnvironmentId =
-      environments.find((environment) => environment.id !== selectedEnvironmentId)?.id ??
-      null;
+      environments.find(
+        (environment) => environment.id !== selectedEnvironmentId,
+      )?.id ?? null;
     await api.deleteEnvironment(selectedEnvironmentId);
     await loadEnvironments();
     setSelectedEnvironmentId(nextEnvironmentId ?? "");
@@ -576,11 +606,15 @@ function VariablesPane({
             <Input
               className="app-mono h-8 rounded-none border-0 bg-transparent text-xs shadow-none focus-visible:ring-0"
               value={variable.key}
-              onChange={(event) => updateVariable(index, { key: event.target.value })}
+              onChange={(event) =>
+                updateVariable(index, { key: event.target.value })
+              }
             />
             <Input
               className="app-mono h-8 rounded-none border-0 bg-transparent text-xs shadow-none focus-visible:ring-0"
-              type={variable.sensitive && !revealed[index] ? "password" : "text"}
+              type={
+                variable.sensitive && !revealed[index] ? "password" : "text"
+              }
               value={variable.value}
               onChange={(event) =>
                 updateVariable(index, { value: event.target.value })
@@ -755,7 +789,10 @@ function ShortcutsPane() {
 function AboutPane() {
   return (
     <div>
-      <SectionTitle title="Conductor" sub="API workspace for collections and requests." />
+      <SectionTitle
+        title="Conductor"
+        sub="API workspace for collections and requests."
+      />
       <div className="app-mono text-xs leading-6 text-[var(--app-dim)]">
         Version 0.1.0
       </div>
@@ -766,7 +803,9 @@ function AboutPane() {
 function SectionTitle({ title, sub }: { title: string; sub?: string }) {
   return (
     <div className="mb-3">
-      <div className="text-sm font-semibold text-[var(--app-text)]">{title}</div>
+      <div className="text-sm font-semibold text-[var(--app-text)]">
+        {title}
+      </div>
       {sub ? (
         <div className="mt-1 text-xs text-[var(--app-dim)]">{sub}</div>
       ) : null}
@@ -786,7 +825,9 @@ function SettingRow({
   return (
     <div className="flex items-center justify-between gap-4 border-b border-[var(--app-line)] py-4">
       <div>
-        <div className="text-sm font-medium text-[var(--app-text)]">{label}</div>
+        <div className="text-sm font-medium text-[var(--app-text)]">
+          {label}
+        </div>
         <div className="mt-0.5 text-xs text-[var(--app-dim)]">{hint}</div>
       </div>
       {children}

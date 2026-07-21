@@ -7,10 +7,7 @@ import {
   deriveQueryRows,
   replaceQueryInUrl,
 } from "@/features/requests/urlParams";
-import {
-  getDraft,
-  useDraftStore,
-} from "@/features/workspace/draftStore";
+import { getDraft, useDraftStore } from "@/features/workspace/draftStore";
 import { useResponseStore } from "@/features/workspace/responseStore";
 import {
   getWorkspaceUiState,
@@ -46,13 +43,22 @@ type WorkspaceState = {
   loadCollections: () => Promise<void>;
   loadEnvironments: () => Promise<void>;
   importCollection: (json: string) => Promise<void>;
-  importEnvironment: (contents: string, fileName?: string | null) => Promise<void>;
+  importEnvironment: (
+    contents: string,
+    fileName?: string | null,
+  ) => Promise<void>;
   selectCollection: (collectionId: string) => Promise<void>;
   selectEnvironment: (environmentId: string | null) => Promise<void>;
   selectRequest: (requestId: string) => Promise<void>;
   closeRequestTab: (requestId: string) => Promise<void>;
-  createRequestIn: (parentId: string | null | undefined, position: number) => Promise<void>;
-  createFolderIn: (parentId: string | null | undefined, position: number) => Promise<void>;
+  createRequestIn: (
+    parentId: string | null | undefined,
+    position: number,
+  ) => Promise<void>;
+  createFolderIn: (
+    parentId: string | null | undefined,
+    position: number,
+  ) => Promise<void>;
   duplicateRequest: (requestId: string) => Promise<void>;
   deleteRequest: (requestId: string) => Promise<void>;
   deleteNode: (node: CollectionNode) => Promise<void>;
@@ -216,7 +222,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   closeRequestTab: async (requestId) => {
     const current = get();
-    const tabIndex = current.tabs.findIndex((tab) => tab.requestId === requestId);
+    const tabIndex = current.tabs.findIndex(
+      (tab) => tab.requestId === requestId,
+    );
     const tabs = current.tabs.filter((tab) => tab.requestId !== requestId);
     useDraftStore.getState().removeMany([requestId]);
     useResponseStore.getState().removeMany([requestId]);
@@ -274,7 +282,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const name = "New Folder";
     set({ error: undefined });
     try {
-      const nodeId = await api.createFolder(collectionId, parentId, position, name);
+      const nodeId = await api.createFolder(
+        collectionId,
+        parentId,
+        position,
+        name,
+      );
       const node: CollectionNode = {
         id: nodeId,
         collectionId,
@@ -365,7 +378,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       useResponseStore.getState().removeMany(removedRequestIds);
       set({
         tree: removeNodeById(current.tree, node.id),
-        tabs: current.tabs.filter((tab) => !removedRequestIds.includes(tab.requestId)),
+        tabs: current.tabs.filter(
+          (tab) => !removedRequestIds.includes(tab.requestId),
+        ),
         activeRequestId: activeDeleted ? undefined : current.activeRequestId,
         requestLoading: activeDeleted ? false : current.requestLoading,
       });
@@ -401,7 +416,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         pathParams: derivePathParamRows(request.url, current.pathParams),
       };
     } else if (patch.query !== undefined) {
-      const nextUrl = replaceQueryInUrl(current.url, buildQueryString(patch.query));
+      const nextUrl = replaceQueryInUrl(
+        current.url,
+        buildQueryString(patch.query),
+      );
       request = { ...request, url: nextUrl };
     } else if (patch.pathParams !== undefined) {
       const nextUrl = applyPathParamRowChanges(
@@ -437,7 +455,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       await get().resolveActiveRequest();
     } catch (error) {
       set({
-        error: get().activeRequestId === request.id ? String(error) : get().error,
+        error:
+          get().activeRequestId === request.id ? String(error) : get().error,
         saving: false,
       });
     }
@@ -479,14 +498,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       await get().resolveActiveRequest();
     } catch (error) {
       set({
-        error: get().activeRequestId === request.id ? String(error) : get().error,
+        error:
+          get().activeRequestId === request.id ? String(error) : get().error,
         sending: false,
       });
       await get().resolveActiveRequest();
     }
   },
 
-  toggleSidebar: () => set((state) => ({ sidebarVisible: !state.sidebarVisible })),
+  toggleSidebar: () =>
+    set((state) => ({ sidebarVisible: !state.sidebarVisible })),
   clearError: () => set({ error: undefined }),
 }));
 
@@ -500,7 +521,10 @@ function renameRequestNode(
       return { ...node, name };
     }
     if (node.children.length) {
-      return { ...node, children: renameRequestNode(node.children, requestId, name) };
+      return {
+        ...node,
+        children: renameRequestNode(node.children, requestId, name),
+      };
     }
     return node;
   });
@@ -532,7 +556,9 @@ function insertNodeAt(
     const children = insertNodeAt(item.children, parentId, position, node);
     return children === item.children ? item : { ...item, children };
   });
-  return changed || next.some((item, index) => item !== nodes[index]) ? next : nodes;
+  return changed || next.some((item, index) => item !== nodes[index])
+    ? next
+    : nodes;
 }
 
 function insertIntoSiblings(
@@ -545,7 +571,10 @@ function insertIntoSiblings(
   return reindexSiblings(next);
 }
 
-function removeNodeById(nodes: CollectionNode[], nodeId: string): CollectionNode[] {
+function removeNodeById(
+  nodes: CollectionNode[],
+  nodeId: string,
+): CollectionNode[] {
   let changed = false;
   const next: CollectionNode[] = [];
   for (const node of nodes) {
@@ -566,7 +595,10 @@ function removeNodeById(nodes: CollectionNode[], nodeId: string): CollectionNode
   return changed ? reindexSiblings(next) : nodes;
 }
 
-function removeRequestNode(nodes: CollectionNode[], requestId: string): CollectionNode[] {
+function removeRequestNode(
+  nodes: CollectionNode[],
+  requestId: string,
+): CollectionNode[] {
   let changed = false;
   const next: CollectionNode[] = [];
   for (const node of nodes) {
