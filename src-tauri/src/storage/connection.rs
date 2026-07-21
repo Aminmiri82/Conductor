@@ -5,13 +5,14 @@ use std::{
 
 use rusqlite::Connection;
 
-use super::{migrations, StorageError};
+use super::{migrations, Secrets, StorageError};
 
 const DATABASE_FILE_NAME: &str = "conductor.sqlite3";
 const READ_CONNECTIONS: usize = 4;
 
 pub fn open(
     app_data_dir: impl AsRef<Path>,
+    secrets: &Secrets,
 ) -> Result<(Connection, Vec<Connection>, PathBuf), StorageError> {
     let app_data_dir = app_data_dir.as_ref();
     fs::create_dir_all(app_data_dir).map_err(|source| StorageError::CreateDirectory {
@@ -23,7 +24,7 @@ pub fn open(
     let connection = open_connection(&path)?;
 
     configure(&connection)?;
-    migrations::run(&connection)?;
+    migrations::run(&connection, secrets)?;
     let mut read_connections = Vec::with_capacity(READ_CONNECTIONS);
     for _ in 0..READ_CONNECTIONS {
         let read_connection = open_connection(&path)?;

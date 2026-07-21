@@ -233,6 +233,7 @@ function isSettingsTab(value: unknown): value is SettingsTab {
     value === "appearance" ||
     value === "variables" ||
     value === "shortcuts" ||
+    value === "data" ||
     value === "about"
   );
 }
