@@ -6,7 +6,7 @@ mod request_body;
 mod request_sender;
 mod request_store;
 mod variable_resolver;
-mod variables;
+pub(crate) mod variables;
 
 pub use collection_tree::{create_folder, delete_node, move_node};
 pub use request_sender::{cancel_send_request, resolve_request, send_request};

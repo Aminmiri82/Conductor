@@ -443,14 +443,33 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     try {
       await api.deleteCollection(collectionId);
       const current = get();
-      const removedRequestIds = collectAllRequestIds(current.tree);
       const wasActive = current.activeCollectionId === collectionId;
       const collections = current.collections.filter(
         (collection) => collection.id !== collectionId,
       );
+
+      const draftEntries = [...useDraftStore.getState().drafts.entries()];
+      const draftIdsForCollection = draftEntries
+        .filter(([, draft]) => draft.collectionId === collectionId)
+        .map(([id]) => id);
+      const treeIds = wasActive ? collectAllRequestIds(current.tree) : [];
+      const removedRequestIds = [
+        ...new Set([...draftIdsForCollection, ...treeIds]),
+      ];
+
+      useDraftStore.getState().removeMany(removedRequestIds);
+      useResponseStore.getState().removeMany(removedRequestIds);
+
+      const nextTabs = current.tabs.filter(
+        (tab) => !removedRequestIds.includes(tab.requestId),
+      );
+      const nextActiveRequestId = removedRequestIds.includes(
+        current.activeRequestId ?? "",
+      )
+        ? undefined
+        : current.activeRequestId;
+
       if (wasActive) {
-        useDraftStore.getState().clearAll();
-        useResponseStore.getState().clearAll();
         set({
           collections,
           tree: [],
@@ -459,11 +478,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           activeRequestId: undefined,
           requestLoading: false,
         });
+        useWorkspaceUiStore
+          .getState()
+          .setWorkspacePreference("activeCollectionId", undefined);
       } else {
-        useDraftStore.getState().removeMany(removedRequestIds);
-        useResponseStore.getState().removeMany(removedRequestIds);
-        set({ collections });
+        set({
+          collections,
+          tabs: nextTabs,
+          activeRequestId: nextActiveRequestId,
+        });
       }
+
       const fallback = collections[0]?.id;
       if (wasActive && fallback) {
         await get().selectCollection(fallback);

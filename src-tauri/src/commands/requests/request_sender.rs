@@ -171,6 +171,7 @@ pub async fn send_request(
                 ScriptVariableScope::Collection => {
                     save_script_variable(
                         connection,
+                        state.database.secrets(),
                         "collection",
                         Some(&input.request.collection_id),
                         None,
@@ -188,6 +189,7 @@ pub async fn send_request(
                     if let Some(environment_id) = input.environment_id.as_deref() {
                         save_script_variable(
                             connection,
+                            state.database.secrets(),
                             "environment",
                             None,
                             Some(environment_id),

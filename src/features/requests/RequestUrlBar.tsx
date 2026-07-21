@@ -311,16 +311,44 @@ function VariableTooltip({
   unresolved: boolean;
   resolvedValue?: string;
 }) {
+  const displayValue = unresolved
+    ? "undefined"
+    : looksSensitiveVariableName(name)
+      ? "••••••"
+      : resolvedValue || "resolved value unavailable";
+
   return (
     <span className="pointer-events-none absolute left-0 top-[calc(100%+6px)] z-50 hidden max-w-[520px] whitespace-nowrap border border-[var(--app-line)] bg-[var(--app-panel)] px-2 py-1 text-[11px] font-normal text-[var(--app-text)] shadow-lg group-hover/var:block">
       <span className="text-[var(--app-dim)]">{name}</span>
       <span className="px-1 text-[var(--app-dim)]">=</span>
-      <span>
-        {unresolved
-          ? "undefined"
-          : resolvedValue || "resolved value unavailable"}
-      </span>
+      <span>{displayValue}</span>
     </span>
+  );
+}
+
+function looksSensitiveVariableName(name: string): boolean {
+  const lower = name.trim().toLowerCase().replace(/_/g, "-");
+  return (
+    [
+      "access-token",
+      "api-key",
+      "apikey",
+      "auth",
+      "authorization",
+      "client-secret",
+      "password",
+      "passwd",
+      "private-key",
+      "refresh-token",
+      "secret",
+      "token",
+      "auth-token",
+    ].includes(lower) ||
+    lower.includes("password") ||
+    lower.includes("secret") ||
+    lower.includes("api-key") ||
+    lower.includes("apikey") ||
+    lower.endsWith("-token")
   );
 }
 
