@@ -30,7 +30,8 @@ import type { CollectionNode } from "@/features/types";
 import { api } from "@/lib/tauri";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { CollectionTree } from "@/features/collections/CollectionTree";
-import { DnDProvider, useTreeDnDValue } from "@/features/collections/treeDnD";
+import { useTreeDnDValue } from "@/features/collections/treeDnD";
+import { DnDProvider } from "@/features/collections/DnDProvider";
 
 export function CollectionSidebar() {
   const importInputRef = useRef<HTMLInputElement>(null);

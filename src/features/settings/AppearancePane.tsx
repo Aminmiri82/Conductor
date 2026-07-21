@@ -1,12 +1,11 @@
 import { Check } from "lucide-react";
 import type { AppTheme, UrlDisplayMode } from "@/features/types";
 import { useWorkspaceUiStore } from "@/features/workspace/workspaceUiStore";
+import { ACCENTS, THEMES } from "@/features/settings/settingsData";
 import {
-  ACCENTS,
   SectionTitle,
   Segmented,
   SettingRow,
-  THEMES,
 } from "@/features/settings/settingsShared";
 
 export function AppearancePane() {

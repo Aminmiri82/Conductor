@@ -10,7 +10,7 @@ import { AppearancePane } from "@/features/settings/AppearancePane";
 import { DataPane } from "@/features/settings/DataPane";
 import { ShortcutsPane } from "@/features/settings/ShortcutsPane";
 import { VariablesPane } from "@/features/settings/VariablesPane";
-import { SETTINGS_TABS } from "@/features/settings/settingsShared";
+import { SETTINGS_TABS } from "@/features/settings/settingsData";
 
 export function AppSettings({
   open,

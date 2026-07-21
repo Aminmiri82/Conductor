@@ -1,10 +1,4 @@
-import {
-  createContext,
-  useContext,
-  useMemo,
-  useState,
-  type ReactNode,
-} from "react";
+import { createContext, useContext, useMemo, useState } from "react";
 import type { CollectionNode } from "@/features/types";
 import { collectNodeIds } from "@/features/workspace/collectionTree";
 
@@ -24,22 +18,12 @@ export type DnDValue = {
   setTarget: (target: DropTarget) => void;
 };
 
-const DnDContext = createContext<DnDValue | null>(null);
+export const DnDContext = createContext<DnDValue | null>(null);
 
 export function useDnD(): DnDValue {
   const value = useContext(DnDContext);
   if (!value) throw new Error("DnD context missing");
   return value;
-}
-
-export function DnDProvider({
-  children,
-  value,
-}: {
-  children: ReactNode;
-  value: DnDValue;
-}) {
-  return <DnDContext.Provider value={value}>{children}</DnDContext.Provider>;
 }
 
 export function useTreeDnDValue(): DnDValue {
