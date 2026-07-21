@@ -1,7 +1,8 @@
 import { save } from "@tauri-apps/plugin-dialog";
-import { AlertTriangle, Download } from "lucide-react";
-import { lazy, Suspense, useMemo } from "react";
+import { AlertTriangle, Check, Copy, Download } from "lucide-react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { buildCurlCommand, copyCurlToClipboard } from "@/features/requests/copyAsCurl";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -68,6 +69,23 @@ export function RequestWorkspace() {
     () => (request ? resolveUrlVariableValues(request.url, preview?.url) : {}),
     [preview?.url, request],
   );
+  const [copiedCurl, setCopiedCurl] = useState(false);
+
+  async function handleCopyAsCurl() {
+    if (!request) return;
+    const command = buildCurlCommand({
+      method: request.method,
+      request,
+      preview,
+    });
+    try {
+      await copyCurlToClipboard(command);
+      setCopiedCurl(true);
+      window.setTimeout(() => setCopiedCurl(false), 1500);
+    } catch {
+      // Clipboard failed — nothing else to do beyond leaving the state alone.
+    }
+  }
 
   if (!request) {
     return (
@@ -217,16 +235,32 @@ export function RequestWorkspace() {
                   </div>
                 ) : null}
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 gap-1.5 text-xs"
-                disabled={!response}
-                onClick={() => response && void downloadJson(response)}
-              >
-                <Download className="size-3.5" />
-                JSON
-              </Button>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 gap-1.5 text-xs"
+                  onClick={() => void handleCopyAsCurl()}
+                  title="Copy as cURL"
+                >
+                  {copiedCurl ? (
+                    <Check className="size-3.5 text-emerald-300" />
+                  ) : (
+                    <Copy className="size-3.5" />
+                  )}
+                  {copiedCurl ? "Copied" : "cURL"}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 gap-1.5 text-xs"
+                  disabled={!response}
+                  onClick={() => response && void downloadJson(response)}
+                >
+                  <Download className="size-3.5" />
+                  JSON
+                </Button>
+              </div>
             </div>
             <div className="min-h-0 flex-1">
               {response ? (
