@@ -14,6 +14,9 @@ import { cn } from "@/lib/utils";
 import { api } from "@/lib/tauri";
 import type {
   AppTheme,
+  DatabaseStatus,
+  EntityId,
+  LearnedRowidBenchmark,
   SettingsTab,
   UrlDisplayMode,
   VariableEntry,
@@ -312,7 +315,7 @@ function AppearancePane() {
 function VariablesPane({
   activeCollectionId,
 }: {
-  activeCollectionId?: string;
+  activeCollectionId?: EntityId;
 }) {
   const collections = useWorkspaceStore((state) => state.collections);
   const environments = useWorkspaceStore((state) => state.environments);
@@ -325,11 +328,11 @@ function VariablesPane({
   const [scope, setScope] = useState<"environment" | "collection" | "global">(
     activeCollectionId || collections[0] ? "collection" : "global",
   );
-  const [selectedCollectionId, setSelectedCollectionId] = useState(
-    activeCollectionId ?? collections[0]?.id ?? "",
+  const [selectedCollectionId, setSelectedCollectionId] = useState<EntityId | null>(
+    activeCollectionId ?? collections[0]?.id ?? null,
   );
-  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState(
-    activeEnvironmentId ?? environments[0]?.id ?? "",
+  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<EntityId | null>(
+    activeEnvironmentId ?? environments[0]?.id ?? null,
   );
   const [variables, setVariables] = useState<VariableEntry[]>([]);
   const [saving, setSaving] = useState(false);
@@ -435,7 +438,7 @@ function VariablesPane({
       null;
     await api.deleteEnvironment(selectedEnvironmentId);
     await loadEnvironments();
-    setSelectedEnvironmentId(nextEnvironmentId ?? "");
+    setSelectedEnvironmentId(nextEnvironmentId);
     await selectEnvironment(nextEnvironmentId);
   }
 
@@ -459,10 +462,11 @@ function VariablesPane({
         {scope === "environment" ? (
           <>
             <Select
-              value={selectedEnvironmentId}
+              value={selectedEnvironmentId?.toString()}
               onValueChange={(environmentId) => {
-                setSelectedEnvironmentId(environmentId);
-                void selectEnvironment(environmentId);
+                const id = Number(environmentId);
+                setSelectedEnvironmentId(id);
+                void selectEnvironment(id);
               }}
               disabled={!environments.length}
             >
@@ -471,7 +475,7 @@ function VariablesPane({
               </SelectTrigger>
               <SelectContent>
                 {environments.map((environment) => (
-                  <SelectItem key={environment.id} value={environment.id}>
+                  <SelectItem key={environment.id} value={environment.id.toString()}>
                     {environment.name}
                   </SelectItem>
                 ))}
@@ -521,8 +525,8 @@ function VariablesPane({
         ) : null}
         {scope === "collection" ? (
           <Select
-            value={selectedCollectionId}
-            onValueChange={setSelectedCollectionId}
+            value={selectedCollectionId?.toString()}
+            onValueChange={(collectionId) => setSelectedCollectionId(Number(collectionId))}
             disabled={!collections.length}
           >
             <SelectTrigger className="h-8 w-56 border-[var(--app-line)] bg-[var(--app-panel-2)] text-xs">
@@ -530,7 +534,7 @@ function VariablesPane({
             </SelectTrigger>
             <SelectContent>
               {collections.map((collection) => (
-                <SelectItem key={collection.id} value={collection.id}>
+                <SelectItem key={collection.id} value={collection.id.toString()}>
                   {collection.name}
                 </SelectItem>
               ))}
@@ -753,12 +757,284 @@ function ShortcutsPane() {
 }
 
 function AboutPane() {
+  const [status, setStatus] = useState<DatabaseStatus | null>(null);
+  const [benchmark, setBenchmark] = useState<LearnedRowidBenchmark | null>(null);
+  const [updating, setUpdating] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    void api.databaseStatus().then((nextStatus) => {
+      if (mounted) setStatus(nextStatus);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  async function setLearnedEnabled(enabled: boolean) {
+    setUpdating(true);
+    try {
+      setStatus(await api.setLearnedRowidEnabled(enabled));
+    } finally {
+      setUpdating(false);
+    }
+  }
+
+  async function resetCounters() {
+    setUpdating(true);
+    try {
+      setStatus(await api.resetLearnedRowidCounters());
+      setBenchmark(null);
+    } finally {
+      setUpdating(false);
+    }
+  }
+
+  async function rebuildModels() {
+    setUpdating(true);
+    try {
+      setStatus(await api.rebuildLearnedRowidModels());
+      setBenchmark(null);
+    } finally {
+      setUpdating(false);
+    }
+  }
+
+  async function runBenchmark() {
+    setUpdating(true);
+    try {
+      const result = await api.runLearnedRowidBenchmark();
+      setBenchmark(result);
+      setStatus(result.status);
+    } finally {
+      setUpdating(false);
+    }
+  }
+
   return (
     <div>
       <SectionTitle title="Conductor" sub="API workspace for collections and requests." />
       <div className="app-mono text-xs leading-6 text-[var(--app-dim)]">
         Version 0.1.0
       </div>
+      <div className="mt-6">
+        <SectionTitle title="SQLite" sub="Learned rowid seek experiment." />
+        <div
+          className="overflow-hidden border bg-[var(--app-panel)]"
+          style={{
+            borderColor: "var(--app-line)",
+            borderRadius: "var(--app-radius-lg)",
+          }}
+        >
+          <div className="flex flex-wrap items-center gap-2 border-b border-[var(--app-line)] p-3">
+            <Button
+              variant={status?.learnedRowidEnabled ? "default" : "ghost"}
+              className="h-8 px-3 text-xs"
+              onClick={() => void setLearnedEnabled(true)}
+              disabled={updating || status?.learnedRowidEnabled}
+            >
+              Enable
+            </Button>
+            <Button
+              variant={!status?.learnedRowidEnabled ? "default" : "ghost"}
+              className="h-8 px-3 text-xs"
+              onClick={() => void setLearnedEnabled(false)}
+              disabled={updating || status?.learnedRowidEnabled === false}
+            >
+              Disable
+            </Button>
+            <Button
+              variant="ghost"
+              className="h-8 px-3 text-xs"
+              onClick={() => void resetCounters()}
+              disabled={updating}
+            >
+              Reset
+            </Button>
+            <Button
+              variant="ghost"
+              className="h-8 px-3 text-xs"
+              onClick={() => void rebuildModels()}
+              disabled={updating}
+            >
+              Rebuild models
+            </Button>
+            <Button
+              variant="ghost"
+              className="h-8 px-3 text-xs"
+              onClick={() => void runBenchmark()}
+              disabled={updating}
+            >
+              Benchmark
+            </Button>
+          </div>
+          <div className="grid gap-px bg-[var(--app-line)] text-xs sm:grid-cols-2">
+            <StatCell label="Schema" value={status?.schemaVersion} />
+            <StatCell label="Collections" value={status?.collectionCount} />
+            <StatCell label="Requests" value={status?.requestCount} />
+            <StatCell
+              label="Mode"
+              value={status ? (status.learnedRowidEnabled ? "enabled" : "disabled") : undefined}
+            />
+            <StatCell
+              label="Table seeks"
+              value={status?.learnedRowidTableMovetoCalls}
+            />
+            <StatCell label="Attempts" value={status?.learnedRowidAttempted} />
+            <StatCell label="Fallbacks" value={status?.learnedRowidFallback} />
+            <StatCell
+              label="Exact first probe"
+              value={status?.learnedRowidExactFirstProbe}
+            />
+            <StatCell
+              label="Comparisons"
+              value={status?.learnedRowidComparisons}
+            />
+            <StatCell label="Models" value={status?.learnedRowidModelCount} />
+            <StatCell
+              label="Model segments"
+              value={status?.learnedRowidModelSegments}
+            />
+            <StatCell
+              label="Model memory"
+              value={
+                status ? `${formatBytes(status.learnedRowidModelBytes)}` : undefined
+              }
+            />
+            <StatCell
+              label="Model predictions"
+              value={status?.learnedRowidModelPredictions}
+            />
+            <StatCell
+              label="Average predicted slot"
+              value={
+                status
+                  ? formatDecimal(status.learnedRowidPredictedSlotAverage)
+                  : undefined
+              }
+            />
+            <StatCell
+              label="Average slot error"
+              value={
+                status
+                  ? formatDecimal(status.learnedRowidPredictionErrorAverage)
+                  : undefined
+              }
+            />
+            <StatCell
+              label="Max slot error"
+              value={status?.learnedRowidPredictionErrorMax}
+            />
+          </div>
+          {benchmark ? (
+            <div className="border-t border-[var(--app-line)]">
+              {benchmark.scenarios.map((scenario) => (
+                <div key={scenario.name} className="border-b border-[var(--app-line)] last:border-b-0">
+                  <div className="border-b border-[var(--app-line)] bg-[var(--app-panel-2)] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--app-dim)]">
+                    {scenario.name}
+                  </div>
+                  <div className="grid gap-px bg-[var(--app-line)] text-xs sm:grid-cols-2">
+                    <StatCell label="Bench rows" value={scenario.rowCount} />
+                    <StatCell
+                      label="Bench lookups"
+                      value={scenario.enabled.lookupCount}
+                    />
+                    <StatCell
+                      label="Disabled comparisons"
+                      value={scenario.disabled.stats.comparisons}
+                    />
+                    <StatCell
+                      label="Enabled comparisons"
+                      value={scenario.enabled.stats.comparisons}
+                    />
+                    <StatCell
+                      label="Disabled comparisons/lookup"
+                      value={formatDecimal(scenario.disabled.comparisonsPerLookup)}
+                    />
+                    <StatCell
+                      label="Enabled comparisons/lookup"
+                      value={formatDecimal(scenario.enabled.comparisonsPerLookup)}
+                    />
+                    <StatCell
+                      label="Comparison delta"
+                      value={`${scenario.comparisonDelta > 0 ? "+" : ""}${scenario.comparisonDelta}`}
+                    />
+                    <StatCell
+                      label="Delta percent"
+                      value={`${formatDecimal(scenario.comparisonDeltaPercent)}%`}
+                    />
+                    <StatCell
+                      label="Disabled time"
+                      value={`${scenario.disabled.elapsedMicros} us`}
+                    />
+                    <StatCell
+                      label="Enabled time"
+                      value={`${scenario.enabled.elapsedMicros} us`}
+                    />
+                    <StatCell
+                      label="Exact first probes"
+                      value={scenario.enabled.stats.exactFirstProbe}
+                    />
+                    <StatCell
+                      label="Attempts"
+                      value={scenario.enabled.stats.attempted}
+                    />
+                    <StatCell
+                      label="Model segments"
+                      value={scenario.enabled.stats.modelSegments}
+                    />
+                    <StatCell
+                      label="Model memory"
+                      value={formatBytes(scenario.enabled.stats.modelBytes)}
+                    />
+                    <StatCell
+                      label="Model predictions"
+                      value={scenario.enabled.stats.modelPredictions}
+                    />
+                    <StatCell
+                      label="Average slot error"
+                      value={formatDecimal(
+                        scenario.enabled.stats.predictionErrorAverage,
+                      )}
+                    />
+                    <StatCell
+                      label="Max slot error"
+                      value={scenario.enabled.stats.predictionErrorMax}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function formatDecimal(value: number) {
+  return new Intl.NumberFormat(undefined, {
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+function formatBytes(value: number) {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${formatDecimal(value / 1024)} KB`;
+  return `${formatDecimal(value / (1024 * 1024))} MB`;
+}
+
+function StatCell({
+  label,
+  value,
+}: {
+  label: string;
+  value: string | number | undefined;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 bg-[var(--app-panel)] px-3 py-2">
+      <span className="text-[var(--app-dim)]">{label}</span>
+      <span className="app-mono text-[var(--app-text)]">{value ?? "-"}</span>
     </div>
   );
 }

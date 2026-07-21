@@ -7,7 +7,7 @@ use tauri::State;
 use uuid::Uuid;
 
 use crate::commands::models::{
-    CreateEnvironmentInput, EnvironmentSummary, RenameEnvironmentInput, RequestDetail,
+    CreateEnvironmentInput, EntityId, EnvironmentSummary, RenameEnvironmentInput, RequestDetail,
     VariableEntry,
 };
 use crate::{storage::StorageError, AppState};
@@ -50,19 +50,19 @@ pub fn list_environments(state: State<'_, AppState>) -> Result<Vec<EnvironmentSu
 pub fn create_environment(
     input: CreateEnvironmentInput,
     state: State<'_, AppState>,
-) -> Result<String, String> {
+) -> Result<EntityId, String> {
     let name = clean_environment_name(&input.name);
-    let environment_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
 
     state
         .database
         .with_connection(|connection| {
             connection.execute(
-                "INSERT INTO environments (id, name, source, created_at, updated_at)
-                 VALUES (?, ?, 'manual', ?, ?)",
-                params![environment_id, name, now, now],
+                "INSERT INTO environments (name, source, created_at, updated_at)
+                 VALUES (?, 'manual', ?, ?)",
+                params![name, now, now],
             )?;
+            let environment_id = connection.last_insert_rowid();
             Ok(environment_id)
         })
         .map_err(|error| error.to_string())
@@ -94,7 +94,7 @@ pub fn rename_environment(
 
 #[tauri::command]
 pub fn delete_environment(
-    environment_id: String,
+    environment_id: EntityId,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     state
@@ -114,9 +114,8 @@ pub fn import_postman_environment(
     postman_json: String,
     file_name: Option<String>,
     state: State<'_, AppState>,
-) -> Result<String, String> {
+) -> Result<EntityId, String> {
     let imported = parse_imported_environment(&postman_json, file_name.as_deref())?;
-    let environment_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
 
     state
@@ -124,13 +123,14 @@ pub fn import_postman_environment(
         .with_connection(|connection| {
             let tx = connection.transaction()?;
             tx.execute(
-                "INSERT INTO environments (id, name, source, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?)",
-                params![environment_id, imported.name, imported.source, now, now],
+                "INSERT INTO environments (name, source, created_at, updated_at)
+                 VALUES (?, ?, ?, ?)",
+                params![imported.name, imported.source, now, now],
             )?;
+            let environment_id = tx.last_insert_rowid();
 
             for variable in imported.variables {
-                insert_imported_environment_variable(&tx, &environment_id, variable, &now)?;
+                insert_imported_environment_variable(&tx, environment_id, variable, &now)?;
             }
 
             tx.commit()?;
@@ -142,11 +142,11 @@ pub fn import_postman_environment(
 #[tauri::command]
 pub fn list_variables(
     scope: String,
-    collection_id: Option<String>,
-    environment_id: Option<String>,
+    collection_id: Option<EntityId>,
+    environment_id: Option<EntityId>,
     state: State<'_, AppState>,
 ) -> Result<Vec<VariableEntry>, String> {
-    validate_scope(&scope, collection_id.as_deref(), environment_id.as_deref())?;
+    validate_scope(&scope, collection_id, environment_id)?;
 
     state
         .database
@@ -186,12 +186,12 @@ pub fn list_variables(
 #[tauri::command]
 pub fn save_variables(
     scope: String,
-    collection_id: Option<String>,
-    environment_id: Option<String>,
+    collection_id: Option<EntityId>,
+    environment_id: Option<EntityId>,
     variables: Vec<VariableEntry>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    validate_scope(&scope, collection_id.as_deref(), environment_id.as_deref())?;
+    validate_scope(&scope, collection_id, environment_id)?;
 
     let now = Utc::now().to_rfc3339();
     state
@@ -241,7 +241,7 @@ pub fn save_variables(
 pub(super) fn load_variable_context(
     connection: &rusqlite::Connection,
     request: &RequestDetail,
-    environment_id: Option<&str>,
+    environment_id: Option<EntityId>,
 ) -> Result<VariableContext, StorageError> {
     let mut values = HashMap::new();
     let mut statement = connection.prepare(
@@ -273,8 +273,8 @@ pub(super) fn load_variable_context(
 pub(super) fn save_script_variable(
     connection: &rusqlite::Connection,
     scope: &str,
-    collection_id: Option<&str>,
-    environment_id: Option<&str>,
+    collection_id: Option<EntityId>,
+    environment_id: Option<EntityId>,
     key: &str,
     value: &str,
     now: &str,
@@ -428,7 +428,7 @@ fn unquote_dotenv_value(value: &str) -> &str {
 
 fn insert_imported_environment_variable(
     tx: &rusqlite::Transaction<'_>,
-    environment_id: &str,
+    environment_id: EntityId,
     variable: ImportedEnvironmentVariable,
     now: &str,
 ) -> Result<(), StorageError> {
@@ -454,11 +454,9 @@ fn insert_imported_environment_variable(
 
 fn validate_scope(
     scope: &str,
-    collection_id: Option<&str>,
-    environment_id: Option<&str>,
+    collection_id: Option<EntityId>,
+    environment_id: Option<EntityId>,
 ) -> Result<(), String> {
-    let collection_id = collection_id.filter(|id| !id.is_empty());
-    let environment_id = environment_id.filter(|id| !id.is_empty());
     match (scope, collection_id, environment_id) {
         ("global", None, None) => Ok(()),
         ("collection", Some(_), None) => Ok(()),
@@ -513,8 +511,8 @@ mod tests {
     fn variable_context_applies_environment_over_collection_over_global() {
         let connection = test_connection();
         let request = RequestDetail {
-            id: "request".to_string(),
-            collection_id: "collection".to_string(),
+            id: 1,
+            collection_id: 2,
             name: "Request".to_string(),
             method: "GET".to_string(),
             url: "{{host}}".to_string(),
@@ -534,7 +532,7 @@ mod tests {
         insert_test_variable(
             &connection,
             "collection",
-            Some("collection"),
+            Some(2),
             None,
             "host",
             "collection",
@@ -543,12 +541,12 @@ mod tests {
             &connection,
             "environment",
             None,
-            Some("env"),
+            Some(3),
             "host",
             "environment",
         );
 
-        let context = load_variable_context(&connection, &request, Some("env")).unwrap();
+        let context = load_variable_context(&connection, &request, Some(3)).unwrap();
 
         assert_eq!(context.get("host").as_deref(), Some("environment"));
     }
@@ -559,8 +557,8 @@ mod tests {
             .execute_batch(
                 "CREATE TABLE variables (
                     scope TEXT NOT NULL,
-                    collection_id TEXT,
-                    environment_id TEXT,
+                    collection_id INTEGER,
+                    environment_id INTEGER,
                     key TEXT NOT NULL,
                     initial_value TEXT,
                     current_value TEXT NOT NULL,
@@ -578,8 +576,8 @@ mod tests {
     fn insert_test_variable(
         connection: &Connection,
         scope: &str,
-        collection_id: Option<&str>,
-        environment_id: Option<&str>,
+        collection_id: Option<EntityId>,
+        environment_id: Option<EntityId>,
         key: &str,
         value: &str,
     ) {

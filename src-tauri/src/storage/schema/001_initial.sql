@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS collections (
-    id TEXT PRIMARY KEY,
+    id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
     source TEXT NOT NULL DEFAULT 'postman',
     auth_json TEXT,
@@ -9,8 +9,8 @@ CREATE TABLE IF NOT EXISTS collections (
 );
 
 CREATE TABLE IF NOT EXISTS requests (
-    id TEXT PRIMARY KEY,
-    collection_id TEXT NOT NULL,
+    id INTEGER PRIMARY KEY,
+    collection_id INTEGER NOT NULL,
     method TEXT NOT NULL,
     url TEXT NOT NULL,
     headers_json TEXT NOT NULL DEFAULT '[]',
@@ -32,13 +32,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_requests_id_collection
     ON requests(id, collection_id);
 
 CREATE TABLE IF NOT EXISTS collection_nodes (
-    id TEXT PRIMARY KEY,
-    collection_id TEXT NOT NULL,
-    parent_id TEXT,
+    id INTEGER PRIMARY KEY,
+    collection_id INTEGER NOT NULL,
+    parent_id INTEGER,
     sort_order INTEGER NOT NULL,
     kind TEXT NOT NULL CHECK (kind IN ('folder', 'request')),
     name TEXT NOT NULL,
-    request_id TEXT,
+    request_id INTEGER,
     auth_json TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -63,7 +63,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_collection_nodes_request_id
     WHERE request_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS environments (
-    id TEXT PRIMARY KEY,
+    id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
     source TEXT NOT NULL DEFAULT 'manual',
     created_at TEXT NOT NULL,
@@ -72,8 +72,8 @@ CREATE TABLE IF NOT EXISTS environments (
 
 CREATE TABLE IF NOT EXISTS variables (
     scope TEXT NOT NULL CHECK (scope IN ('global', 'collection', 'environment')),
-    collection_id TEXT,
-    environment_id TEXT,
+    collection_id INTEGER,
+    environment_id INTEGER,
     key TEXT NOT NULL,
     initial_value TEXT,
     current_value TEXT NOT NULL,
@@ -115,9 +115,9 @@ CREATE TABLE IF NOT EXISTS workspace_state (
 );
 
 CREATE TABLE IF NOT EXISTS request_history (
-    id TEXT PRIMARY KEY,
-    request_id TEXT,
-    collection_id TEXT,
+    id INTEGER PRIMARY KEY,
+    request_id INTEGER,
+    collection_id INTEGER,
     method TEXT NOT NULL,
     url TEXT NOT NULL,
     status_code INTEGER,
@@ -130,3 +130,16 @@ CREATE TABLE IF NOT EXISTS request_history (
 
 CREATE INDEX IF NOT EXISTS idx_request_history_created_at
     ON request_history(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS learned_index_models (
+    index_name TEXT NOT NULL DEFAULT '',
+    table_name TEXT NOT NULL,
+    column_name TEXT NOT NULL,
+    root_page INTEGER NOT NULL,
+    model_json TEXT NOT NULL,
+    row_count INTEGER NOT NULL,
+    max_error INTEGER NOT NULL,
+    built_at TEXT NOT NULL,
+    stale INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (table_name, column_name)
+);

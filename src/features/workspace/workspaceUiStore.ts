@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { api } from "@/lib/tauri";
 import type {
   AppTheme,
+  EntityId,
   EnvironmentSummary,
   RequestEditorTab,
   SettingsTab,
@@ -17,10 +18,10 @@ type WorkspaceUiStoreState = {
   ) => Promise<WorkspaceUiState>;
   reconcileActiveEnvironment: (
     environments: EnvironmentSummary[],
-  ) => string | null;
-  setActiveCollectionId: (collectionId: string) => void;
-  setActiveEnvironmentId: (environmentId: string | null) => void;
-  setRequestEditorTab: (requestId: string, tab: RequestEditorTab) => void;
+  ) => EntityId | null;
+  setActiveCollectionId: (collectionId: EntityId) => void;
+  setActiveEnvironmentId: (environmentId: EntityId | null) => void;
+  setRequestEditorTab: (requestId: EntityId, tab: RequestEditorTab) => void;
   setWorkspacePreference: <K extends keyof WorkspaceUiState>(
     key: K,
     value: WorkspaceUiState[K],
@@ -162,14 +163,8 @@ function normalizeWorkspaceUiState(
   if (!value || typeof value !== "object") return DEFAULT_WORKSPACE_UI_STATE;
   return {
     ...DEFAULT_WORKSPACE_UI_STATE,
-    activeCollectionId:
-      typeof value.activeCollectionId === "string"
-        ? value.activeCollectionId
-        : undefined,
-    activeEnvironmentId:
-      typeof value.activeEnvironmentId === "string"
-        ? value.activeEnvironmentId
-        : null,
+    activeCollectionId: normalizeId(value.activeCollectionId) ?? undefined,
+    activeEnvironmentId: normalizeId(value.activeEnvironmentId),
     appTheme: isAppTheme(value.appTheme)
       ? value.appTheme
       : DEFAULT_WORKSPACE_UI_STATE.appTheme,
@@ -202,11 +197,17 @@ function normalizeRequestEditorTabs(
 
 function validEnvironmentId(
   environments: EnvironmentSummary[],
-  environmentId: string | null | undefined,
-): string | null {
+  environmentId: EntityId | null | undefined,
+): EntityId | null {
   return environments.some((environment) => environment.id === environmentId)
     ? environmentId ?? null
     : null;
+}
+
+function normalizeId(value: unknown): EntityId | null {
+  if (typeof value === "number" && Number.isSafeInteger(value)) return value;
+  if (typeof value === "string" && /^\d+$/.test(value)) return Number(value);
+  return null;
 }
 
 function isAppTheme(value: unknown): value is AppTheme {

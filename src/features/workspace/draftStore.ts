@@ -1,17 +1,17 @@
 import { create } from "zustand";
-import type { RequestDetail, ResolvedRequestPreview } from "@/features/types";
+import type { EntityId, RequestDetail, ResolvedRequestPreview } from "@/features/types";
 
 type DraftState = {
-  drafts: Map<string, RequestDetail>;
-  dirtyRequestIds: Set<string>;
-  previews: Map<string, ResolvedRequestPreview>;
-  lastSavedAtById: Map<string, number>;
+  drafts: Map<EntityId, RequestDetail>;
+  dirtyRequestIds: Set<EntityId>;
+  previews: Map<EntityId, ResolvedRequestPreview>;
+  lastSavedAtById: Map<EntityId, number>;
   revision: number;
   setDraft: (request: RequestDetail, dirty?: boolean) => void;
-  updateDraft: (requestId: string, updater: (draft: RequestDetail) => RequestDetail) => RequestDetail | undefined;
-  markSaved: (requestId: string) => void;
-  setPreview: (requestId: string, preview: ResolvedRequestPreview) => void;
-  removeMany: (requestIds: string[]) => void;
+  updateDraft: (requestId: EntityId, updater: (draft: RequestDetail) => RequestDetail) => RequestDetail | undefined;
+  markSaved: (requestId: EntityId) => void;
+  setPreview: (requestId: EntityId, preview: ResolvedRequestPreview) => void;
+  removeMany: (requestIds: EntityId[]) => void;
   clearAll: () => void;
 };
 
@@ -83,14 +83,14 @@ export const useDraftStore = create<DraftState>((set, get) => ({
   },
 }));
 
-export function getDraft(requestId: string | undefined): RequestDetail | undefined {
+export function getDraft(requestId: EntityId | undefined): RequestDetail | undefined {
   return requestId ? useDraftStore.getState().drafts.get(requestId) : undefined;
 }
 
-export function getPreview(requestId: string | undefined): ResolvedRequestPreview | undefined {
+export function getPreview(requestId: EntityId | undefined): ResolvedRequestPreview | undefined {
   return requestId ? useDraftStore.getState().previews.get(requestId) : undefined;
 }
 
-export function isDraftDirty(requestId: string | undefined): boolean {
+export function isDraftDirty(requestId: EntityId | undefined): boolean {
   return requestId ? useDraftStore.getState().dirtyRequestIds.has(requestId) : false;
 }

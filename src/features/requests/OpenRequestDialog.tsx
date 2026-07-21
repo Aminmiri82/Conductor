@@ -9,11 +9,11 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import type { CollectionNode } from "@/features/types";
+import type { CollectionNode, EntityId } from "@/features/types";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 
 type RequestOption = {
-  id: string;
+  id: EntityId;
   name: string;
   method: string;
   path: string;

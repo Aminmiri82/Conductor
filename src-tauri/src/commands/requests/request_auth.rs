@@ -1,7 +1,7 @@
 use reqwest::header::{HeaderName, HeaderValue};
 use rusqlite::{params, OptionalExtension};
 
-use crate::commands::models::{AuthConfig, RequestDetail};
+use crate::commands::models::{AuthConfig, EntityId, RequestDetail};
 use crate::storage::StorageError;
 
 use super::{variable_resolver::resolve_text, variables::VariableContext};
@@ -10,7 +10,7 @@ pub(super) fn inherited_auth_for_request(
     connection: &rusqlite::Connection,
     request: &RequestDetail,
 ) -> Result<Option<AuthConfig>, StorageError> {
-    let mut parent_id: Option<String> = connection
+    let mut parent_id: Option<EntityId> = connection
         .query_row(
             "SELECT parent_id FROM collection_nodes WHERE request_id = ?",
             params![request.id],
@@ -20,7 +20,7 @@ pub(super) fn inherited_auth_for_request(
         .flatten();
 
     while let Some(id) = parent_id {
-        let row: Option<(Option<String>, Option<String>)> = connection
+        let row: Option<(Option<String>, Option<EntityId>)> = connection
             .query_row(
                 "SELECT auth_json, parent_id FROM collection_nodes WHERE id = ?",
                 params![id],

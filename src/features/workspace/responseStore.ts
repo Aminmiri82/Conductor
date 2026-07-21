@@ -1,11 +1,11 @@
 import { create } from "zustand";
-import type { SendRequestResult } from "@/features/types";
+import type { EntityId, SendRequestResult } from "@/features/types";
 
 type ResponseState = {
-  responses: Map<string, SendRequestResult>;
+  responses: Map<EntityId, SendRequestResult>;
   revision: number;
-  setResponse: (requestId: string, response: SendRequestResult) => void;
-  removeMany: (requestIds: string[]) => void;
+  setResponse: (requestId: EntityId, response: SendRequestResult) => void;
+  removeMany: (requestIds: EntityId[]) => void;
   clearAll: () => void;
 };
 
@@ -38,6 +38,6 @@ export const useResponseStore = create<ResponseState>((set) => ({
   },
 }));
 
-export function getResponse(requestId: string | undefined): SendRequestResult | undefined {
+export function getResponse(requestId: EntityId | undefined): SendRequestResult | undefined {
   return requestId ? useResponseStore.getState().responses.get(requestId) : undefined;
 }

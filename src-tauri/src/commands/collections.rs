@@ -4,11 +4,10 @@ use chrono::Utc;
 use rusqlite::params;
 use serde_json::{json, Value};
 use tauri::State;
-use uuid::Uuid;
 
 use crate::{storage::StorageError, AppState};
 
-use super::models::{CollectionNode, CollectionSummary};
+use super::models::{CollectionNode, CollectionSummary, EntityId};
 
 const SORT_ORDER_STEP: i64 = 1024;
 
@@ -37,7 +36,7 @@ pub fn list_collections(state: State<'_, AppState>) -> Result<Vec<CollectionSumm
 
 #[tauri::command]
 pub fn get_collection_tree(
-    collection_id: String,
+    collection_id: EntityId,
     state: State<'_, AppState>,
 ) -> Result<Vec<CollectionNode>, String> {
     state
@@ -72,7 +71,7 @@ pub fn get_collection_tree(
 pub fn import_postman_collection(
     postman_json: String,
     state: State<'_, AppState>,
-) -> Result<String, String> {
+) -> Result<EntityId, String> {
     let collection: Value =
         serde_json::from_str(&postman_json).map_err(|error| error.to_string())?;
     let name = collection
@@ -80,15 +79,8 @@ pub fn import_postman_collection(
         .and_then(Value::as_str)
         .unwrap_or("Imported collection")
         .to_string();
-    let collection_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
-    let raw_collection_path = write_raw_import_file(
-        state.database.raw_import_dir(),
-        &collection_id,
-        "collection",
-        &postman_json,
-    )
-    .map_err(|error| error.to_string())?;
+    let raw_import_dir = state.database.raw_import_dir().to_path_buf();
 
     state
         .database
@@ -96,26 +88,31 @@ pub fn import_postman_collection(
             let tx = connection.transaction()?;
             tx.execute(
                 "INSERT INTO collections
-                 (id, name, source, auth_json, raw_postman_file_path, created_at, updated_at)
-                 VALUES (?, ?, 'postman', ?, ?, ?, ?)",
+                 (name, source, auth_json, raw_postman_file_path, created_at, updated_at)
+                 VALUES (?, 'postman', ?, NULL, ?, ?)",
                 params![
-                    collection_id,
                     name,
                     postman_auth(&collection).map(|value| value.to_string()),
-                    raw_collection_path,
                     now,
                     now
                 ],
             )?;
+            let collection_id = tx.last_insert_rowid();
+            let raw_collection_path =
+                write_raw_import_file(&raw_import_dir, collection_id, "collection", &postman_json)?;
+            tx.execute(
+                "UPDATE collections SET raw_postman_file_path = ? WHERE id = ?",
+                params![raw_collection_path, collection_id],
+            )?;
 
             if let Some(variables) = collection.get("variable").and_then(Value::as_array) {
                 for variable in variables {
-                    insert_variable(&tx, "collection", &collection_id, variable, &now)?;
+                    insert_variable(&tx, "collection", collection_id, variable, &now)?;
                 }
             }
 
             if let Some(items) = collection.get("item").and_then(Value::as_array) {
-                import_items(&tx, &collection_id, None, items, &now)?;
+                import_items(&tx, collection_id, None, items, &now)?;
             }
 
             tx.commit()?;
@@ -126,8 +123,8 @@ pub fn import_postman_collection(
 
 fn import_items(
     tx: &rusqlite::Transaction<'_>,
-    collection_id: &str,
-    parent_id: Option<&str>,
+    collection_id: EntityId,
+    parent_id: Option<EntityId>,
     items: &[Value],
     now: &str,
 ) -> Result<(), StorageError> {
@@ -137,15 +134,13 @@ fn import_items(
             .and_then(Value::as_str)
             .unwrap_or("Untitled")
             .to_string();
-        let node_id = Uuid::new_v4().to_string();
 
         if let Some(children) = item.get("item").and_then(Value::as_array) {
             tx.execute(
                 "INSERT INTO collection_nodes
-                 (id, collection_id, parent_id, sort_order, kind, name, request_id, auth_json, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, 'folder', ?, NULL, ?, ?, ?)",
+                 (collection_id, parent_id, sort_order, kind, name, request_id, auth_json, created_at, updated_at)
+                 VALUES (?, ?, ?, 'folder', ?, NULL, ?, ?, ?)",
                 params![
-                    node_id,
                     collection_id,
                     parent_id,
                     sort_order_for_import(position),
@@ -155,10 +150,10 @@ fn import_items(
                     now
                 ],
             )?;
+            let node_id = tx.last_insert_rowid();
 
-            import_items(tx, collection_id, Some(&node_id), children, now)?;
+            import_items(tx, collection_id, Some(node_id), children, now)?;
         } else if let Some(request) = item.get("request") {
-            let request_id = Uuid::new_v4().to_string();
             let method = request
                 .get("method")
                 .and_then(Value::as_str)
@@ -173,11 +168,10 @@ fn import_items(
 
             tx.execute(
                 "INSERT INTO requests
-                 (id, collection_id, method, url, headers_json, query_json, path_params_json, auth_json, body_json,
+                 (collection_id, method, url, headers_json, query_json, path_params_json, auth_json, body_json,
                   pre_request_script_json, test_script_json, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?)",
+                 VALUES (?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?)",
                 params![
-                    request_id,
                     collection_id,
                     method,
                     url,
@@ -191,13 +185,13 @@ fn import_items(
                     now
                 ],
             )?;
+            let request_id = tx.last_insert_rowid();
 
             tx.execute(
                 "INSERT INTO collection_nodes
-                 (id, collection_id, parent_id, sort_order, kind, name, request_id, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, 'request', ?, ?, ?, ?)",
+                 (collection_id, parent_id, sort_order, kind, name, request_id, created_at, updated_at)
+                 VALUES (?, ?, ?, 'request', ?, ?, ?, ?)",
                 params![
-                    node_id,
                     collection_id,
                     parent_id,
                     sort_order_for_import(position),
@@ -215,11 +209,11 @@ fn import_items(
 
 fn write_raw_import_file(
     raw_import_dir: &Path,
-    collection_id: &str,
+    collection_id: EntityId,
     name: &str,
     contents: &str,
 ) -> Result<String, StorageError> {
-    let collection_dir = raw_import_dir.join(collection_id);
+    let collection_dir = raw_import_dir.join(collection_id.to_string());
     fs::create_dir_all(&collection_dir).map_err(|source| StorageError::FileOperation {
         path: collection_dir.clone(),
         source,
@@ -239,7 +233,7 @@ fn sort_order_for_import(position: usize) -> i64 {
 fn insert_variable(
     tx: &rusqlite::Transaction<'_>,
     scope: &str,
-    collection_id: &str,
+    collection_id: EntityId,
     variable: &Value,
     now: &str,
 ) -> Result<(), StorageError> {
@@ -483,29 +477,29 @@ fn postman_scripts(item: &Value) -> (Option<Value>, Option<Value>) {
 
 #[derive(Debug)]
 struct FlatNode {
-    id: String,
-    collection_id: String,
-    parent_id: Option<String>,
+    id: EntityId,
+    collection_id: EntityId,
+    parent_id: Option<EntityId>,
     kind: String,
     name: String,
-    request_id: Option<String>,
+    request_id: Option<EntityId>,
     method: Option<String>,
 }
 
-fn build_tree(nodes: Vec<FlatNode>, parent_id: Option<&str>) -> Vec<CollectionNode> {
-    let mut by_parent: HashMap<Option<String>, Vec<FlatNode>> = HashMap::new();
+fn build_tree(nodes: Vec<FlatNode>, parent_id: Option<EntityId>) -> Vec<CollectionNode> {
+    let mut by_parent: HashMap<Option<EntityId>, Vec<FlatNode>> = HashMap::new();
     for node in nodes {
         by_parent
             .entry(node.parent_id.clone())
             .or_default()
             .push(node);
     }
-    build_tree_from_map(&mut by_parent, parent_id.map(ToString::to_string))
+    build_tree_from_map(&mut by_parent, parent_id)
 }
 
 fn build_tree_from_map(
-    by_parent: &mut HashMap<Option<String>, Vec<FlatNode>>,
-    parent_id: Option<String>,
+    by_parent: &mut HashMap<Option<EntityId>, Vec<FlatNode>>,
+    parent_id: Option<EntityId>,
 ) -> Vec<CollectionNode> {
     let nodes = by_parent.remove(&parent_id).unwrap_or_default();
     nodes

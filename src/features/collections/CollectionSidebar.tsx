@@ -42,7 +42,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import type { CollectionNode } from "@/features/types";
+import type { CollectionNode, EntityId } from "@/features/types";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 
 type DropIntent = "before" | "after" | "into";
@@ -51,14 +51,14 @@ type VisibleTreeNode = {
   depth: number;
 };
 type DropTarget =
-  | { kind: "node"; nodeId: string; intent: DropIntent }
+  | { kind: "node"; nodeId: EntityId; intent: DropIntent }
   | { kind: "root-end" }
   | null;
 
 type DnDValue = {
-  draggingId: string | null;
+  draggingId: EntityId | null;
   draggingNode: CollectionNode | null;
-  draggingDescendantIds: Set<string>;
+  draggingDescendantIds: Set<EntityId>;
   beginDrag: (node: CollectionNode) => void;
   endDrag: () => void;
   target: DropTarget;
@@ -93,11 +93,11 @@ export function CollectionSidebar() {
   const moveNode = useWorkspaceStore((state) => state.moveNode);
 
   const [draggingNode, setDraggingNode] = useState<CollectionNode | null>(null);
-  const [draggingDescendantIds, setDraggingDescendantIds] = useState<Set<string>>(
+  const [draggingDescendantIds, setDraggingDescendantIds] = useState<Set<EntityId>>(
     () => new Set(),
   );
   const [target, setTarget] = useState<DropTarget>(null);
-  const [openIds, setOpenIds] = useState<Set<string>>(() => new Set());
+  const [openIds, setOpenIds] = useState<Set<EntityId>>(() => new Set());
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
 
@@ -138,7 +138,7 @@ export function CollectionSidebar() {
   );
   const renderedNodes = visibleNodes.slice(startIndex, endIndex);
 
-  const toggleOpen = useCallback((nodeId: string) => {
+  const toggleOpen = useCallback((nodeId: EntityId) => {
     setOpenIds((current) => {
       const next = new Set(current);
       if (next.has(nodeId)) {
@@ -150,7 +150,7 @@ export function CollectionSidebar() {
     });
   }, []);
 
-  const openFolder = useCallback((nodeId: string) => {
+  const openFolder = useCallback((nodeId: EntityId) => {
     setOpenIds((current) => {
       if (current.has(nodeId)) return current;
       const next = new Set(current);
@@ -185,7 +185,7 @@ export function CollectionSidebar() {
     setTarget(null);
     if (!source || !t) return;
 
-    let parentId: string | null | undefined;
+    let parentId: EntityId | null | undefined;
     let position: number;
 
     if (t.kind === "root-end") {
@@ -221,7 +221,7 @@ export function CollectionSidebar() {
     await moveNode(source, parentId, position);
   }
 
-  async function confirmDeleteRequest(requestId: string) {
+  async function confirmDeleteRequest(requestId: EntityId) {
     if (!window.confirm("Delete this request?")) return;
     await deleteRequest(requestId);
   }
@@ -262,15 +262,15 @@ export function CollectionSidebar() {
           </div>
           <div className="flex items-center gap-2">
             <Select
-              value={activeCollectionId}
-              onValueChange={(value) => void selectCollection(value)}
+              value={activeCollectionId?.toString()}
+              onValueChange={(value) => void selectCollection(Number(value))}
             >
               <SelectTrigger className="h-8 min-w-0 flex-1 border-[var(--app-line)] bg-[var(--app-panel-2)] text-xs">
                 <SelectValue placeholder="No collection" />
               </SelectTrigger>
               <SelectContent>
                 {collections.map((collection) => (
-                  <SelectItem key={collection.id} value={collection.id}>
+                  <SelectItem key={collection.id} value={collection.id.toString()}>
                     {collection.name}
                   </SelectItem>
                 ))}
@@ -392,14 +392,14 @@ type TreeRowProps = {
   depth: number;
   top: number;
   open: boolean;
-  activeRequestId?: string;
-  onToggleOpen: (nodeId: string) => void;
-  onOpenFolder: (nodeId: string) => void;
-  onSelectRequest: (requestId: string) => Promise<void>;
-  onCreateRequest: (parentId: string | null | undefined, position: number) => Promise<void>;
-  onCreateFolder: (parentId: string | null | undefined, position: number) => Promise<void>;
-  onDuplicateRequest: (requestId: string) => Promise<void>;
-  onDeleteRequest: (requestId: string) => Promise<void>;
+  activeRequestId?: EntityId;
+  onToggleOpen: (nodeId: EntityId) => void;
+  onOpenFolder: (nodeId: EntityId) => void;
+  onSelectRequest: (requestId: EntityId) => Promise<void>;
+  onCreateRequest: (parentId: EntityId | null | undefined, position: number) => Promise<void>;
+  onCreateFolder: (parentId: EntityId | null | undefined, position: number) => Promise<void>;
+  onDuplicateRequest: (requestId: EntityId) => Promise<void>;
+  onDeleteRequest: (requestId: EntityId) => Promise<void>;
   onDeleteNode: (node: CollectionNode) => Promise<void>;
   performDrop: () => Promise<void>;
 };
@@ -443,7 +443,7 @@ function TreeRow({
 
   function onDragStart(event: DragEvent<HTMLDivElement>) {
     event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("text/plain", node.id);
+    event.dataTransfer.setData("text/plain", node.id.toString());
     dnd.beginDrag(node);
   }
 
@@ -496,7 +496,7 @@ function TreeRow({
           <div
             role="button"
             tabIndex={0}
-            data-sidebar-request-id={node.requestId ?? undefined}
+            data-sidebar-request-id={node.requestId?.toString()}
             draggable
             onDragStart={onDragStart}
             onDragEnd={onDragEnd}
@@ -637,7 +637,7 @@ function methodColor(method: string): CSSProperties {
 
 function flattenVisibleNodes(
   nodes: CollectionNode[],
-  openIds: Set<string>,
+  openIds: Set<EntityId>,
   depth = 0,
   rows: VisibleTreeNode[] = [],
 ): VisibleTreeNode[] {
@@ -650,20 +650,20 @@ function flattenVisibleNodes(
   return rows;
 }
 
-function collectNodeIds(node: CollectionNode): Set<string> {
-  const ids = new Set<string>();
+function collectNodeIds(node: CollectionNode): Set<EntityId> {
+  const ids = new Set<EntityId>();
   collectNodeIdsInto(node, ids);
   return ids;
 }
 
-function collectNodeIdsInto(node: CollectionNode, ids: Set<string>) {
+function collectNodeIdsInto(node: CollectionNode, ids: Set<EntityId>) {
   ids.add(node.id);
   for (const child of node.children) {
     collectNodeIdsInto(child, ids);
   }
 }
 
-function findNode(nodes: CollectionNode[], id: string): CollectionNode | undefined {
+function findNode(nodes: CollectionNode[], id: EntityId): CollectionNode | undefined {
   for (const node of nodes) {
     if (node.id === id) return node;
     const child = findNode(node.children, id);
@@ -672,7 +672,7 @@ function findNode(nodes: CollectionNode[], id: string): CollectionNode | undefin
   return undefined;
 }
 
-function containsNode(node: CollectionNode, id: string): boolean {
+function containsNode(node: CollectionNode, id: EntityId): boolean {
   if (node.id === id) return true;
   return node.children.some((child) => containsNode(child, id));
 }

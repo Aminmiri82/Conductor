@@ -8,7 +8,11 @@ use commands::requests::{
     list_variables, move_node, rename_environment, resolve_request, save_request, save_text_file,
     save_variables, send_request,
 };
-use commands::storage::{database_status, get_workspace_state, set_workspace_state};
+use commands::storage::{
+    database_status, get_workspace_state, rebuild_learned_rowid_models,
+    reset_learned_rowid_counters, run_learned_rowid_benchmark, set_learned_rowid_enabled,
+    set_workspace_state,
+};
 use storage::Database;
 use tauri::{
     menu::{Menu, MenuItemBuilder, PredefinedMenuItem, Submenu},
@@ -64,6 +68,10 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             database_status,
+            reset_learned_rowid_counters,
+            rebuild_learned_rowid_models,
+            run_learned_rowid_benchmark,
+            set_learned_rowid_enabled,
             get_workspace_state,
             set_workspace_state,
             create_environment,

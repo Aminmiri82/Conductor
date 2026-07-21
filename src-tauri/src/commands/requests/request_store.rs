@@ -2,11 +2,10 @@ use chrono::Utc;
 use rusqlite::params;
 use serde_json::json;
 use tauri::State;
-use uuid::Uuid;
 
 use crate::commands::models::{
     CreateRequestInput, CreateRequestResult, DuplicateRequestInput, DuplicateRequestResult,
-    RequestDetail,
+    EntityId, RequestDetail,
 };
 use crate::AppState;
 
@@ -17,7 +16,7 @@ use super::{
 
 #[tauri::command]
 pub fn get_request(
-    request_id: String,
+    request_id: EntityId,
     state: State<'_, AppState>,
 ) -> Result<RequestDetail, String> {
     state
@@ -74,8 +73,6 @@ pub fn create_request(
     state: State<'_, AppState>,
 ) -> Result<CreateRequestResult, String> {
     let now = Utc::now().to_rfc3339();
-    let request_id = Uuid::new_v4().to_string();
-    let node_id = Uuid::new_v4().to_string();
 
     state
         .database
@@ -84,25 +81,25 @@ pub fn create_request(
             let sort_order = sort_order_for_position(
                 &tx,
                 &input.collection_id,
-                input.parent_id.as_deref(),
+                input.parent_id,
                 input.position,
                 None,
             )?;
             tx.execute(
                 "INSERT INTO requests
-                 (id, collection_id, method, url, headers_json, query_json, path_params_json,
+                 (collection_id, method, url, headers_json, query_json, path_params_json,
                   auth_json, body_json, pre_request_script_json,
                   test_script_json, created_at, updated_at)
-                 VALUES (?, ?, 'GET', '', '[]', '[]', '[]', NULL, NULL, NULL, NULL, ?, ?)",
-                params![request_id, input.collection_id, now, now],
+                 VALUES (?, 'GET', '', '[]', '[]', '[]', NULL, NULL, NULL, NULL, ?, ?)",
+                params![input.collection_id, now, now],
             )?;
+            let request_id = tx.last_insert_rowid();
             tx.execute(
                 "INSERT INTO collection_nodes
-                 (id, collection_id, parent_id, sort_order, kind, name, request_id, auth_json,
+                 (collection_id, parent_id, sort_order, kind, name, request_id, auth_json,
                   created_at, updated_at)
-                 VALUES (?, ?, ?, ?, 'request', ?, ?, NULL, ?, ?)",
+                 VALUES (?, ?, ?, 'request', ?, ?, NULL, ?, ?)",
                 params![
-                    node_id,
                     input.collection_id,
                     input.parent_id,
                     sort_order,
@@ -112,10 +109,11 @@ pub fn create_request(
                     now
                 ],
             )?;
+            let node_id = tx.last_insert_rowid();
             tx.commit()?;
             Ok(CreateRequestResult {
-                request_id: request_id.clone(),
-                node_id: node_id.clone(),
+                request_id,
+                node_id,
             })
         })
         .map_err(|error| error.to_string())
@@ -126,8 +124,6 @@ pub fn duplicate_request(
     state: State<'_, AppState>,
 ) -> Result<DuplicateRequestResult, String> {
     let now = Utc::now().to_rfc3339();
-    let new_request_id = Uuid::new_v4().to_string();
-    let new_node_id = Uuid::new_v4().to_string();
 
     state
         .database
@@ -164,17 +160,16 @@ pub fn duplicate_request(
             let sort_order = sort_order_after(
                 &tx,
                 &source.collection_id,
-                source.parent_id.as_deref(),
+                source.parent_id,
                 source.sort_order,
             )?;
             tx.execute(
                 "INSERT INTO requests
-                 (id, collection_id, method, url, headers_json, query_json, path_params_json,
+                 (collection_id, method, url, headers_json, query_json, path_params_json,
                   auth_json, body_json, pre_request_script_json,
                   test_script_json, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 params![
-                    new_request_id,
                     source.collection_id,
                     source.method,
                     source.url,
@@ -189,13 +184,13 @@ pub fn duplicate_request(
                     now
                 ],
             )?;
+            let new_request_id = tx.last_insert_rowid();
             tx.execute(
                 "INSERT INTO collection_nodes
-                 (id, collection_id, parent_id, sort_order, kind, name, request_id, auth_json,
+                 (collection_id, parent_id, sort_order, kind, name, request_id, auth_json,
                   created_at, updated_at)
-                 VALUES (?, ?, ?, ?, 'request', ?, ?, ?, ?, ?)",
+                 VALUES (?, ?, ?, 'request', ?, ?, ?, ?, ?)",
                 params![
-                    new_node_id,
                     source.collection_id,
                     source.parent_id,
                     sort_order,
@@ -206,16 +201,17 @@ pub fn duplicate_request(
                     now
                 ],
             )?;
+            let new_node_id = tx.last_insert_rowid();
             tx.commit()?;
             Ok(DuplicateRequestResult {
-                request_id: new_request_id.clone(),
-                node_id: new_node_id.clone(),
+                request_id: new_request_id,
+                node_id: new_node_id,
             })
         })
         .map_err(|error| error.to_string())
 }
 #[tauri::command]
-pub fn delete_request(request_id: String, state: State<'_, AppState>) -> Result<(), String> {
+pub fn delete_request(request_id: EntityId, state: State<'_, AppState>) -> Result<(), String> {
     state
         .database
         .with_connection(|connection| {
@@ -268,7 +264,7 @@ pub fn save_request(request: RequestDetail, state: State<'_, AppState>) -> Resul
         .map_err(|error| error.to_string())
 }
 struct DuplicateSource {
-    collection_id: String,
+    collection_id: EntityId,
     method: String,
     url: String,
     headers_json: String,
@@ -278,7 +274,7 @@ struct DuplicateSource {
     body_json: Option<String>,
     pre_request_script_json: Option<String>,
     test_script_json: Option<String>,
-    parent_id: Option<String>,
+    parent_id: Option<EntityId>,
     sort_order: i64,
     name: String,
     node_auth_json: Option<String>,

@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
-import type { CollectionNode } from "@/features/types";
+import type { CollectionNode, EntityId } from "@/features/types";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 
 type AppMenuAction =
@@ -141,13 +141,14 @@ function isTauriRuntime() {
 function focusedSidebarRequestId() {
   const active = document.activeElement;
   if (!(active instanceof HTMLElement)) return undefined;
-  return active.closest<HTMLElement>("[data-sidebar-request-id]")?.dataset
+  const requestId = active.closest<HTMLElement>("[data-sidebar-request-id]")?.dataset
     .sidebarRequestId;
+  return requestId ? Number(requestId) : undefined;
 }
 
 function findRequestNode(
   nodes: CollectionNode[],
-  requestId: string,
+  requestId: EntityId,
 ): CollectionNode | undefined {
   for (const node of nodes) {
     if (node.requestId === requestId) return node;

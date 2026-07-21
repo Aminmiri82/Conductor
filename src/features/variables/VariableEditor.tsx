@@ -11,7 +11,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { api } from "@/lib/tauri";
-import type { KeyValue, RequestDetail, VariableEntry } from "@/features/types";
+import type { EntityId, KeyValue, RequestDetail, VariableEntry } from "@/features/types";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { useWorkspaceUiStore } from "@/features/workspace/workspaceUiStore";
 
@@ -247,7 +247,7 @@ function buildRows(
   globalVariables: VariableEntry[],
   collectionVariables: VariableEntry[],
   environmentVariables: VariableEntry[],
-  activeEnvironmentId: string | null | undefined,
+  activeEnvironmentId: EntityId | null | undefined,
 ): RequestVariableRow[] {
   const globals = new Map(globalVariables.map((variable) => [variable.key, variable]));
   const collection = new Map(
@@ -283,8 +283,8 @@ function mergeVariables(
   existing: VariableEntry[],
   rows: RequestVariableRow[],
   scope: VariableScope,
-  collectionId: string | null,
-  environmentId: string | null,
+  collectionId: EntityId | null,
+  environmentId: EntityId | null,
   removedVariables: Set<string>,
 ): VariableEntry[] {
   const rowsByKey = new Map(rows.map((row) => [row.key, row]));
@@ -313,8 +313,8 @@ function mergeVariables(
 function rowToVariable(
   row: RequestVariableRow,
   scope: VariableScope,
-  collectionId: string | null,
-  environmentId: string | null,
+  collectionId: EntityId | null,
+  environmentId: EntityId | null,
 ): VariableEntry {
   return {
     scope,

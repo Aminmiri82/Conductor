@@ -19,12 +19,13 @@ import {
 import type {
   CollectionNode,
   CollectionSummary,
+  EntityId,
   EnvironmentSummary,
   RequestDetail,
 } from "@/features/types";
 
 export type RequestTab = {
-  requestId: string;
+  requestId: EntityId;
   name: string;
   method: string;
   dirty: boolean;
@@ -35,8 +36,8 @@ type WorkspaceState = {
   environments: EnvironmentSummary[];
   tree: CollectionNode[];
   tabs: RequestTab[];
-  activeCollectionId?: string;
-  activeRequestId?: string;
+  activeCollectionId?: EntityId;
+  activeRequestId?: EntityId;
   sidebarVisible: boolean;
   collectionLoading: boolean;
   requestLoading: boolean;
@@ -47,18 +48,18 @@ type WorkspaceState = {
   loadEnvironments: () => Promise<void>;
   importCollection: (json: string) => Promise<void>;
   importEnvironment: (contents: string, fileName?: string | null) => Promise<void>;
-  selectCollection: (collectionId: string) => Promise<void>;
-  selectEnvironment: (environmentId: string | null) => Promise<void>;
-  selectRequest: (requestId: string) => Promise<void>;
-  closeRequestTab: (requestId: string) => Promise<void>;
-  createRequestIn: (parentId: string | null | undefined, position: number) => Promise<void>;
-  createFolderIn: (parentId: string | null | undefined, position: number) => Promise<void>;
-  duplicateRequest: (requestId: string) => Promise<void>;
-  deleteRequest: (requestId: string) => Promise<void>;
+  selectCollection: (collectionId: EntityId) => Promise<void>;
+  selectEnvironment: (environmentId: EntityId | null) => Promise<void>;
+  selectRequest: (requestId: EntityId) => Promise<void>;
+  closeRequestTab: (requestId: EntityId) => Promise<void>;
+  createRequestIn: (parentId: EntityId | null | undefined, position: number) => Promise<void>;
+  createFolderIn: (parentId: EntityId | null | undefined, position: number) => Promise<void>;
+  duplicateRequest: (requestId: EntityId) => Promise<void>;
+  deleteRequest: (requestId: EntityId) => Promise<void>;
   deleteNode: (node: CollectionNode) => Promise<void>;
   moveNode: (
     node: CollectionNode,
-    parentId: string | null | undefined,
+    parentId: EntityId | null | undefined,
     position: number,
   ) => Promise<void>;
   updateRequest: (patch: Partial<RequestDetail>) => void;
@@ -492,7 +493,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
 function renameRequestNode(
   nodes: CollectionNode[],
-  requestId: string,
+  requestId: EntityId,
   name: string,
 ): CollectionNode[] {
   return nodes.map((node) => {
@@ -508,7 +509,7 @@ function renameRequestNode(
 
 function insertNodeAt(
   nodes: CollectionNode[],
-  parentId: string | null,
+  parentId: EntityId | null,
   position: number,
   node: CollectionNode,
 ): CollectionNode[] {
@@ -545,7 +546,7 @@ function insertIntoSiblings(
   return reindexSiblings(next);
 }
 
-function removeNodeById(nodes: CollectionNode[], nodeId: string): CollectionNode[] {
+function removeNodeById(nodes: CollectionNode[], nodeId: EntityId): CollectionNode[] {
   let changed = false;
   const next: CollectionNode[] = [];
   for (const node of nodes) {
@@ -566,7 +567,7 @@ function removeNodeById(nodes: CollectionNode[], nodeId: string): CollectionNode
   return changed ? reindexSiblings(next) : nodes;
 }
 
-function removeRequestNode(nodes: CollectionNode[], requestId: string): CollectionNode[] {
+function removeRequestNode(nodes: CollectionNode[], requestId: EntityId): CollectionNode[] {
   let changed = false;
   const next: CollectionNode[] = [];
   for (const node of nodes) {
@@ -590,7 +591,7 @@ function removeRequestNode(nodes: CollectionNode[], requestId: string): Collecti
 function moveNodeInTree(
   nodes: CollectionNode[],
   node: CollectionNode,
-  parentId: string | null,
+  parentId: EntityId | null,
   position: number,
 ): CollectionNode[] {
   const withoutNode = removeNodeById(nodes, node.id);
@@ -603,7 +604,7 @@ function moveNodeInTree(
 
 function findRequestNodeByRequestId(
   nodes: CollectionNode[],
-  requestId: string,
+  requestId: EntityId,
 ): CollectionNode | undefined {
   for (const node of nodes) {
     if (node.requestId === requestId) return node;
@@ -619,7 +620,7 @@ function reindexSiblings(nodes: CollectionNode[]): CollectionNode[] {
   );
 }
 
-function requestIdsForNode(node: CollectionNode): string[] {
+function requestIdsForNode(node: CollectionNode): EntityId[] {
   return [
     ...(node.requestId ? [node.requestId] : []),
     ...node.children.flatMap(requestIdsForNode),

@@ -1,10 +1,12 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub type EntityId = i64;
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CollectionSummary {
-    pub id: String,
+    pub id: EntityId,
     pub name: String,
     pub source: String,
     pub updated_at: String,
@@ -13,7 +15,7 @@ pub struct CollectionSummary {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvironmentSummary {
-    pub id: String,
+    pub id: EntityId,
     pub name: String,
     pub updated_at: String,
 }
@@ -21,13 +23,13 @@ pub struct EnvironmentSummary {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CollectionNode {
-    pub id: String,
-    pub collection_id: String,
-    pub parent_id: Option<String>,
+    pub id: EntityId,
+    pub collection_id: EntityId,
+    pub parent_id: Option<EntityId>,
     pub position: i64,
     pub kind: String,
     pub name: String,
-    pub request_id: Option<String>,
+    pub request_id: Option<EntityId>,
     pub method: Option<String>,
     pub children: Vec<CollectionNode>,
 }
@@ -138,8 +140,8 @@ pub struct AuthConfig {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct RequestDetail {
-    pub id: String,
-    pub collection_id: String,
+    pub id: EntityId,
+    pub collection_id: EntityId,
     pub name: String,
     pub method: String,
     pub url: String,
@@ -159,8 +161,8 @@ pub struct RequestDetail {
 #[serde(rename_all = "camelCase")]
 pub struct VariableEntry {
     pub scope: String,
-    pub collection_id: Option<String>,
-    pub environment_id: Option<String>,
+    pub collection_id: Option<EntityId>,
+    pub environment_id: Option<EntityId>,
     pub key: String,
     pub value: String,
     pub initial_value: Option<String>,
@@ -192,7 +194,7 @@ pub struct ResolvedRequestPreview {
 pub struct SendRequestInput {
     pub request: RequestDetail,
     #[serde(default)]
-    pub environment_id: Option<String>,
+    pub environment_id: Option<EntityId>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -204,15 +206,15 @@ pub struct CreateEnvironmentInput {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RenameEnvironmentInput {
-    pub environment_id: String,
+    pub environment_id: EntityId,
     pub name: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateRequestInput {
-    pub collection_id: String,
-    pub parent_id: Option<String>,
+    pub collection_id: EntityId,
+    pub parent_id: Option<EntityId>,
     pub position: i64,
     pub name: String,
 }
@@ -220,15 +222,15 @@ pub struct CreateRequestInput {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateRequestResult {
-    pub request_id: String,
-    pub node_id: String,
+    pub request_id: EntityId,
+    pub node_id: EntityId,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateFolderInput {
-    pub collection_id: String,
-    pub parent_id: Option<String>,
+    pub collection_id: EntityId,
+    pub parent_id: Option<EntityId>,
     pub position: i64,
     pub name: String,
 }
@@ -236,21 +238,21 @@ pub struct CreateFolderInput {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DuplicateRequestInput {
-    pub request_id: String,
+    pub request_id: EntityId,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DuplicateRequestResult {
-    pub request_id: String,
-    pub node_id: String,
+    pub request_id: EntityId,
+    pub node_id: EntityId,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MoveNodeInput {
-    pub node_id: String,
-    pub parent_id: Option<String>,
+    pub node_id: EntityId,
+    pub parent_id: Option<EntityId>,
     pub position: i64,
 }
 
@@ -271,7 +273,7 @@ pub struct ResponseHeader {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SendRequestResult {
-    pub history_id: String,
+    pub history_id: EntityId,
     pub status_code: u16,
     pub status_text: String,
     pub duration_ms: u128,

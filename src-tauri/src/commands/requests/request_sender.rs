@@ -8,7 +8,6 @@ use reqwest::{
 use rusqlite::params;
 use serde_json::{json, Value};
 use tauri::State;
-use uuid::Uuid;
 
 use crate::commands::models::{
     KeyValue, RequestDetail, ResolvedRequestPreview, ResponseHeader, SendRequestInput,
@@ -23,13 +22,13 @@ use super::{postman_scripts, request_auth, request_body, variable_resolver};
 #[tauri::command]
 pub fn resolve_request(
     request: RequestDetail,
-    environment_id: Option<String>,
+    environment_id: Option<crate::commands::models::EntityId>,
     state: State<'_, AppState>,
 ) -> Result<ResolvedRequestPreview, String> {
     state
         .database
         .with_read_connection(|connection| {
-            let variables = load_variable_context(connection, &request, environment_id.as_deref())?;
+            let variables = load_variable_context(connection, &request, environment_id)?;
             Ok(variable_resolver::resolve_request_with_context(
                 &request, &variables,
             ))
@@ -44,7 +43,7 @@ pub async fn send_request(
     let variables = state
         .database
         .with_read_connection(|connection| {
-            load_variable_context(connection, &input.request, input.environment_id.as_deref())
+            load_variable_context(connection, &input.request, input.environment_id)
         })
         .map_err(|error| error.to_string())?;
     let preview = variable_resolver::resolve_request_with_context(&input.request, &variables);
@@ -114,7 +113,7 @@ pub async fn send_request(
     let body_bytes = body_text.len();
     let body_json = serde_json::from_str::<Value>(&body_text).ok();
     let (body, body_format) = format_response_body(&body_text, body_json.as_ref());
-    let history_id = Uuid::new_v4().to_string();
+    let mut history_id = 0;
     let now = Utc::now().to_rfc3339();
     let script_writes = postman_scripts::collect_postman_script_variables(
         input.request.test_script.as_ref(),
@@ -132,7 +131,7 @@ pub async fn send_request(
                         save_script_variable(
                             connection,
                             "collection",
-                            Some(&input.request.collection_id),
+                            Some(input.request.collection_id),
                             None,
                             &variable.key,
                             &variable.value,
@@ -145,7 +144,7 @@ pub async fn send_request(
                         });
                     }
                     ScriptVariableScope::Environment => {
-                        if let Some(environment_id) = input.environment_id.as_deref() {
+                        if let Some(environment_id) = input.environment_id {
                             save_script_variable(
                                 connection,
                                 "environment",
@@ -172,11 +171,10 @@ pub async fn send_request(
 
             connection.execute(
                 "INSERT INTO request_history
-                 (id, request_id, collection_id, method, url, status_code, duration_ms, request_json,
+                 (request_id, collection_id, method, url, status_code, duration_ms, request_json,
                   response_meta_json, response_body_path, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)",
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)",
                 params![
-                    history_id,
                     input.request.id,
                     input.request.collection_id,
                     input.request.method,
@@ -194,6 +192,7 @@ pub async fn send_request(
                     now
                 ],
             )?;
+            history_id = connection.last_insert_rowid();
             Ok(())
         })
         .map_err(|error| error.to_string())?;

@@ -3,11 +3,50 @@ use rusqlite::{params, OptionalExtension};
 use serde_json::Value;
 use tauri::State;
 
-use crate::{storage::DatabaseStatus, AppState};
+use crate::{
+    storage::{
+        reset_learned_rowid_stats, set_learned_rowid_enabled as set_sqlite_learned_rowid_enabled,
+        DatabaseStatus, LearnedRowidBenchmark,
+    },
+    AppState,
+};
 
 #[tauri::command]
 pub fn database_status(state: State<'_, AppState>) -> Result<DatabaseStatus, String> {
     state.database.status().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn set_learned_rowid_enabled(
+    enabled: bool,
+    state: State<'_, AppState>,
+) -> Result<DatabaseStatus, String> {
+    set_sqlite_learned_rowid_enabled(enabled);
+    state.database.status().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn reset_learned_rowid_counters(state: State<'_, AppState>) -> Result<DatabaseStatus, String> {
+    reset_learned_rowid_stats();
+    state.database.status().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn run_learned_rowid_benchmark(
+    state: State<'_, AppState>,
+) -> Result<LearnedRowidBenchmark, String> {
+    state
+        .database
+        .benchmark_learned_rowid()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn rebuild_learned_rowid_models(state: State<'_, AppState>) -> Result<DatabaseStatus, String> {
+    state
+        .database
+        .rebuild_learned_rowid_models()
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]

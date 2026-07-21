@@ -4,6 +4,8 @@ export type KeyValue = {
   enabled: boolean;
 };
 
+export type EntityId = number;
+
 export type BodyField = KeyValue & {
   fieldType: "text" | "file" | string;
   filePath?: string | null;
@@ -37,8 +39,8 @@ export type AuthConfig = {
 };
 
 export type RequestDetail = {
-  id: string;
-  collectionId: string;
+  id: EntityId;
+  collectionId: EntityId;
   name: string;
   method: string;
   url: string;
@@ -63,8 +65,8 @@ export type UrlDisplayMode = "flat" | "syntax" | "chip" | "hybrid";
 export type SettingsTab = "appearance" | "variables" | "shortcuts" | "about";
 
 export type WorkspaceUiState = {
-  activeCollectionId?: string;
-  activeEnvironmentId?: string | null;
+  activeCollectionId?: EntityId;
+  activeEnvironmentId?: EntityId | null;
   appTheme: AppTheme;
   accentColor: string;
   urlDisplayMode: UrlDisplayMode;
@@ -73,41 +75,41 @@ export type WorkspaceUiState = {
 };
 
 export type CollectionSummary = {
-  id: string;
+  id: EntityId;
   name: string;
   source: string;
   updatedAt: string;
 };
 
 export type EnvironmentSummary = {
-  id: string;
+  id: EntityId;
   name: string;
   updatedAt: string;
 };
 
 export type CollectionNode = {
-  id: string;
-  collectionId: string;
-  parentId?: string | null;
+  id: EntityId;
+  collectionId: EntityId;
+  parentId?: EntityId | null;
   position: number;
   kind: "folder" | "request";
   name: string;
-  requestId?: string | null;
+  requestId?: EntityId | null;
   method?: string | null;
   children: CollectionNode[];
 };
 
 export type CreateRequestResult = {
-  requestId: string;
-  nodeId: string;
+  requestId: EntityId;
+  nodeId: EntityId;
 };
 
 export type DuplicateRequestResult = CreateRequestResult;
 
 export type VariableEntry = {
   scope: "global" | "collection" | "environment";
-  collectionId?: string | null;
-  environmentId?: string | null;
+  collectionId?: EntityId | null;
+  environmentId?: EntityId | null;
   key: string;
   value: string;
   initialValue?: string | null;
@@ -135,7 +137,7 @@ export type ResolvedRequestPreview = {
 };
 
 export type SendRequestResult = {
-  historyId: string;
+  historyId: EntityId;
   statusCode: number;
   statusText: string;
   durationMs: number;
@@ -147,4 +149,61 @@ export type SendRequestResult = {
   updatedVariables: KeyValue[];
   variableWarnings: string[];
   unresolvedVariables: UnresolvedVariable[];
+};
+
+export type DatabaseStatus = {
+  path: string;
+  schemaVersion: number;
+  collectionCount: number;
+  requestCount: number;
+  learnedRowidEnabled: boolean;
+  learnedRowidTableMovetoCalls: number;
+  learnedRowidAttempted: number;
+  learnedRowidFallback: number;
+  learnedRowidExactFirstProbe: number;
+  learnedRowidComparisons: number;
+  learnedRowidModelCount: number;
+  learnedRowidModelSegments: number;
+  learnedRowidModelBytes: number;
+  learnedRowidModelPredictions: number;
+  learnedRowidPredictedSlotAverage: number;
+  learnedRowidPredictionErrorAverage: number;
+  learnedRowidPredictionErrorMax: number;
+};
+
+export type LearnedRowidStatsSnapshot = {
+  tableMovetoCalls: number;
+  attempted: number;
+  fallback: number;
+  exactFirstProbe: number;
+  comparisons: number;
+  modelCount: number;
+  modelSegments: number;
+  modelBytes: number;
+  modelPredictions: number;
+  predictedSlotAverage: number;
+  predictionErrorAverage: number;
+  predictionErrorMax: number;
+};
+
+export type LearnedRowidBenchmarkRun = {
+  enabled: boolean;
+  lookupCount: number;
+  elapsedMicros: number;
+  comparisonsPerLookup: number;
+  stats: LearnedRowidStatsSnapshot;
+};
+
+export type LearnedRowidBenchmarkScenario = {
+  name: string;
+  rowCount: number;
+  disabled: LearnedRowidBenchmarkRun;
+  enabled: LearnedRowidBenchmarkRun;
+  comparisonDelta: number;
+  comparisonDeltaPercent: number;
+};
+
+export type LearnedRowidBenchmark = {
+  scenarios: LearnedRowidBenchmarkScenario[];
+  status: DatabaseStatus;
 };

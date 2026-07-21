@@ -1,9 +1,8 @@
 use chrono::Utc;
 use rusqlite::{params, OptionalExtension};
 use tauri::State;
-use uuid::Uuid;
 
-use crate::commands::models::{CreateFolderInput, MoveNodeInput};
+use crate::commands::models::{CreateFolderInput, EntityId, MoveNodeInput};
 use crate::{storage::StorageError, AppState};
 
 const SORT_ORDER_STEP: i64 = 1024;
@@ -12,9 +11,8 @@ const SORT_ORDER_STEP: i64 = 1024;
 pub fn create_folder(
     input: CreateFolderInput,
     state: State<'_, AppState>,
-) -> Result<String, String> {
+) -> Result<EntityId, String> {
     let now = Utc::now().to_rfc3339();
-    let node_id = Uuid::new_v4().to_string();
 
     state
         .database
@@ -23,17 +21,16 @@ pub fn create_folder(
             let sort_order = sort_order_for_position(
                 &tx,
                 &input.collection_id,
-                input.parent_id.as_deref(),
+                input.parent_id,
                 input.position,
                 None,
             )?;
             tx.execute(
                 "INSERT INTO collection_nodes
-                 (id, collection_id, parent_id, sort_order, kind, name, request_id, auth_json,
+                 (collection_id, parent_id, sort_order, kind, name, request_id, auth_json,
                   created_at, updated_at)
-                 VALUES (?, ?, ?, ?, 'folder', ?, NULL, NULL, ?, ?)",
+                 VALUES (?, ?, ?, 'folder', ?, NULL, NULL, ?, ?)",
                 params![
-                    node_id,
                     input.collection_id,
                     input.parent_id,
                     sort_order,
@@ -42,13 +39,14 @@ pub fn create_folder(
                     now
                 ],
             )?;
+            let node_id = tx.last_insert_rowid();
             tx.commit()?;
-            Ok(node_id.clone())
+            Ok(node_id)
         })
         .map_err(|error| error.to_string())
 }
 #[tauri::command]
-pub fn delete_node(node_id: String, state: State<'_, AppState>) -> Result<(), String> {
+pub fn delete_node(node_id: EntityId, state: State<'_, AppState>) -> Result<(), String> {
     state
         .database
         .with_connection(|connection| {
@@ -72,17 +70,16 @@ pub fn move_node(input: MoveNodeInput, state: State<'_, AppState>) -> Result<(),
         .database
         .with_connection(|connection| {
             let tx = connection.transaction()?;
-            let (collection_id, kind): (String, String) = tx.query_row(
+            let (collection_id, kind): (EntityId, String) = tx.query_row(
                 "SELECT collection_id, kind FROM collection_nodes WHERE id = ?",
                 params![input.node_id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
 
             if kind == "folder" {
-                let invalid_target = input.parent_id.as_deref() == Some(input.node_id.as_str())
+                let invalid_target = input.parent_id == Some(input.node_id)
                     || input
                         .parent_id
-                        .as_deref()
                         .map(|parent_id| is_descendant(&tx, parent_id, &input.node_id))
                         .transpose()?
                         .unwrap_or(false);
@@ -94,9 +91,9 @@ pub fn move_node(input: MoveNodeInput, state: State<'_, AppState>) -> Result<(),
             let sort_order = sort_order_for_position(
                 &tx,
                 &collection_id,
-                input.parent_id.as_deref(),
+                input.parent_id,
                 input.position,
-                Some(input.node_id.as_str()),
+                Some(input.node_id),
             )?;
             tx.execute(
                 "UPDATE collection_nodes SET parent_id = ?, sort_order = ?, updated_at = ? WHERE id = ?",
@@ -109,10 +106,10 @@ pub fn move_node(input: MoveNodeInput, state: State<'_, AppState>) -> Result<(),
 }
 pub(super) fn sort_order_for_position(
     tx: &rusqlite::Transaction<'_>,
-    collection_id: &str,
-    parent_id: Option<&str>,
+    collection_id: &EntityId,
+    parent_id: Option<EntityId>,
     position: i64,
-    exclude_node_id: Option<&str>,
+    exclude_node_id: Option<EntityId>,
 ) -> Result<i64, StorageError> {
     let orders = sibling_sort_orders(tx, collection_id, parent_id, exclude_node_id)?;
     let position = position.clamp(0, orders.len() as i64) as usize;
@@ -139,8 +136,8 @@ pub(super) fn sort_order_for_position(
 
 pub(super) fn sort_order_after(
     tx: &rusqlite::Transaction<'_>,
-    collection_id: &str,
-    parent_id: Option<&str>,
+    collection_id: &EntityId,
+    parent_id: Option<EntityId>,
     after_sort_order: i64,
 ) -> Result<i64, StorageError> {
     let position =
@@ -162,9 +159,9 @@ fn order_between(previous: Option<i64>, next: Option<i64>) -> Option<i64> {
 
 fn sibling_sort_orders(
     tx: &rusqlite::Transaction<'_>,
-    collection_id: &str,
-    parent_id: Option<&str>,
-    exclude_node_id: Option<&str>,
+    collection_id: &EntityId,
+    parent_id: Option<EntityId>,
+    exclude_node_id: Option<EntityId>,
 ) -> Result<Vec<i64>, StorageError> {
     let mut statement = tx.prepare(
         "SELECT sort_order
@@ -184,8 +181,8 @@ fn sibling_sort_orders(
 
 fn sibling_count_through_sort_order(
     tx: &rusqlite::Transaction<'_>,
-    collection_id: &str,
-    parent_id: Option<&str>,
+    collection_id: &EntityId,
+    parent_id: Option<EntityId>,
     sort_order: i64,
 ) -> Result<i64, StorageError> {
     tx.query_row(
@@ -202,9 +199,9 @@ fn sibling_count_through_sort_order(
 
 fn rebalance_siblings(
     tx: &rusqlite::Transaction<'_>,
-    collection_id: &str,
-    parent_id: Option<&str>,
-    exclude_node_id: Option<&str>,
+    collection_id: &EntityId,
+    parent_id: Option<EntityId>,
+    exclude_node_id: Option<EntityId>,
 ) -> Result<(), StorageError> {
     let mut statement = tx.prepare(
         "SELECT id
@@ -217,7 +214,7 @@ fn rebalance_siblings(
     let sibling_ids = statement
         .query_map(
             params![collection_id, parent_id, exclude_node_id, exclude_node_id],
-            |row| row.get::<_, String>(0),
+            |row| row.get::<_, EntityId>(0),
         )?
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -231,8 +228,8 @@ fn rebalance_siblings(
 
 fn collect_request_ids_for_subtree(
     tx: &rusqlite::Transaction<'_>,
-    node_id: &str,
-) -> Result<Vec<String>, StorageError> {
+    node_id: &EntityId,
+) -> Result<Vec<EntityId>, StorageError> {
     let mut statement = tx.prepare(
         "WITH RECURSIVE subtree(id, request_id) AS (
              SELECT id, request_id FROM collection_nodes WHERE id = ?
@@ -243,18 +240,18 @@ fn collect_request_ids_for_subtree(
          )
          SELECT request_id FROM subtree WHERE request_id IS NOT NULL",
     )?;
-    let rows = statement.query_map(params![node_id], |row| row.get::<_, String>(0))?;
+    let rows = statement.query_map(params![node_id], |row| row.get::<_, EntityId>(0))?;
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(StorageError::from)
 }
 fn is_descendant(
     tx: &rusqlite::Transaction<'_>,
-    possible_descendant_id: &str,
-    ancestor_id: &str,
+    possible_descendant_id: EntityId,
+    ancestor_id: &EntityId,
 ) -> Result<bool, StorageError> {
-    let mut current = Some(possible_descendant_id.to_string());
+    let mut current = Some(possible_descendant_id);
     while let Some(id) = current {
-        if id == ancestor_id {
+        if id == *ancestor_id {
             return Ok(true);
         }
         current = tx

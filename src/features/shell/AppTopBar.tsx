@@ -43,9 +43,9 @@ export function AppTopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
       </div>
       <div className="flex-1" />
       <Select
-        value={activeEnvironmentId ?? "__none__"}
+        value={activeEnvironmentId?.toString() ?? "__none__"}
         onValueChange={(value) =>
-          void selectEnvironment(value === "__none__" ? null : value)
+          void selectEnvironment(value === "__none__" ? null : Number(value))
         }
       >
         <SelectTrigger className="h-8 w-48 border-[var(--app-line)] bg-[var(--app-panel-2)] text-xs">
@@ -54,7 +54,7 @@ export function AppTopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
         <SelectContent>
           <SelectItem value="__none__">No environment</SelectItem>
           {environments.map((environment) => (
-            <SelectItem key={environment.id} value={environment.id}>
+            <SelectItem key={environment.id} value={environment.id.toString()}>
               {environment.name}
             </SelectItem>
           ))}
