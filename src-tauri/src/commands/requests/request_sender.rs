@@ -7,7 +7,7 @@ use reqwest::{
     Method, Url,
 };
 use rusqlite::params;
-use serde_json::{json, Value};
+use serde_json::Value;
 use tauri::State;
 use uuid::Uuid;
 
@@ -74,7 +74,7 @@ pub async fn send_request(
     };
 
     let method = Method::from_bytes(input.request.method.as_bytes())
-        .map_err(|e| AppError::msg(e.to_string()))?;
+        .map_err(|_| AppError::msg("invalid HTTP method"))?;
     let mut builder = state.http_client.request(method, request_url);
     let mut headers = HeaderMap::new();
     if !query_pairs.is_empty() {
@@ -86,9 +86,9 @@ pub async fn send_request(
             continue;
         }
         let name = HeaderName::from_bytes(header.key.as_bytes())
-            .map_err(|e| AppError::msg(e.to_string()))?;
+            .map_err(|_| AppError::msg("invalid header name"))?;
         let value =
-            HeaderValue::from_str(&header.value).map_err(|e| AppError::msg(e.to_string()))?;
+            HeaderValue::from_str(&header.value).map_err(|_| AppError::msg("invalid header value"))?;
         headers.insert(name, value);
     }
     if let Some(body) = preview.body.as_ref() {
@@ -156,6 +156,14 @@ pub async fn send_request(
     }
 
     let sanitized_request = super::history_redaction::redact_request(&input.request);
+    let sanitized_url = super::history_redaction::redact_url(&preview.url);
+    let sanitized_response_meta = super::history_redaction::response_meta_json(
+        &headers,
+        content_type.as_deref(),
+        body_bytes,
+        &body_format,
+        body_truncated,
+    );
 
     state.database.with_connection(|connection| {
         for variable in &script_writes {
@@ -212,18 +220,11 @@ pub async fn send_request(
                 input.request.id,
                 input.request.collection_id,
                 input.request.method,
-                preview.url,
+                sanitized_url,
                 status.as_u16() as i64,
                 duration_ms as i64,
                 sanitized_request.to_string(),
-                json!({
-                    "headers": headers,
-                    "contentType": content_type,
-                    "bodyBytes": body_bytes,
-                    "bodyFormat": body_format,
-                    "bodyTruncated": body_truncated
-                })
-                .to_string(),
+                sanitized_response_meta.to_string(),
                 now
             ],
         )?;
@@ -290,7 +291,7 @@ fn format_response_body(body_text: &str, body_json: Option<&Value>) -> (String, 
 }
 
 fn url_without_query(url: &str) -> AppResult<String> {
-    let mut parsed = Url::parse(url).map_err(|error| AppError::msg(error.to_string()))?;
+    let mut parsed = Url::parse(url).map_err(|_| AppError::msg("invalid request URL"))?;
     parsed.set_query(None);
     Ok(parsed.to_string())
 }

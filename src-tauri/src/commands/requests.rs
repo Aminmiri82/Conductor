@@ -1,5 +1,5 @@
 mod collection_tree;
-mod history_redaction;
+pub(crate) mod history_redaction;
 mod postman_scripts;
 pub(crate) mod request_auth;
 mod request_body;

@@ -27,8 +27,17 @@ pub fn run(connection: &Connection, secrets: &Secrets) -> Result<(), StorageErro
         connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))?;
 
     if current_version < 3 {
-        encrypt_existing_secrets(connection, secrets)?;
-        connection.pragma_update(None, "user_version", 3)?;
+        connection.execute_batch("BEGIN IMMEDIATE")?;
+        match encrypt_existing_secrets(connection, secrets) {
+            Ok(()) => {
+                connection.pragma_update(None, "user_version", 3)?;
+                connection.execute_batch("COMMIT")?;
+            }
+            Err(error) => {
+                let _ = connection.execute_batch("ROLLBACK");
+                return Err(error);
+            }
+        }
     }
 
     Ok(())
@@ -63,7 +72,7 @@ fn migrate_collection_node_sort_order(connection: &Connection) -> Result<(), Sto
 /// Encrypt existing sensitive plaintext values (variables + auth JSON blobs).
 ///
 /// The operation is idempotent because [`Secrets::encrypt`] returns the input
-/// unchanged when it is already prefixed with the `enc:v1:` marker.
+/// unchanged when it is already a valid `enc:v1:` ciphertext.
 fn encrypt_existing_secrets(
     connection: &Connection,
     secrets: &Secrets,
@@ -125,9 +134,11 @@ fn encrypt_auth_json_column(
 
     let update_sql = format!("UPDATE {table} SET auth_json = ? WHERE {id_column} = ?");
     for (id, auth_json) in rows {
-        let Ok(mut value) = serde_json::from_str::<Value>(&auth_json) else {
-            continue;
-        };
+        let mut value = serde_json::from_str::<Value>(&auth_json).map_err(|error| {
+            StorageError::InvalidInput(format!(
+                "invalid auth_json in {table} id={id}: {error}"
+            ))
+        })?;
         let mut changed = false;
         for field in ["token", "password", "value"] {
             if let Some(existing) = value.get(field).and_then(Value::as_str) {
