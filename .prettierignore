@@ -1,0 +1,9 @@
+dist
+build
+node_modules
+src-tauri/target
+src/components/ui
+postman-compatibility-tests
+pnpm-lock.yaml
+*.min.js
+*.min.css
