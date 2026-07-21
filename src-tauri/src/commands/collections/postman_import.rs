@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs, path::Path};
+use std::{fs, path::Path};
 
 use chrono::Utc;
 use rusqlite::params;
@@ -6,75 +6,19 @@ use serde_json::{json, Value};
 use tauri::State;
 use uuid::Uuid;
 
-use crate::{storage::StorageError, AppState};
+use crate::commands::requests::request_auth::encode_auth_value;
+use crate::commands::{AppError, AppResult};
+use crate::storage::{Secrets, StorageError};
+use crate::AppState;
 
-use super::models::{CollectionNode, CollectionSummary};
-
-const SORT_ORDER_STEP: i64 = 1024;
-
-#[tauri::command]
-pub fn list_collections(state: State<'_, AppState>) -> Result<Vec<CollectionSummary>, String> {
-    state
-        .database
-        .with_read_connection(|connection| {
-            let mut statement = connection.prepare(
-                "SELECT id, name, source, updated_at FROM collections ORDER BY updated_at DESC",
-            )?;
-            let rows = statement.query_map([], |row| {
-                Ok(CollectionSummary {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    source: row.get(2)?,
-                    updated_at: row.get(3)?,
-                })
-            })?;
-
-            rows.collect::<Result<Vec<_>, _>>()
-                .map_err(StorageError::from)
-        })
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-pub fn get_collection_tree(
-    collection_id: String,
-    state: State<'_, AppState>,
-) -> Result<Vec<CollectionNode>, String> {
-    state
-        .database
-        .with_read_connection(|connection| {
-            let mut statement = connection.prepare(
-                "SELECT n.id, n.collection_id, n.parent_id, n.kind, n.name, n.request_id,
-                        r.method
-                 FROM collection_nodes n
-                 LEFT JOIN requests r ON r.id = n.request_id
-                 WHERE n.collection_id = ?
-                 ORDER BY n.parent_id, n.sort_order",
-            )?;
-            let rows = statement.query_map(params![collection_id], |row| {
-                Ok(FlatNode {
-                    id: row.get(0)?,
-                    collection_id: row.get(1)?,
-                    parent_id: row.get(2)?,
-                    kind: row.get(3)?,
-                    name: row.get(4)?,
-                    request_id: row.get(5)?,
-                    method: row.get(6)?,
-                })
-            })?;
-            let nodes = rows.collect::<Result<Vec<_>, _>>()?;
-            Ok(build_tree(nodes, None))
-        })
-        .map_err(|error| error.to_string())
-}
+use super::SORT_ORDER_STEP;
 
 #[tauri::command]
 pub fn import_postman_collection(
     postman_json: String,
     state: State<'_, AppState>,
-) -> Result<String, String> {
-    let collection: Value =
-        serde_json::from_str(&postman_json).map_err(|error| error.to_string())?;
+) -> AppResult<String> {
+    let collection: Value = serde_json::from_str(&postman_json).map_err(AppError::from)?;
     let name = collection
         .pointer("/info/name")
         .and_then(Value::as_str)
@@ -87,25 +31,23 @@ pub fn import_postman_collection(
         &collection_id,
         "collection",
         &postman_json,
-    )
-    .map_err(|error| error.to_string())?;
+    )?;
+
+    let secrets = state.database.secrets().clone();
 
     state
         .database
         .with_connection(|connection| {
             let tx = connection.transaction()?;
+            let auth_json = match postman_auth(&collection) {
+                Some(value) => Some(encode_auth_value(&secrets, value)?),
+                None => None,
+            };
             tx.execute(
                 "INSERT INTO collections
                  (id, name, source, auth_json, raw_postman_file_path, created_at, updated_at)
                  VALUES (?, ?, 'postman', ?, ?, ?, ?)",
-                params![
-                    collection_id,
-                    name,
-                    postman_auth(&collection).map(|value| value.to_string()),
-                    raw_collection_path,
-                    now,
-                    now
-                ],
+                params![collection_id, name, auth_json, raw_collection_path, now, now],
             )?;
 
             if let Some(variables) = collection.get("variable").and_then(Value::as_array) {
@@ -115,17 +57,18 @@ pub fn import_postman_collection(
             }
 
             if let Some(items) = collection.get("item").and_then(Value::as_array) {
-                import_items(&tx, &collection_id, None, items, &now)?;
+                import_items(&tx, &secrets, &collection_id, None, items, &now)?;
             }
 
             tx.commit()?;
             Ok(collection_id)
         })
-        .map_err(|error| error.to_string())
+        .map_err(AppError::from)
 }
 
 fn import_items(
     tx: &rusqlite::Transaction<'_>,
+    secrets: &Secrets,
     collection_id: &str,
     parent_id: Option<&str>,
     items: &[Value],
@@ -140,6 +83,10 @@ fn import_items(
         let node_id = Uuid::new_v4().to_string();
 
         if let Some(children) = item.get("item").and_then(Value::as_array) {
+            let auth_json = match postman_auth(item) {
+                Some(value) => Some(encode_auth_value(secrets, value)?),
+                None => None,
+            };
             tx.execute(
                 "INSERT INTO collection_nodes
                  (id, collection_id, parent_id, sort_order, kind, name, request_id, auth_json, created_at, updated_at)
@@ -150,13 +97,13 @@ fn import_items(
                     parent_id,
                     sort_order_for_import(position),
                     name,
-                    postman_auth(item).map(|value| value.to_string()),
+                    auth_json,
                     now,
                     now
                 ],
             )?;
 
-            import_items(tx, collection_id, Some(&node_id), children, now)?;
+            import_items(tx, secrets, collection_id, Some(&node_id), children, now)?;
         } else if let Some(request) = item.get("request") {
             let request_id = Uuid::new_v4().to_string();
             let method = request
@@ -168,7 +115,10 @@ fn import_items(
             let headers = postman_headers(request);
             let query = postman_query(request);
             let body = postman_body(request);
-            let auth = postman_auth(request);
+            let auth_json = match postman_auth(request) {
+                Some(value) => Some(encode_auth_value(secrets, value)?),
+                None => None,
+            };
             let (pre_request_script, test_script) = postman_scripts(item);
 
             tx.execute(
@@ -183,7 +133,7 @@ fn import_items(
                     url,
                     headers.to_string(),
                     query.to_string(),
-                    auth.map(|value| value.to_string()),
+                    auth_json,
                     body.map(|value| value.to_string()),
                     pre_request_script.map(|value| value.to_string()),
                     test_script.map(|value| value.to_string()),
@@ -287,7 +237,7 @@ fn value_to_string(value: &Value) -> String {
     }
 }
 
-fn postman_url_raw(request: &Value) -> String {
+pub(super) fn postman_url_raw(request: &Value) -> String {
     match request.get("url") {
         Some(Value::String(url)) => url.clone(),
         Some(Value::Object(_)) => request
@@ -299,7 +249,7 @@ fn postman_url_raw(request: &Value) -> String {
     }
 }
 
-fn postman_headers(request: &Value) -> Value {
+pub(super) fn postman_headers(request: &Value) -> Value {
     let headers = request
         .get("header")
         .and_then(Value::as_array)
@@ -320,7 +270,7 @@ fn postman_headers(request: &Value) -> Value {
     Value::Array(headers)
 }
 
-fn postman_query(request: &Value) -> Value {
+pub(super) fn postman_query(request: &Value) -> Value {
     let query = request
         .pointer("/url/query")
         .and_then(Value::as_array)
@@ -341,7 +291,7 @@ fn postman_query(request: &Value) -> Value {
     Value::Array(query)
 }
 
-fn postman_body(request: &Value) -> Option<Value> {
+pub(super) fn postman_body(request: &Value) -> Option<Value> {
     let body = request.get("body")?;
     let mode = body.get("mode").and_then(Value::as_str).unwrap_or("none");
     match mode {
@@ -424,7 +374,7 @@ fn postman_body(request: &Value) -> Option<Value> {
     }
 }
 
-fn postman_auth(request: &Value) -> Option<Value> {
+pub(super) fn postman_auth(request: &Value) -> Option<Value> {
     let auth = request.get("auth")?;
     let auth_type = auth.get("type").and_then(Value::as_str).unwrap_or("noauth");
     match auth_type {
@@ -479,53 +429,6 @@ fn postman_scripts(item: &Value) -> (Option<Value>, Option<Value>) {
     }
 
     (pre_request, test)
-}
-
-#[derive(Debug)]
-struct FlatNode {
-    id: String,
-    collection_id: String,
-    parent_id: Option<String>,
-    kind: String,
-    name: String,
-    request_id: Option<String>,
-    method: Option<String>,
-}
-
-fn build_tree(nodes: Vec<FlatNode>, parent_id: Option<&str>) -> Vec<CollectionNode> {
-    let mut by_parent: HashMap<Option<String>, Vec<FlatNode>> = HashMap::new();
-    for node in nodes {
-        by_parent
-            .entry(node.parent_id.clone())
-            .or_default()
-            .push(node);
-    }
-    build_tree_from_map(&mut by_parent, parent_id.map(ToString::to_string))
-}
-
-fn build_tree_from_map(
-    by_parent: &mut HashMap<Option<String>, Vec<FlatNode>>,
-    parent_id: Option<String>,
-) -> Vec<CollectionNode> {
-    let nodes = by_parent.remove(&parent_id).unwrap_or_default();
-    nodes
-        .into_iter()
-        .enumerate()
-        .map(|(position, node)| {
-            let children = build_tree_from_map(by_parent, Some(node.id.clone()));
-            CollectionNode {
-                id: node.id,
-                collection_id: node.collection_id,
-                parent_id: node.parent_id,
-                position: position as i64,
-                kind: node.kind,
-                name: node.name,
-                request_id: node.request_id,
-                method: node.method,
-                children,
-            }
-        })
-        .collect()
 }
 
 #[cfg(test)]

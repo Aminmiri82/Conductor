@@ -8,7 +8,10 @@ type DraftState = {
   lastSavedAtById: Map<string, number>;
   revision: number;
   setDraft: (request: RequestDetail, dirty?: boolean) => void;
-  updateDraft: (requestId: string, updater: (draft: RequestDetail) => RequestDetail) => RequestDetail | undefined;
+  updateDraft: (
+    requestId: string,
+    updater: (draft: RequestDetail) => RequestDetail,
+  ) => RequestDetail | undefined;
   markSaved: (requestId: string) => void;
   setPreview: (requestId: string, preview: ResolvedRequestPreview) => void;
   removeMany: (requestIds: string[]) => void;
@@ -83,14 +86,22 @@ export const useDraftStore = create<DraftState>((set, get) => ({
   },
 }));
 
-export function getDraft(requestId: string | undefined): RequestDetail | undefined {
+export function getDraft(
+  requestId: string | undefined,
+): RequestDetail | undefined {
   return requestId ? useDraftStore.getState().drafts.get(requestId) : undefined;
 }
 
-export function getPreview(requestId: string | undefined): ResolvedRequestPreview | undefined {
-  return requestId ? useDraftStore.getState().previews.get(requestId) : undefined;
+export function getPreview(
+  requestId: string | undefined,
+): ResolvedRequestPreview | undefined {
+  return requestId
+    ? useDraftStore.getState().previews.get(requestId)
+    : undefined;
 }
 
 export function isDraftDirty(requestId: string | undefined): boolean {
-  return requestId ? useDraftStore.getState().dirtyRequestIds.has(requestId) : false;
+  return requestId
+    ? useDraftStore.getState().dirtyRequestIds.has(requestId)
+    : false;
 }

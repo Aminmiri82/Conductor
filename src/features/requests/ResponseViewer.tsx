@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useRef } from "react";
 import { EditorState } from "@codemirror/state";
-import { EditorView, keymap, lineNumbers, type ViewUpdate } from "@codemirror/view";
+import {
+  EditorView,
+  keymap,
+  lineNumbers,
+  type ViewUpdate,
+} from "@codemirror/view";
 import {
   HighlightStyle,
   bracketMatching,
@@ -25,7 +30,10 @@ const jsonHighlightStyle = HighlightStyle.define([
   { tag: t.number, color: "rgb(125 211 252)" },
   { tag: [t.bool, t.null], color: "rgb(252 211 77)" },
   { tag: t.propertyName, color: "rgb(221 214 254)" },
-  { tag: [t.brace, t.bracket, t.punctuation, t.separator], color: "var(--app-dim)" },
+  {
+    tag: [t.brace, t.bracket, t.punctuation, t.separator],
+    color: "var(--app-dim)",
+  },
 ]);
 
 function createSearchPanel(view: EditorView) {
@@ -162,14 +170,16 @@ const editorTheme = EditorView.theme(
     ".cm-activeLineGutter, .cm-activeLine": { background: "transparent" },
     ".cm-foldPlaceholder": {
       background: "color-mix(in oklab, var(--app-accent) 14%, transparent)",
-      border: "1px solid color-mix(in oklab, var(--app-accent) 38%, transparent)",
+      border:
+        "1px solid color-mix(in oklab, var(--app-accent) 38%, transparent)",
       color: "var(--app-accent)",
       borderRadius: "4px",
       padding: "0 4px",
       margin: "0 2px",
     },
     ".cm-selectionBackground, ::selection": {
-      background: "color-mix(in oklab, var(--app-accent) 28%, transparent) !important",
+      background:
+        "color-mix(in oklab, var(--app-accent) 28%, transparent) !important",
     },
     ".cm-cursor": { borderLeftColor: "var(--app-accent)" },
     ".cm-searchMatch": {

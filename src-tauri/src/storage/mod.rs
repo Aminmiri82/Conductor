@@ -1,5 +1,6 @@
 mod connection;
 mod migrations;
+pub mod secrets;
 
 use std::{
     path::{Path, PathBuf},
@@ -13,6 +14,8 @@ use rusqlite::{params, Connection};
 use serde::Serialize;
 use thiserror::Error;
 
+pub use secrets::{Secrets, SecretsError};
+
 #[derive(Clone)]
 pub struct Database {
     write_connection: Arc<Mutex<Connection>>,
@@ -20,6 +23,7 @@ pub struct Database {
     next_read_connection: Arc<AtomicUsize>,
     path: PathBuf,
     raw_import_dir: PathBuf,
+    secrets: Secrets,
 }
 
 #[derive(Debug, Error)]
@@ -49,6 +53,8 @@ pub enum StorageError {
     InvalidTreeMove,
     #[error("{0}")]
     InvalidInput(String),
+    #[error("secrets: {0}")]
+    Secrets(#[from] SecretsError),
 }
 
 #[derive(Debug, Serialize)]
@@ -64,14 +70,37 @@ impl Database {
     pub fn open(app_data_dir: impl AsRef<Path>) -> Result<Self, StorageError> {
         let app_data_dir = app_data_dir.as_ref();
         let raw_import_dir = app_data_dir.join("raw-imports");
-        let (write_connection, read_connections, path) = connection::open(app_data_dir)?;
+        let secrets = Secrets::init(app_data_dir)?;
+        let (write_connection, read_connections, path) =
+            connection::open(app_data_dir, &secrets)?;
 
-        Ok(Self {
+        let database = Self {
             write_connection: Arc::new(Mutex::new(write_connection)),
             read_connections: Arc::new(read_connections.into_iter().map(Mutex::new).collect()),
             next_read_connection: Arc::new(AtomicUsize::new(0)),
             path,
             raw_import_dir,
+            secrets,
+        };
+
+        database.purge_expired_request_history()?;
+        Ok(database)
+    }
+
+    pub fn secrets(&self) -> &Secrets {
+        &self.secrets
+    }
+
+    /// Delete request history entries older than the retention window.
+    pub fn purge_expired_request_history(&self) -> Result<usize, StorageError> {
+        let cutoff = chrono::Utc::now() - chrono::Duration::days(21);
+        let cutoff = cutoff.to_rfc3339();
+        self.with_connection(|connection| {
+            let deleted = connection.execute(
+                "DELETE FROM request_history WHERE created_at < ?",
+                params![cutoff],
+            )?;
+            Ok(deleted)
         })
     }
 

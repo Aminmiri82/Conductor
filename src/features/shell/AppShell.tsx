@@ -7,6 +7,7 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { CollectionSidebar } from "@/features/collections/CollectionSidebar";
+import { RequestHistoryPanel } from "@/features/history/RequestHistoryPanel";
 import { RequestWorkspace } from "@/features/requests/RequestWorkspace";
 import { OpenRequestDialog } from "@/features/requests/OpenRequestDialog";
 import { AppSettings } from "@/features/settings/AppSettings";
@@ -16,6 +17,7 @@ import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 export function AppShell() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [openRequestOpen, setOpenRequestOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const sidebarVisible = useWorkspaceStore((state) => state.sidebarVisible);
   const error = useWorkspaceStore((state) => state.error);
   const clearError = useWorkspaceStore((state) => state.clearError);
@@ -38,7 +40,10 @@ export function AppShell() {
 
   return (
     <main className="h-screen overflow-hidden bg-[var(--app-bg)] text-[var(--app-text)]">
-      <AppTopBar onOpenSettings={() => setSettingsOpen(true)} />
+      <AppTopBar
+        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenHistory={() => setHistoryOpen(true)}
+      />
 
       {error ? (
         <div className="flex h-9 items-center gap-2 border-b border-destructive/30 bg-destructive/10 px-3 text-xs text-destructive">
@@ -55,11 +60,17 @@ export function AppShell() {
         </div>
       ) : null}
 
-      <div className={error ? "h-[calc(100vh-5rem)]" : "h-[calc(100vh-2.75rem)]"}>
+      <div
+        className={error ? "h-[calc(100vh-5rem)]" : "h-[calc(100vh-2.75rem)]"}
+      >
         <ResizablePanelGroup orientation="horizontal">
           {sidebarVisible ? (
             <>
-              <ResizablePanel defaultSize="300px" minSize="240px" maxSize="460px">
+              <ResizablePanel
+                defaultSize="300px"
+                minSize="240px"
+                maxSize="460px"
+              >
                 <CollectionSidebar />
               </ResizablePanel>
               <ResizableHandle className="bg-[var(--app-line)]" />
@@ -74,6 +85,7 @@ export function AppShell() {
         open={openRequestOpen}
         onOpenChange={setOpenRequestOpen}
       />
+      <RequestHistoryPanel open={historyOpen} onOpenChange={setHistoryOpen} />
       <AppSettings open={settingsOpen} onOpenChange={setSettingsOpen} />
     </main>
   );

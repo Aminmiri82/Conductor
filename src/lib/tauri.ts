@@ -3,9 +3,11 @@ import type {
   CollectionNode,
   CollectionSummary,
   CreateRequestResult,
+  DatabaseStatus,
   DuplicateRequestResult,
   EnvironmentSummary,
   RequestDetail,
+  RequestHistoryEntry,
   ResolvedRequestPreview,
   WorkspaceUiState,
   SendRequestResult,
@@ -14,6 +16,12 @@ import type {
 
 export const api = {
   listCollections: () => invoke<CollectionSummary[]>("list_collections"),
+  renameCollection: (collectionId: string, name: string) =>
+    invoke<void>("rename_collection", { input: { collectionId, name } }),
+  deleteCollection: (collectionId: string) =>
+    invoke<void>("delete_collection", { collectionId }),
+  exportPostmanCollection: (collectionId: string) =>
+    invoke<string>("export_postman_collection", { collectionId }),
   listEnvironments: () => invoke<EnvironmentSummary[]>("list_environments"),
   createEnvironment: (name: string) =>
     invoke<string>("create_environment", { input: { name } }),
@@ -30,6 +38,7 @@ export const api = {
     invoke<WorkspaceUiState | null>("get_workspace_state", { key }),
   setWorkspaceState: (key: string, value: WorkspaceUiState) =>
     invoke<void>("set_workspace_state", { key, value }),
+  databaseStatus: () => invoke<DatabaseStatus>("database_status"),
   getCollectionTree: (collectionId: string) =>
     invoke<CollectionNode[]>("get_collection_tree", { collectionId }),
   importPostmanCollection: (postmanJson: string) =>
@@ -55,11 +64,12 @@ export const api = {
       input: { collectionId, parentId, position, name },
     }),
   duplicateRequest: (requestId: string) =>
-    invoke<DuplicateRequestResult>("duplicate_request", { input: { requestId } }),
+    invoke<DuplicateRequestResult>("duplicate_request", {
+      input: { requestId },
+    }),
   deleteRequest: (requestId: string) =>
     invoke<void>("delete_request", { requestId }),
-  deleteNode: (nodeId: string) =>
-    invoke<void>("delete_node", { nodeId }),
+  deleteNode: (nodeId: string) => invoke<void>("delete_node", { nodeId }),
   moveNode: (
     nodeId: string,
     parentId: string | null | undefined,
@@ -70,18 +80,54 @@ export const api = {
   saveRequest: (request: RequestDetail) =>
     invoke<void>("save_request", { request }),
   resolveRequest: (request: RequestDetail, environmentId?: string | null) =>
-    invoke<ResolvedRequestPreview>("resolve_request", { request, environmentId }),
+    invoke<ResolvedRequestPreview>("resolve_request", {
+      request,
+      environmentId,
+    }),
   sendRequest: (request: RequestDetail, environmentId?: string | null) =>
-    invoke<SendRequestResult>("send_request", { input: { request, environmentId } }),
+    invoke<SendRequestResult>("send_request", {
+      input: { request, environmentId },
+    }),
+  cancelSendRequest: () => invoke<void>("cancel_send_request"),
+  listRequestHistory: (limit?: number, collectionId?: string | null) =>
+    invoke<RequestHistoryEntry[]>("list_request_history", {
+      input: { limit, collectionId },
+    }),
+  purgeRequestHistory: () => invoke<number>("purge_request_history"),
   listVariables: (
     scope: "global" | "collection" | "environment",
     collectionId?: string | null,
     environmentId?: string | null,
-  ) => invoke<VariableEntry[]>("list_variables", { scope, collectionId, environmentId }),
+  ) =>
+    invoke<VariableEntry[]>("list_variables", {
+      scope,
+      collectionId,
+      environmentId,
+    }),
   saveVariables: (
     scope: "global" | "collection" | "environment",
     collectionId: string | null | undefined,
     environmentId: string | null | undefined,
     variables: VariableEntry[],
-  ) => invoke<void>("save_variables", { scope, collectionId, environmentId, variables }),
+  ) =>
+    invoke<void>("save_variables", {
+      scope,
+      collectionId,
+      environmentId,
+      variables,
+    }),
 };
+
+export function isCancelledError(error: unknown): boolean {
+  const message =
+    typeof error === "string"
+      ? error
+      : (error as { message?: string })?.message;
+  if (!message) return false;
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("cancelled") ||
+    normalized.includes("canceled") ||
+    normalized.includes("request aborted")
+  );
+}

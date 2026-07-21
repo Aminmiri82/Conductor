@@ -1,4 +1,4 @@
-import { PanelLeftClose, PanelLeftOpen, Settings } from "lucide-react";
+import { History, PanelLeftClose, PanelLeftOpen, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -10,7 +10,13 @@ import {
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { useWorkspaceUiStore } from "@/features/workspace/workspaceUiStore";
 
-export function AppTopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
+export function AppTopBar({
+  onOpenSettings,
+  onOpenHistory,
+}: {
+  onOpenSettings: () => void;
+  onOpenHistory: () => void;
+}) {
   const sidebarVisible = useWorkspaceStore((state) => state.sidebarVisible);
   const toggleSidebar = useWorkspaceStore((state) => state.toggleSidebar);
   const appTheme = useWorkspaceUiStore((state) => state.workspaceUi.appTheme);
@@ -18,7 +24,9 @@ export function AppTopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const activeEnvironmentId = useWorkspaceUiStore(
     (state) => state.workspaceUi.activeEnvironmentId,
   );
-  const selectEnvironment = useWorkspaceStore((state) => state.selectEnvironment);
+  const selectEnvironment = useWorkspaceStore(
+    (state) => state.selectEnvironment,
+  );
   const isGraphicTheme = appTheme !== "softpro";
 
   return (
@@ -60,6 +68,16 @@ export function AppTopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
           ))}
         </SelectContent>
       </Select>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="size-7 border border-[var(--app-line)] text-[var(--app-dim)] hover:text-[var(--app-text)]"
+        style={{ borderRadius: "var(--app-radius)" }}
+        onClick={onOpenHistory}
+        title="Request history"
+      >
+        <History className="size-3.5" />
+      </Button>
       <Button
         variant="ghost"
         size="icon"

@@ -23,8 +23,7 @@ export function RequestTabsBar() {
             key={tab.requestId}
             className={cn(
               "group relative flex h-9 min-w-36 max-w-60 items-center gap-2 border-r border-[var(--app-line)] px-3 text-left text-xs text-[var(--app-dim)] hover:bg-[var(--app-panel-2)] hover:text-[var(--app-text)]",
-              active &&
-                "bg-[var(--app-panel-2)] text-[var(--app-text)]",
+              active && "bg-[var(--app-panel-2)] text-[var(--app-text)]",
             )}
             style={{ textTransform: "var(--app-tab-transform)" }}
             onClick={() => void selectRequest(tab.requestId)}
@@ -68,10 +67,16 @@ function methodColor(method: string): CSSProperties {
       color: "var(--app-delete)",
       backgroundColor: "var(--app-delete-bg)",
     },
-    PATCH: { color: "var(--app-patch)", backgroundColor: "var(--app-patch-bg)" },
+    PATCH: {
+      color: "var(--app-patch)",
+      backgroundColor: "var(--app-patch-bg)",
+    },
   };
   return {
-    ...(map[normalized] ?? { color: "var(--app-text)", backgroundColor: "transparent" }),
+    ...(map[normalized] ?? {
+      color: "var(--app-text)",
+      backgroundColor: "transparent",
+    }),
     borderRadius: "var(--app-radius)",
     padding: "2px 5px",
   };

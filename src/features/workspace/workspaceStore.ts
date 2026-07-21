@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { api } from "@/lib/tauri";
+import { api, isCancelledError } from "@/lib/tauri";
 import {
   applyPathParamRowChanges,
   buildQueryString,
@@ -7,15 +7,22 @@ import {
   deriveQueryRows,
   replaceQueryInUrl,
 } from "@/features/requests/urlParams";
-import {
-  getDraft,
-  useDraftStore,
-} from "@/features/workspace/draftStore";
+import { getDraft, useDraftStore } from "@/features/workspace/draftStore";
 import { useResponseStore } from "@/features/workspace/responseStore";
 import {
   getWorkspaceUiState,
   useWorkspaceUiStore,
 } from "@/features/workspace/workspaceUiStore";
+import {
+  collectAllRequestIds,
+  findRequestNodeByRequestId,
+  insertNodeAt,
+  moveNodeInTree,
+  removeNodeById,
+  removeRequestNode,
+  renameRequestNode,
+  requestIdsForNode,
+} from "@/features/workspace/collectionTree";
 import type {
   CollectionNode,
   CollectionSummary,
@@ -42,17 +49,27 @@ type WorkspaceState = {
   requestLoading: boolean;
   saving: boolean;
   sending: boolean;
+  cancelling: boolean;
   error?: string;
   loadCollections: () => Promise<void>;
   loadEnvironments: () => Promise<void>;
   importCollection: (json: string) => Promise<void>;
-  importEnvironment: (contents: string, fileName?: string | null) => Promise<void>;
+  importEnvironment: (
+    contents: string,
+    fileName?: string | null,
+  ) => Promise<void>;
   selectCollection: (collectionId: string) => Promise<void>;
   selectEnvironment: (environmentId: string | null) => Promise<void>;
   selectRequest: (requestId: string) => Promise<void>;
   closeRequestTab: (requestId: string) => Promise<void>;
-  createRequestIn: (parentId: string | null | undefined, position: number) => Promise<void>;
-  createFolderIn: (parentId: string | null | undefined, position: number) => Promise<void>;
+  createRequestIn: (
+    parentId: string | null | undefined,
+    position: number,
+  ) => Promise<void>;
+  createFolderIn: (
+    parentId: string | null | undefined,
+    position: number,
+  ) => Promise<void>;
   duplicateRequest: (requestId: string) => Promise<void>;
   deleteRequest: (requestId: string) => Promise<void>;
   deleteNode: (node: CollectionNode) => Promise<void>;
@@ -61,10 +78,14 @@ type WorkspaceState = {
     parentId: string | null | undefined,
     position: number,
   ) => Promise<void>;
+  renameCollection: (collectionId: string, name: string) => Promise<void>;
+  deleteCollection: (collectionId: string) => Promise<void>;
+  exportCollection: (collectionId: string) => Promise<string>;
   updateRequest: (patch: Partial<RequestDetail>) => void;
   saveActiveRequest: () => Promise<void>;
   resolveActiveRequest: () => Promise<void>;
   sendActiveRequest: () => Promise<void>;
+  cancelSendRequest: () => Promise<void>;
   toggleSidebar: () => void;
   clearError: () => void;
 };
@@ -79,6 +100,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   requestLoading: false,
   saving: false,
   sending: false,
+  cancelling: false,
 
   loadCollections: async () => {
     set({ collectionLoading: true, error: undefined });
@@ -216,7 +238,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   closeRequestTab: async (requestId) => {
     const current = get();
-    const tabIndex = current.tabs.findIndex((tab) => tab.requestId === requestId);
+    const tabIndex = current.tabs.findIndex(
+      (tab) => tab.requestId === requestId,
+    );
     const tabs = current.tabs.filter((tab) => tab.requestId !== requestId);
     useDraftStore.getState().removeMany([requestId]);
     useResponseStore.getState().removeMany([requestId]);
@@ -274,7 +298,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const name = "New Folder";
     set({ error: undefined });
     try {
-      const nodeId = await api.createFolder(collectionId, parentId, position, name);
+      const nodeId = await api.createFolder(
+        collectionId,
+        parentId,
+        position,
+        name,
+      );
       const node: CollectionNode = {
         id: nodeId,
         collectionId,
@@ -365,7 +394,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       useResponseStore.getState().removeMany(removedRequestIds);
       set({
         tree: removeNodeById(current.tree, node.id),
-        tabs: current.tabs.filter((tab) => !removedRequestIds.includes(tab.requestId)),
+        tabs: current.tabs.filter(
+          (tab) => !removedRequestIds.includes(tab.requestId),
+        ),
         activeRequestId: activeDeleted ? undefined : current.activeRequestId,
         requestLoading: activeDeleted ? false : current.requestLoading,
       });
@@ -388,6 +419,69 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
+  renameCollection: async (collectionId, name) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    set({ error: undefined });
+    try {
+      await api.renameCollection(collectionId, trimmed);
+      set((state) => ({
+        collections: state.collections.map((collection) =>
+          collection.id === collectionId
+            ? { ...collection, name: trimmed }
+            : collection,
+        ),
+      }));
+    } catch (error) {
+      set({ error: String(error) });
+    }
+  },
+
+  deleteCollection: async (collectionId) => {
+    set({ error: undefined });
+    try {
+      await api.deleteCollection(collectionId);
+      const current = get();
+      const removedRequestIds = collectAllRequestIds(current.tree);
+      const wasActive = current.activeCollectionId === collectionId;
+      const collections = current.collections.filter(
+        (collection) => collection.id !== collectionId,
+      );
+      if (wasActive) {
+        useDraftStore.getState().clearAll();
+        useResponseStore.getState().clearAll();
+        set({
+          collections,
+          tree: [],
+          tabs: [],
+          activeCollectionId: undefined,
+          activeRequestId: undefined,
+          requestLoading: false,
+        });
+      } else {
+        useDraftStore.getState().removeMany(removedRequestIds);
+        useResponseStore.getState().removeMany(removedRequestIds);
+        set({ collections });
+      }
+      const fallback = collections[0]?.id;
+      if (wasActive && fallback) {
+        await get().selectCollection(fallback);
+      }
+    } catch (error) {
+      set({ error: String(error) });
+    }
+  },
+
+  exportCollection: async (collectionId) => {
+    set({ error: undefined });
+    try {
+      return await api.exportPostmanCollection(collectionId);
+    } catch (error) {
+      set({ error: String(error) });
+      throw error;
+    }
+  },
+
   updateRequest: (patch) => {
     const requestId = get().activeRequestId;
     const current = getDraft(requestId);
@@ -401,7 +495,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         pathParams: derivePathParamRows(request.url, current.pathParams),
       };
     } else if (patch.query !== undefined) {
-      const nextUrl = replaceQueryInUrl(current.url, buildQueryString(patch.query));
+      const nextUrl = replaceQueryInUrl(
+        current.url,
+        buildQueryString(patch.query),
+      );
       request = { ...request, url: nextUrl };
     } else if (patch.pathParams !== undefined) {
       const nextUrl = applyPathParamRowChanges(
@@ -437,7 +534,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       await get().resolveActiveRequest();
     } catch (error) {
       set({
-        error: get().activeRequestId === request.id ? String(error) : get().error,
+        error:
+          get().activeRequestId === request.id ? String(error) : get().error,
         saving: false,
       });
     }
@@ -464,167 +562,45 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   sendActiveRequest: async () => {
     const request = getDraft(get().activeRequestId);
     if (!request) return;
-    set({ sending: true, error: undefined });
+    set({ sending: true, cancelling: false, error: undefined });
     try {
       const response = await api.sendRequest(
         request,
         getWorkspaceUiState().activeEnvironmentId ?? null,
       );
       useResponseStore.getState().setResponse(request.id, response);
-      if (get().activeRequestId === request.id) {
-        set({ sending: false });
-      } else {
-        set({ sending: false });
-      }
+      set({ sending: false, cancelling: false });
       await get().resolveActiveRequest();
     } catch (error) {
+      const cancelled = isCancelledError(error);
       set({
-        error: get().activeRequestId === request.id ? String(error) : get().error,
+        error:
+          cancelled || get().activeRequestId !== request.id
+            ? get().error
+            : String(error),
         sending: false,
+        cancelling: false,
       });
       await get().resolveActiveRequest();
     }
   },
 
-  toggleSidebar: () => set((state) => ({ sidebarVisible: !state.sidebarVisible })),
+  cancelSendRequest: async () => {
+    if (!get().sending) return;
+    set({ cancelling: true });
+    try {
+      await api.cancelSendRequest();
+    } catch (error) {
+      if (!isCancelledError(error)) {
+        set({ error: String(error) });
+      }
+    }
+  },
+
+  toggleSidebar: () =>
+    set((state) => ({ sidebarVisible: !state.sidebarVisible })),
   clearError: () => set({ error: undefined }),
 }));
-
-function renameRequestNode(
-  nodes: CollectionNode[],
-  requestId: string,
-  name: string,
-): CollectionNode[] {
-  return nodes.map((node) => {
-    if (node.requestId === requestId) {
-      return { ...node, name };
-    }
-    if (node.children.length) {
-      return { ...node, children: renameRequestNode(node.children, requestId, name) };
-    }
-    return node;
-  });
-}
-
-function insertNodeAt(
-  nodes: CollectionNode[],
-  parentId: string | null,
-  position: number,
-  node: CollectionNode,
-): CollectionNode[] {
-  if (parentId === null) {
-    return insertIntoSiblings(nodes, position, { ...node, parentId: null });
-  }
-
-  let changed = false;
-  const next = nodes.map((item) => {
-    if (item.id === parentId) {
-      changed = true;
-      return {
-        ...item,
-        children: insertIntoSiblings(item.children, position, {
-          ...node,
-          parentId,
-        }),
-      };
-    }
-    if (!item.children.length) return item;
-    const children = insertNodeAt(item.children, parentId, position, node);
-    return children === item.children ? item : { ...item, children };
-  });
-  return changed || next.some((item, index) => item !== nodes[index]) ? next : nodes;
-}
-
-function insertIntoSiblings(
-  siblings: CollectionNode[],
-  position: number,
-  node: CollectionNode,
-): CollectionNode[] {
-  const index = Math.max(0, Math.min(position, siblings.length));
-  const next = [...siblings.slice(0, index), node, ...siblings.slice(index)];
-  return reindexSiblings(next);
-}
-
-function removeNodeById(nodes: CollectionNode[], nodeId: string): CollectionNode[] {
-  let changed = false;
-  const next: CollectionNode[] = [];
-  for (const node of nodes) {
-    if (node.id === nodeId) {
-      changed = true;
-      continue;
-    }
-    if (node.children.length) {
-      const children = removeNodeById(node.children, nodeId);
-      if (children !== node.children) {
-        changed = true;
-        next.push({ ...node, children });
-        continue;
-      }
-    }
-    next.push(node);
-  }
-  return changed ? reindexSiblings(next) : nodes;
-}
-
-function removeRequestNode(nodes: CollectionNode[], requestId: string): CollectionNode[] {
-  let changed = false;
-  const next: CollectionNode[] = [];
-  for (const node of nodes) {
-    if (node.requestId === requestId) {
-      changed = true;
-      continue;
-    }
-    if (node.children.length) {
-      const children = removeRequestNode(node.children, requestId);
-      if (children !== node.children) {
-        changed = true;
-        next.push({ ...node, children });
-        continue;
-      }
-    }
-    next.push(node);
-  }
-  return changed ? reindexSiblings(next) : nodes;
-}
-
-function moveNodeInTree(
-  nodes: CollectionNode[],
-  node: CollectionNode,
-  parentId: string | null,
-  position: number,
-): CollectionNode[] {
-  const withoutNode = removeNodeById(nodes, node.id);
-  return insertNodeAt(withoutNode, parentId, position, {
-    ...node,
-    parentId,
-    position,
-  });
-}
-
-function findRequestNodeByRequestId(
-  nodes: CollectionNode[],
-  requestId: string,
-): CollectionNode | undefined {
-  for (const node of nodes) {
-    if (node.requestId === requestId) return node;
-    const child = findRequestNodeByRequestId(node.children, requestId);
-    if (child) return child;
-  }
-  return undefined;
-}
-
-function reindexSiblings(nodes: CollectionNode[]): CollectionNode[] {
-  return nodes.map((node, position) =>
-    node.position === position ? node : { ...node, position },
-  );
-}
-
-function requestIdsForNode(node: CollectionNode): string[] {
-  return [
-    ...(node.requestId ? [node.requestId] : []),
-    ...node.children.flatMap(requestIdsForNode),
-  ];
-}
 
 function normalizeRequestParams(request: RequestDetail): RequestDetail {
   return {

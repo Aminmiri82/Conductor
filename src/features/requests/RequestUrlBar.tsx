@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   Save,
   SendHorizontal,
+  Square,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,25 +23,31 @@ const methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 export function RequestUrlBar({
   request,
   sending,
+  cancelling,
   saving,
   dirty,
   unresolvedKeys,
   variableValues,
   onChange,
   onSend,
+  onCancel,
   onSave,
 }: {
   request: RequestDetail;
   sending: boolean;
+  cancelling: boolean;
   saving: boolean;
   dirty: boolean;
   unresolvedKeys: string[];
   variableValues: Record<string, string>;
   onChange: (patch: Partial<RequestDetail>) => void;
   onSend: () => void;
+  onCancel: () => void;
   onSave: () => void;
 }) {
-  const urlMode = useWorkspaceUiStore((state) => state.workspaceUi.urlDisplayMode);
+  const urlMode = useWorkspaceUiStore(
+    (state) => state.workspaceUi.urlDisplayMode,
+  );
 
   return (
     <div className="flex min-w-0 items-center gap-2">
@@ -93,15 +100,27 @@ export function RequestUrlBar({
       >
         <Save className={`size-4 ${saving ? "opacity-60" : ""}`} />
       </Button>
-      <Button
-        className="h-8 shrink-0 gap-1.5 bg-[var(--app-accent)] px-3 text-xs font-bold uppercase tracking-[0.04em] text-[var(--app-accent-fg)] hover:bg-[var(--app-accent)]/90"
-        onClick={onSend}
-        disabled={sending}
-        style={{ borderRadius: "var(--app-radius)" }}
-      >
-        <SendHorizontal className="size-3.5" />
-        {sending ? "Sending" : "Send"}
-      </Button>
+      {sending ? (
+        <Button
+          className="h-8 shrink-0 gap-1.5 border border-destructive/60 bg-destructive/10 px-3 text-xs font-bold uppercase tracking-[0.04em] text-destructive hover:bg-destructive/20"
+          onClick={onCancel}
+          disabled={cancelling}
+          style={{ borderRadius: "var(--app-radius)" }}
+          title="Cancel request"
+        >
+          <Square className="size-3.5 fill-current" />
+          {cancelling ? "Cancelling" : "Cancel"}
+        </Button>
+      ) : (
+        <Button
+          className="h-8 shrink-0 gap-1.5 bg-[var(--app-accent)] px-3 text-xs font-bold uppercase tracking-[0.04em] text-[var(--app-accent-fg)] hover:bg-[var(--app-accent)]/90"
+          onClick={onSend}
+          style={{ borderRadius: "var(--app-radius)" }}
+        >
+          <SendHorizontal className="size-3.5" />
+          Send
+        </Button>
+      )}
     </div>
   );
 }
@@ -198,7 +217,9 @@ function VariableToken({
         <span className="group-hover:hidden">
           <span className="text-[var(--app-dim)]">{"{{"}</span>
           <span
-            className={unresolved ? "text-amber-300" : "text-[var(--app-accent)]"}
+            className={
+              unresolved ? "text-amber-300" : "text-[var(--app-accent)]"
+            }
           >
             {name}
           </span>
@@ -219,7 +240,9 @@ function VariableToken({
     return (
       <span className="group/var relative">
         <span className="text-[var(--app-dim)]">{"{{"}</span>
-        <span className={unresolved ? "text-amber-300" : "text-[var(--app-accent)]"}>
+        <span
+          className={unresolved ? "text-amber-300" : "text-[var(--app-accent)]"}
+        >
           {name}
         </span>
         <span className="text-[var(--app-dim)]">{"}}"}</span>
@@ -292,12 +315,18 @@ function VariableTooltip({
     <span className="pointer-events-none absolute left-0 top-[calc(100%+6px)] z-50 hidden max-w-[520px] whitespace-nowrap border border-[var(--app-line)] bg-[var(--app-panel)] px-2 py-1 text-[11px] font-normal text-[var(--app-text)] shadow-lg group-hover/var:block">
       <span className="text-[var(--app-dim)]">{name}</span>
       <span className="px-1 text-[var(--app-dim)]">=</span>
-      <span>{unresolved ? "undefined" : resolvedValue || "resolved value unavailable"}</span>
+      <span>
+        {unresolved
+          ? "undefined"
+          : resolvedValue || "resolved value unavailable"}
+      </span>
     </span>
   );
 }
 
-function parseUrlTokens(url: string): Array<
+function parseUrlTokens(
+  url: string,
+): Array<
   | { kind: "text"; value: string }
   | { kind: "variable"; value: string; name: string }
 > {

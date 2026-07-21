@@ -72,7 +72,10 @@ export function OpenRequestDialog({
   );
 }
 
-function flattenRequests(nodes: CollectionNode[], parentPath = ""): RequestOption[] {
+function flattenRequests(
+  nodes: CollectionNode[],
+  parentPath = "",
+): RequestOption[] {
   return nodes.flatMap((node) => {
     const path = parentPath ? `${parentPath} / ${node.name}` : node.name;
     if (node.kind === "request" && node.requestId) {
@@ -99,7 +102,10 @@ function methodColor(method: string) {
       color: "var(--app-delete)",
       backgroundColor: "var(--app-delete-bg)",
     },
-    PATCH: { color: "var(--app-patch)", backgroundColor: "var(--app-patch-bg)" },
+    PATCH: {
+      color: "var(--app-patch)",
+      backgroundColor: "var(--app-patch-bg)",
+    },
   };
   return {
     ...(map[normalized] ?? {

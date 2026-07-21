@@ -39,118 +39,124 @@ const DEFAULT_WORKSPACE_UI_STATE: WorkspaceUiState = {
   settingsTab: "appearance",
   requestEditorTabs: {},
 };
-let workspaceUiStateFlushTimer: ReturnType<typeof window.setTimeout> | undefined;
+let workspaceUiStateFlushTimer:
+  ReturnType<typeof window.setTimeout> | undefined;
 let workspaceUiStateFlushPromise = Promise.resolve();
 
-export const useWorkspaceUiStore = create<WorkspaceUiStoreState>((set, get) => ({
-  workspaceUi: DEFAULT_WORKSPACE_UI_STATE,
-  workspaceUiDirty: false,
+export const useWorkspaceUiStore = create<WorkspaceUiStoreState>(
+  (set, get) => ({
+    workspaceUi: DEFAULT_WORKSPACE_UI_STATE,
+    workspaceUiDirty: false,
 
-  loadWorkspaceUiState: async (environments) => {
-    const workspaceUi = normalizeWorkspaceUiState(
-      await api.getWorkspaceState(WORKSPACE_UI_STATE_KEY),
-    );
-    const activeEnvironmentId = validEnvironmentId(
-      environments,
-      workspaceUi.activeEnvironmentId,
-    );
-    const nextWorkspaceUi = { ...workspaceUi, activeEnvironmentId };
-    set({ workspaceUi: nextWorkspaceUi, workspaceUiDirty: false });
-    return nextWorkspaceUi;
-  },
+    loadWorkspaceUiState: async (environments) => {
+      const workspaceUi = normalizeWorkspaceUiState(
+        await api.getWorkspaceState(WORKSPACE_UI_STATE_KEY),
+      );
+      const activeEnvironmentId = validEnvironmentId(
+        environments,
+        workspaceUi.activeEnvironmentId,
+      );
+      const nextWorkspaceUi = { ...workspaceUi, activeEnvironmentId };
+      set({ workspaceUi: nextWorkspaceUi, workspaceUiDirty: false });
+      return nextWorkspaceUi;
+    },
 
-  reconcileActiveEnvironment: (environments) => {
-    const previousActiveEnvironmentId = get().workspaceUi.activeEnvironmentId;
-    const activeEnvironmentId = validEnvironmentId(
-      environments,
-      previousActiveEnvironmentId,
-    );
-    if (activeEnvironmentId !== previousActiveEnvironmentId) {
+    reconcileActiveEnvironment: (environments) => {
+      const previousActiveEnvironmentId = get().workspaceUi.activeEnvironmentId;
+      const activeEnvironmentId = validEnvironmentId(
+        environments,
+        previousActiveEnvironmentId,
+      );
+      if (activeEnvironmentId !== previousActiveEnvironmentId) {
+        set((state) => ({
+          workspaceUi: { ...state.workspaceUi, activeEnvironmentId },
+          workspaceUiDirty: true,
+        }));
+        get().scheduleWorkspaceUiStateFlush();
+      }
+      return activeEnvironmentId;
+    },
+
+    setActiveCollectionId: (collectionId) => {
       set((state) => ({
-        workspaceUi: { ...state.workspaceUi, activeEnvironmentId },
+        workspaceUi: { ...state.workspaceUi, activeCollectionId: collectionId },
+        workspaceUiDirty: true,
+      }));
+    },
+
+    setActiveEnvironmentId: (environmentId) => {
+      set((state) => ({
+        workspaceUi: {
+          ...state.workspaceUi,
+          activeEnvironmentId: environmentId,
+        },
         workspaceUiDirty: true,
       }));
       get().scheduleWorkspaceUiStateFlush();
-    }
-    return activeEnvironmentId;
-  },
+    },
 
-  setActiveCollectionId: (collectionId) => {
-    set((state) => ({
-      workspaceUi: { ...state.workspaceUi, activeCollectionId: collectionId },
-      workspaceUiDirty: true,
-    }));
-  },
-
-  setActiveEnvironmentId: (environmentId) => {
-    set((state) => ({
-      workspaceUi: { ...state.workspaceUi, activeEnvironmentId: environmentId },
-      workspaceUiDirty: true,
-    }));
-    get().scheduleWorkspaceUiStateFlush();
-  },
-
-  setRequestEditorTab: (requestId, tab) => {
-    set((state) => ({
-      workspaceUi: {
-        ...state.workspaceUi,
-        requestEditorTabs: {
-          ...state.workspaceUi.requestEditorTabs,
-          [requestId]: tab,
+    setRequestEditorTab: (requestId, tab) => {
+      set((state) => ({
+        workspaceUi: {
+          ...state.workspaceUi,
+          requestEditorTabs: {
+            ...state.workspaceUi.requestEditorTabs,
+            [requestId]: tab,
+          },
         },
-      },
-      workspaceUiDirty: true,
-    }));
-    get().scheduleWorkspaceUiStateFlush();
-  },
+        workspaceUiDirty: true,
+      }));
+      get().scheduleWorkspaceUiStateFlush();
+    },
 
-  setWorkspacePreference: (key, value) => {
-    set((state) => ({
-      workspaceUi: {
-        ...state.workspaceUi,
-        [key]: value,
-      },
-      workspaceUiDirty: true,
-    }));
-    get().scheduleWorkspaceUiStateFlush();
-  },
+    setWorkspacePreference: (key, value) => {
+      set((state) => ({
+        workspaceUi: {
+          ...state.workspaceUi,
+          [key]: value,
+        },
+        workspaceUiDirty: true,
+      }));
+      get().scheduleWorkspaceUiStateFlush();
+    },
 
-  scheduleWorkspaceUiStateFlush: () => {
-    if (workspaceUiStateFlushTimer) {
-      window.clearTimeout(workspaceUiStateFlushTimer);
-    }
-    workspaceUiStateFlushTimer = window.setTimeout(() => {
-      workspaceUiStateFlushTimer = undefined;
-      void get().flushWorkspaceUiState();
-    }, WORKSPACE_UI_STATE_FLUSH_DELAY_MS);
-  },
-
-  flushWorkspaceUiState: async () => {
-    if (workspaceUiStateFlushTimer) {
-      window.clearTimeout(workspaceUiStateFlushTimer);
-      workspaceUiStateFlushTimer = undefined;
-    }
-
-    const runFlush = async () => {
-      const { workspaceUi, workspaceUiDirty } = get();
-      if (!workspaceUiDirty) return;
-      try {
-        await api.setWorkspaceState(WORKSPACE_UI_STATE_KEY, workspaceUi);
-        if (get().workspaceUi === workspaceUi) {
-          set({ workspaceUiDirty: false });
-        }
-      } catch {
-        // Workspace UI state is a best-effort preference cache.
+    scheduleWorkspaceUiStateFlush: () => {
+      if (workspaceUiStateFlushTimer) {
+        window.clearTimeout(workspaceUiStateFlushTimer);
       }
-    };
+      workspaceUiStateFlushTimer = window.setTimeout(() => {
+        workspaceUiStateFlushTimer = undefined;
+        void get().flushWorkspaceUiState();
+      }, WORKSPACE_UI_STATE_FLUSH_DELAY_MS);
+    },
 
-    workspaceUiStateFlushPromise = workspaceUiStateFlushPromise.then(
-      runFlush,
-      runFlush,
-    );
-    await workspaceUiStateFlushPromise;
-  },
-}));
+    flushWorkspaceUiState: async () => {
+      if (workspaceUiStateFlushTimer) {
+        window.clearTimeout(workspaceUiStateFlushTimer);
+        workspaceUiStateFlushTimer = undefined;
+      }
+
+      const runFlush = async () => {
+        const { workspaceUi, workspaceUiDirty } = get();
+        if (!workspaceUiDirty) return;
+        try {
+          await api.setWorkspaceState(WORKSPACE_UI_STATE_KEY, workspaceUi);
+          if (get().workspaceUi === workspaceUi) {
+            set({ workspaceUiDirty: false });
+          }
+        } catch {
+          // Workspace UI state is a best-effort preference cache.
+        }
+      };
+
+      workspaceUiStateFlushPromise = workspaceUiStateFlushPromise.then(
+        runFlush,
+        runFlush,
+      );
+      await workspaceUiStateFlushPromise;
+    },
+  }),
+);
 
 export function getWorkspaceUiState(): WorkspaceUiState {
   return useWorkspaceUiStore.getState().workspaceUi;
@@ -205,7 +211,7 @@ function validEnvironmentId(
   environmentId: string | null | undefined,
 ): string | null {
   return environments.some((environment) => environment.id === environmentId)
-    ? environmentId ?? null
+    ? (environmentId ?? null)
     : null;
 }
 
@@ -214,7 +220,12 @@ function isAppTheme(value: unknown): value is AppTheme {
 }
 
 function isUrlDisplayMode(value: unknown): value is UrlDisplayMode {
-  return value === "flat" || value === "syntax" || value === "chip" || value === "hybrid";
+  return (
+    value === "flat" ||
+    value === "syntax" ||
+    value === "chip" ||
+    value === "hybrid"
+  );
 }
 
 function isSettingsTab(value: unknown): value is SettingsTab {
@@ -222,6 +233,7 @@ function isSettingsTab(value: unknown): value is SettingsTab {
     value === "appearance" ||
     value === "variables" ||
     value === "shortcuts" ||
+    value === "data" ||
     value === "about"
   );
 }

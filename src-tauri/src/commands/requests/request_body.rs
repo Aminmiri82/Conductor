@@ -100,7 +100,7 @@ pub(super) fn graphql_payload(graphql: Option<&GraphqlBody>) -> Result<Value, St
     let variables = graphql
         .map(|graphql| graphql.variables.trim())
         .filter(|variables| !variables.is_empty())
-        .map(|variables| serde_json::from_str::<Value>(variables))
+        .map(serde_json::from_str::<Value>)
         .transpose()
         .map_err(|error| format!("invalid GraphQL variables JSON: {error}"))?
         .unwrap_or_else(|| json!({}));
