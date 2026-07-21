@@ -163,26 +163,6 @@ export function CollectionTree(props: CollectionTreeProps) {
     await onMoveNode(source, parentId, position);
   }
 
-  if (!tree.length) {
-    return (
-      <div className="app-scroll min-h-0 flex-1 overflow-auto p-2">
-        <div className="px-2 py-8 text-center text-xs text-[var(--app-dim)]">
-          Import a Postman collection to begin.
-        </div>
-      </div>
-    );
-  }
-
-  if (!filteredTree.length) {
-    return (
-      <div className="app-scroll min-h-0 flex-1 overflow-auto p-2">
-        <div className="px-2 py-8 text-center text-xs text-[var(--app-dim)]">
-          No requests match your search.
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div
       ref={scrollRef}
@@ -193,31 +173,41 @@ export function CollectionTree(props: CollectionTreeProps) {
         dnd.setTarget(null);
       }}
     >
-      <div className="relative" style={{ height: totalTreeHeight }}>
-        {renderedNodes.map((item, index) => (
-          <TreeRow
-            key={item.node.id}
-            node={item.node}
-            depth={item.depth}
-            top={(startIndex + index) * TREE_ROW_HEIGHT}
-            open={effectiveOpenIds.has(item.node.id)}
-            activeRequestId={activeRequestId}
-            onToggleOpen={toggleOpen}
-            onOpenFolder={openFolder}
-            onSelectRequest={onSelectRequest}
-            onCreateRequest={onCreateRequest}
-            onCreateFolder={onCreateFolder}
-            onDuplicateRequest={onDuplicateRequest}
-            onDeleteRequest={onDeleteRequest}
-            onDeleteNode={onDeleteNode}
+      {!tree.length ? (
+        <div className="px-2 py-8 text-center text-xs text-[var(--app-dim)]">
+          Import a Postman collection to begin.
+        </div>
+      ) : !filteredTree.length ? (
+        <div className="px-2 py-8 text-center text-xs text-[var(--app-dim)]">
+          No requests match your search.
+        </div>
+      ) : (
+        <div className="relative" style={{ height: totalTreeHeight }}>
+          {renderedNodes.map((item, index) => (
+            <TreeRow
+              key={item.node.id}
+              node={item.node}
+              depth={item.depth}
+              top={(startIndex + index) * TREE_ROW_HEIGHT}
+              open={effectiveOpenIds.has(item.node.id)}
+              activeRequestId={activeRequestId}
+              onToggleOpen={toggleOpen}
+              onOpenFolder={openFolder}
+              onSelectRequest={onSelectRequest}
+              onCreateRequest={onCreateRequest}
+              onCreateFolder={onCreateFolder}
+              onDuplicateRequest={onDuplicateRequest}
+              onDeleteRequest={onDeleteRequest}
+              onDeleteNode={onDeleteNode}
+              performDrop={performDrop}
+            />
+          ))}
+          <RootEndDropZone
+            top={visibleNodes.length * TREE_ROW_HEIGHT}
             performDrop={performDrop}
           />
-        ))}
-        <RootEndDropZone
-          top={visibleNodes.length * TREE_ROW_HEIGHT}
-          performDrop={performDrop}
-        />
-      </div>
+        </div>
+      )}
     </div>
   );
 }
