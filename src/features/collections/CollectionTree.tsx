@@ -1,10 +1,4 @@
-import {
-  useCallback,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CollectionNode } from "@/features/types";
 import {
   filterTree,
@@ -82,7 +76,8 @@ export function CollectionTree(props: CollectionTreeProps) {
   );
 
   const rootDropHeight = dnd.draggingId ? 32 : 8;
-  const totalTreeHeight = visibleNodes.length * TREE_ROW_HEIGHT + rootDropHeight;
+  const totalTreeHeight =
+    visibleNodes.length * TREE_ROW_HEIGHT + rootDropHeight;
   const startIndex = Math.max(
     0,
     Math.floor(scrollTop / TREE_ROW_HEIGHT) - TREE_OVERSCAN,
@@ -150,7 +145,8 @@ export function CollectionTree(props: CollectionTreeProps) {
       } else {
         parentId = node.parentId ?? null;
         const sameParent = (source.parentId ?? null) === (parentId ?? null);
-        const insertAt = t.intent === "before" ? node.position : node.position + 1;
+        const insertAt =
+          t.intent === "before" ? node.position : node.position + 1;
         position =
           sameParent && source.position < insertAt ? insertAt - 1 : insertAt;
       }

@@ -2,7 +2,10 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { AlertTriangle, Check, Copy, Download } from "lucide-react";
 import { lazy, Suspense, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { buildCurlCommand, copyCurlToClipboard } from "@/features/requests/copyAsCurl";
+import {
+  buildCurlCommand,
+  copyCurlToClipboard,
+} from "@/features/requests/copyAsCurl";
 import {
   ResizableHandle,
   ResizablePanel,

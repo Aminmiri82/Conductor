@@ -23,7 +23,9 @@ export function AppSettings({
   const setWorkspacePreference = useWorkspaceUiStore(
     (state) => state.setWorkspacePreference,
   );
-  const activeCollectionId = useWorkspaceStore((state) => state.activeCollectionId);
+  const activeCollectionId = useWorkspaceStore(
+    (state) => state.activeCollectionId,
+  );
 
   useEffect(() => {
     if (!open) return;

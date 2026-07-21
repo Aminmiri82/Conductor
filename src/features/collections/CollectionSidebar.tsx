@@ -37,7 +37,9 @@ export function CollectionSidebar() {
   const importInputRef = useRef<HTMLInputElement>(null);
   const collections = useWorkspaceStore((state) => state.collections);
   const tree = useWorkspaceStore((state) => state.tree);
-  const activeCollectionId = useWorkspaceStore((state) => state.activeCollectionId);
+  const activeCollectionId = useWorkspaceStore(
+    (state) => state.activeCollectionId,
+  );
   const activeRequestId = useWorkspaceStore((state) => state.activeRequestId);
   const selectCollection = useWorkspaceStore((state) => state.selectCollection);
   const selectRequest = useWorkspaceStore((state) => state.selectRequest);

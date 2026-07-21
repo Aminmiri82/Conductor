@@ -67,10 +67,7 @@ function applyQueryFallback(request: RequestDetail): string {
   return request.url;
 }
 
-function mergeHeaders(
-  headers: KeyValue[],
-  extras: KeyValue[],
-): KeyValue[] {
+function mergeHeaders(headers: KeyValue[], extras: KeyValue[]): KeyValue[] {
   if (!extras.length) return headers;
   const seen = new Set(
     headers
@@ -130,7 +127,10 @@ function bodyToCurlArgs(body: RequestBody | null, method: string): string[] {
       const args: string[] = [];
       for (const entry of body.urlencoded ?? []) {
         if (!entry.enabled || !entry.key) continue;
-        args.push("--data-urlencode", shellQuote(`${entry.key}=${entry.value}`));
+        args.push(
+          "--data-urlencode",
+          shellQuote(`${entry.key}=${entry.value}`),
+        );
       }
       return args;
     }
@@ -162,7 +162,10 @@ function bodyToCurlArgs(body: RequestBody | null, method: string): string[] {
       if (!body.file?.path) return [];
       const args = ["--data-binary", shellQuote(`@${body.file.path}`)];
       if (body.file.contentType) {
-        args.unshift("-H", shellQuote(`Content-Type: ${body.file.contentType}`));
+        args.unshift(
+          "-H",
+          shellQuote(`Content-Type: ${body.file.contentType}`),
+        );
       }
       return args;
     }

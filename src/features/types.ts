@@ -63,11 +63,7 @@ export type AppTheme = "softpro" | "conductor" | "brutalist";
 export type UrlDisplayMode = "flat" | "syntax" | "chip" | "hybrid";
 
 export type SettingsTab =
-  | "appearance"
-  | "variables"
-  | "shortcuts"
-  | "data"
-  | "about";
+  "appearance" | "variables" | "shortcuts" | "data" | "about";
 
 export type WorkspaceUiState = {
   activeCollectionId?: string;
@@ -161,7 +157,7 @@ export type RequestHistoryEntry = {
   id: string;
   requestId?: string | null;
   collectionId?: string | null;
-  name: string;
+  name?: string | null;
   method: string;
   url: string;
   statusCode?: number | null;

@@ -11,7 +11,9 @@ import {
 export function AppearancePane() {
   const theme = useWorkspaceUiStore((state) => state.workspaceUi.appTheme);
   const accent = useWorkspaceUiStore((state) => state.workspaceUi.accentColor);
-  const urlMode = useWorkspaceUiStore((state) => state.workspaceUi.urlDisplayMode);
+  const urlMode = useWorkspaceUiStore(
+    (state) => state.workspaceUi.urlDisplayMode,
+  );
   const setWorkspacePreference = useWorkspaceUiStore(
     (state) => state.setWorkspacePreference,
   );
@@ -118,8 +120,7 @@ export function AppearancePane() {
                   accent === item.id
                     ? "2px solid var(--app-text)"
                     : "2px solid transparent",
-                boxShadow:
-                  accent === item.id ? `0 0 0 2px ${item.id}` : "none",
+                boxShadow: accent === item.id ? `0 0 0 2px ${item.id}` : "none",
               }}
             />
             {item.name}

@@ -167,9 +167,7 @@ function HistoryRow({
         <span className={cn("font-semibold", statusClass)}>
           {entry.statusCode ?? "—"}
         </span>
-        {entry.durationMs != null ? (
-          <span>{entry.durationMs} ms</span>
-        ) : null}
+        {entry.durationMs != null ? <span>{entry.durationMs} ms</span> : null}
         <span>{timestamp}</span>
       </div>
     </button>
@@ -195,7 +193,10 @@ function methodColor(method: string) {
       color: "var(--app-delete)",
       backgroundColor: "var(--app-delete-bg)",
     },
-    PATCH: { color: "var(--app-patch)", backgroundColor: "var(--app-patch-bg)" },
+    PATCH: {
+      color: "var(--app-patch)",
+      backgroundColor: "var(--app-patch-bg)",
+    },
   };
   return {
     ...(map[normalized] ?? {

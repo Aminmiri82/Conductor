@@ -4,7 +4,9 @@ import { cn } from "@/lib/utils";
 export function SectionTitle({ title, sub }: { title: string; sub?: string }) {
   return (
     <div className="mb-3">
-      <div className="text-sm font-semibold text-[var(--app-text)]">{title}</div>
+      <div className="text-sm font-semibold text-[var(--app-text)]">
+        {title}
+      </div>
       {sub ? (
         <div className="mt-1 text-xs text-[var(--app-dim)]">{sub}</div>
       ) : null}
@@ -24,7 +26,9 @@ export function SettingRow({
   return (
     <div className="flex items-center justify-between gap-4 border-b border-[var(--app-line)] py-4">
       <div>
-        <div className="text-sm font-medium text-[var(--app-text)]">{label}</div>
+        <div className="text-sm font-medium text-[var(--app-text)]">
+          {label}
+        </div>
         <div className="mt-0.5 text-xs text-[var(--app-dim)]">{hint}</div>
       </div>
       {children}

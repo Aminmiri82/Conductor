@@ -191,12 +191,16 @@ export function TreeRow({
           {isFolder ? (
             <>
               <ContextMenuItem
-                onSelect={() => void onCreateRequest(node.id, node.children.length)}
+                onSelect={() =>
+                  void onCreateRequest(node.id, node.children.length)
+                }
               >
                 Add request
               </ContextMenuItem>
               <ContextMenuItem
-                onSelect={() => void onCreateFolder(node.id, node.children.length)}
+                onSelect={() =>
+                  void onCreateFolder(node.id, node.children.length)
+                }
               >
                 Add folder
               </ContextMenuItem>
@@ -265,7 +269,11 @@ export function RootEndDropZone({
 
   if (!dragging) {
     return (
-      <div aria-hidden className="absolute h-2" style={{ top, left: 0, right: 0 }} />
+      <div
+        aria-hidden
+        className="absolute h-2"
+        style={{ top, left: 0, right: 0 }}
+      />
     );
   }
 
@@ -305,7 +313,10 @@ function methodColor(method: string): CSSProperties {
       color: "var(--app-delete)",
       backgroundColor: "var(--app-delete-bg)",
     },
-    PATCH: { color: "var(--app-patch)", backgroundColor: "var(--app-patch-bg)" },
+    PATCH: {
+      color: "var(--app-patch)",
+      backgroundColor: "var(--app-patch-bg)",
+    },
   };
   return {
     ...(map[normalized] ?? {

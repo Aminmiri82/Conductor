@@ -27,9 +27,13 @@ export function VariablesPane({
   const activeEnvironmentId = useWorkspaceUiStore(
     (state) => state.workspaceUi.activeEnvironmentId,
   );
-  const selectEnvironment = useWorkspaceStore((state) => state.selectEnvironment);
+  const selectEnvironment = useWorkspaceStore(
+    (state) => state.selectEnvironment,
+  );
   const loadEnvironments = useWorkspaceStore((state) => state.loadEnvironments);
-  const importEnvironment = useWorkspaceStore((state) => state.importEnvironment);
+  const importEnvironment = useWorkspaceStore(
+    (state) => state.importEnvironment,
+  );
   const [scope, setScope] = useState<Scope>(
     activeCollectionId || collections[0] ? "collection" : "global",
   );
@@ -44,7 +48,9 @@ export function VariablesPane({
   const [environmentName, setEnvironmentName] = useState("");
   const [revealed, setRevealed] = useState<Record<number, boolean>>({});
   const environmentInputRef = useRef<HTMLInputElement>(null);
-  const resolveActiveRequest = useWorkspaceStore((state) => state.resolveActiveRequest);
+  const resolveActiveRequest = useWorkspaceStore(
+    (state) => state.resolveActiveRequest,
+  );
 
   const collectionId = scope === "collection" ? selectedCollectionId : null;
   const environmentId = scope === "environment" ? selectedEnvironmentId : null;
@@ -105,7 +111,12 @@ export function VariablesPane({
       scope,
       collectionId,
       environmentId,
-      variables.map((variable) => ({ ...variable, scope, collectionId, environmentId })),
+      variables.map((variable) => ({
+        ...variable,
+        scope,
+        collectionId,
+        environmentId,
+      })),
     );
     setSaving(false);
     await resolveActiveRequest();
@@ -139,8 +150,9 @@ export function VariablesPane({
     if (!confirmed) return;
 
     const nextEnvironmentId =
-      environments.find((environment) => environment.id !== selectedEnvironmentId)?.id ??
-      null;
+      environments.find(
+        (environment) => environment.id !== selectedEnvironmentId,
+      )?.id ?? null;
     await api.deleteEnvironment(selectedEnvironmentId);
     await loadEnvironments();
     setSelectedEnvironmentId(nextEnvironmentId ?? "");
@@ -306,11 +318,15 @@ export function VariablesPane({
             <Input
               className="app-mono h-8 rounded-none border-0 bg-transparent text-xs shadow-none focus-visible:ring-0"
               value={variable.key}
-              onChange={(event) => updateVariable(index, { key: event.target.value })}
+              onChange={(event) =>
+                updateVariable(index, { key: event.target.value })
+              }
             />
             <Input
               className="app-mono h-8 rounded-none border-0 bg-transparent text-xs shadow-none focus-visible:ring-0"
-              type={variable.sensitive && !revealed[index] ? "password" : "text"}
+              type={
+                variable.sensitive && !revealed[index] ? "password" : "text"
+              }
               value={variable.value}
               onChange={(event) =>
                 updateVariable(index, { value: event.target.value })

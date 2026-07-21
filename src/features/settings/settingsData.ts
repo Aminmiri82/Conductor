@@ -13,7 +13,13 @@ export type ThemeDefinition = {
   name: string;
   mode: string;
   defaultAccent: string;
-  palette: { bg: string; panel: string; accent: string; text: string; dim: string };
+  palette: {
+    bg: string;
+    panel: string;
+    accent: string;
+    text: string;
+    dim: string;
+  };
 };
 
 export const THEMES: ThemeDefinition[] = [

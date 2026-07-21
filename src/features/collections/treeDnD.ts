@@ -28,9 +28,9 @@ export function useDnD(): DnDValue {
 
 export function useTreeDnDValue(): DnDValue {
   const [draggingNode, setDraggingNode] = useState<CollectionNode | null>(null);
-  const [draggingDescendantIds, setDraggingDescendantIds] = useState<Set<string>>(
-    () => new Set(),
-  );
+  const [draggingDescendantIds, setDraggingDescendantIds] = useState<
+    Set<string>
+  >(() => new Set());
   const [target, setTarget] = useState<DropTarget>(null);
 
   return useMemo<DnDValue>(

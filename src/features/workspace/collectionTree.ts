@@ -26,7 +26,9 @@ export function insertNodeAt(
     const children = insertNodeAt(item.children, parentId, position, node);
     return children === item.children ? item : { ...item, children };
   });
-  return changed || next.some((item, index) => item !== nodes[index]) ? next : nodes;
+  return changed || next.some((item, index) => item !== nodes[index])
+    ? next
+    : nodes;
 }
 
 export function insertIntoSiblings(
