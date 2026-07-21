@@ -11,7 +11,8 @@ export type BodyField = KeyValue & {
 };
 
 export type RequestBody = {
-  mode: "none" | "raw" | "formdata" | "urlencoded" | "graphql" | "file" | string;
+  mode:
+    "none" | "raw" | "formdata" | "urlencoded" | "graphql" | "file" | string;
   raw: string;
   rawLanguage?: string | null;
   formData: BodyField[];
@@ -54,7 +55,8 @@ export type RequestDetail = {
   updatedAt: string;
 };
 
-export type RequestEditorTab = "params" | "headers" | "auth" | "body" | "variables";
+export type RequestEditorTab =
+  "params" | "headers" | "auth" | "body" | "variables";
 
 export type AppTheme = "softpro" | "conductor" | "brutalist";
 
@@ -144,7 +146,31 @@ export type SendRequestResult = {
   bodyBytes: number;
   bodyContentType?: string | null;
   bodyFormat: "json" | "text" | string;
+  bodyTruncated?: boolean;
   updatedVariables: KeyValue[];
   variableWarnings: string[];
   unresolvedVariables: UnresolvedVariable[];
+};
+
+export type RequestHistoryEntry = {
+  id: string;
+  requestId?: string | null;
+  collectionId?: string | null;
+  name: string;
+  method: string;
+  url: string;
+  statusCode?: number | null;
+  statusText?: string | null;
+  durationMs?: number | null;
+  bodyBytes?: number | null;
+  bodyContentType?: string | null;
+  error?: string | null;
+  executedAt: string;
+};
+
+export type DatabaseStatus = {
+  path: string;
+  schemaVersion: number;
+  collectionCount: number;
+  requestCount: number;
 };
