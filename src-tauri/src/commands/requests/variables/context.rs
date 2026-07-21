@@ -69,6 +69,7 @@ pub(in crate::commands::requests) fn load_variable_context(
 
 pub(in crate::commands::requests) fn save_script_variable(
     connection: &rusqlite::Connection,
+    secrets: &Secrets,
     scope: &str,
     collection_id: Option<&str>,
     environment_id: Option<&str>,
@@ -78,16 +79,32 @@ pub(in crate::commands::requests) fn save_script_variable(
 ) -> Result<(), StorageError> {
     super::crud::validate_scope(scope, collection_id, environment_id)
         .map_err(StorageError::InvalidInput)?;
+    let sensitive = super::looks_sensitive_variable_key(key);
+    let stored_value = if sensitive {
+        secrets.encrypt(value)?
+    } else {
+        value.to_string()
+    };
     connection.execute(
         "INSERT INTO variables
          (scope, collection_id, environment_id, key, initial_value, current_value,
           enabled, sensitive, variable_type, created_at, updated_at)
-         VALUES (?, ?, ?, ?, NULL, ?, 1, 0, NULL, ?, ?)
+         VALUES (?, ?, ?, ?, NULL, ?, 1, ?, NULL, ?, ?)
          ON CONFLICT DO UPDATE SET
             current_value = excluded.current_value,
             enabled = 1,
+            sensitive = excluded.sensitive,
             updated_at = excluded.updated_at",
-        params![scope, collection_id, environment_id, key, value, now, now],
+        params![
+            scope,
+            collection_id,
+            environment_id,
+            key,
+            stored_value,
+            sensitive as i64,
+            now,
+            now
+        ],
     )?;
     Ok(())
 }

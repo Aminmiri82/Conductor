@@ -52,7 +52,7 @@ pub fn import_postman_collection(
 
             if let Some(variables) = collection.get("variable").and_then(Value::as_array) {
                 for variable in variables {
-                    insert_variable(&tx, "collection", &collection_id, variable, &now)?;
+                    insert_variable(&tx, &secrets, "collection", &collection_id, variable, &now)?;
                 }
             }
 
@@ -175,11 +175,133 @@ fn write_raw_import_file(
         source,
     })?;
     let path = collection_dir.join(format!("{name}.json"));
-    fs::write(&path, contents).map_err(|source| StorageError::FileOperation {
+    // Scrub obvious secrets before persisting the raw dump beside the DB.
+    let scrubbed = scrub_raw_postman_dump(contents);
+    fs::write(&path, scrubbed).map_err(|source| StorageError::FileOperation {
         path: path.clone(),
         source,
     })?;
     Ok(path.display().to_string())
+}
+
+fn scrub_raw_postman_dump(contents: &str) -> String {
+    let Ok(mut value) = serde_json::from_str::<Value>(contents) else {
+        return contents.to_string();
+    };
+    scrub_auth_secrets(&mut value);
+    scrub_variable_array_secrets(value.get_mut("variable"));
+    scrub_item_tree_secrets(value.get_mut("item"));
+    value.to_string()
+}
+
+fn scrub_item_tree_secrets(items: Option<&mut Value>) {
+    let Some(Value::Array(items)) = items else {
+        return;
+    };
+    for item in items.iter_mut() {
+        scrub_auth_secrets(item);
+        if let Some(request) = item.get_mut("request") {
+            scrub_auth_secrets(request);
+            scrub_url_query_secrets(request.get_mut("url"));
+            scrub_header_array_secrets(request.get_mut("header"));
+        }
+        scrub_item_tree_secrets(item.get_mut("item"));
+    }
+}
+
+fn scrub_auth_secrets(value: &mut Value) {
+    if let Some(auth) = value.get_mut("auth") {
+        if let Some(obj) = auth.as_object_mut() {
+            for field in ["token", "password", "value"] {
+                if obj.contains_key(field) {
+                    obj.insert(field.to_string(), Value::String("[REDACTED]".into()));
+                }
+            }
+        }
+        // Postman auth often nests under auth.<type>.
+        if let Some(Value::Object(nested)) = auth.get_mut("bearer") {
+            if nested.contains_key("token") {
+                nested.insert("token".into(), Value::String("[REDACTED]".into()));
+            }
+        }
+        if let Some(Value::Object(nested)) = auth.get_mut("basic") {
+            if nested.contains_key("password") {
+                nested.insert("password".into(), Value::String("[REDACTED]".into()));
+            }
+        }
+        if let Some(Value::Object(nested)) = auth.get_mut("apikey") {
+            if nested.contains_key("value") {
+                nested.insert("value".into(), Value::String("[REDACTED]".into()));
+            }
+        }
+    }
+}
+
+fn scrub_variable_array_secrets(variables: Option<&mut Value>) {
+    let Some(Value::Array(variables)) = variables else {
+        return;
+    };
+    for variable in variables.iter_mut() {
+        let key = variable
+            .get("key")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let is_secret = variable.get("type").and_then(Value::as_str) == Some("secret")
+            || crate::commands::requests::variables::looks_sensitive_variable_key(key);
+        if is_secret {
+            if let Some(obj) = variable.as_object_mut() {
+                if obj.contains_key("value") {
+                    obj.insert("value".into(), Value::String("[REDACTED]".into()));
+                }
+            }
+        }
+    }
+}
+
+fn scrub_header_array_secrets(headers: Option<&mut Value>) {
+    let Some(Value::Array(headers)) = headers else {
+        return;
+    };
+    for header in headers.iter_mut() {
+        let key = header
+            .get("key")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if key == "authorization"
+            || key == "cookie"
+            || key.contains("api-key")
+            || key.contains("token")
+            || key.contains("secret")
+        {
+            if let Some(obj) = header.as_object_mut() {
+                if obj.contains_key("value") {
+                    obj.insert("value".into(), Value::String("[REDACTED]".into()));
+                }
+            }
+        }
+    }
+}
+
+fn scrub_url_query_secrets(url: Option<&mut Value>) {
+    let Some(url) = url else {
+        return;
+    };
+    if let Some(Value::Array(query)) = url.get_mut("query") {
+        for entry in query.iter_mut() {
+            let key = entry
+                .get("key")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if crate::commands::requests::variables::looks_sensitive_variable_key(key) {
+                if let Some(obj) = entry.as_object_mut() {
+                    if obj.contains_key("value") {
+                        obj.insert("value".into(), Value::String("[REDACTED]".into()));
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn sort_order_for_import(position: usize) -> i64 {
@@ -188,6 +310,7 @@ fn sort_order_for_import(position: usize) -> i64 {
 
 fn insert_variable(
     tx: &rusqlite::Transaction<'_>,
+    secrets: &Secrets,
     scope: &str,
     collection_id: &str,
     variable: &Value,
@@ -208,19 +331,32 @@ fn insert_variable(
         .get("type")
         .and_then(Value::as_str)
         .map(ToString::to_string);
+    let sensitive = variable_type.as_deref() == Some("secret")
+        || crate::commands::requests::variables::looks_sensitive_variable_key(key);
+    let stored_value = if sensitive {
+        secrets.encrypt(&value)?
+    } else {
+        value.clone()
+    };
+    let stored_initial = if sensitive {
+        secrets.encrypt(&value)?
+    } else {
+        value
+    };
 
     tx.execute(
         "INSERT OR REPLACE INTO variables
          (scope, collection_id, environment_id, key, initial_value, current_value,
           enabled, sensitive, variable_type, created_at, updated_at)
-         VALUES (?, ?, NULL, ?, ?, ?, ?, 0, ?, ?, ?)",
+         VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)",
         params![
             scope,
             collection_id,
             key,
-            value,
-            value,
+            stored_initial,
+            stored_value,
             enabled as i64,
+            sensitive as i64,
             variable_type,
             now,
             now

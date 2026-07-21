@@ -9,8 +9,10 @@ mod context;
 mod crud;
 mod environments;
 mod import;
+mod sensitive;
 
 pub(super) use context::{load_variable_context, save_script_variable, VariableContext};
+pub(crate) use sensitive::looks_sensitive_variable_key;
 pub use crud::{list_variables, save_variables};
 pub use environments::{
     create_environment, delete_environment, list_environments, rename_environment,

@@ -101,7 +101,8 @@ fn parse_postman_environment(environment: Value) -> ImportedEnvironment {
                         key: key.to_string(),
                         value,
                         enabled,
-                        sensitive: variable_type.as_deref() == Some("secret"),
+                        sensitive: variable_type.as_deref() == Some("secret")
+                            || super::looks_sensitive_variable_key(key),
                         variable_type,
                     })
                 })
