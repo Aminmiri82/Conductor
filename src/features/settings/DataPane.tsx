@@ -2,6 +2,7 @@ import { useState } from "react";
 import { AlertTriangle, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/tauri";
+import { notifyHistoryChanged } from "@/features/history/historyEvents";
 import { SectionTitle } from "@/features/settings/settingsShared";
 
 export function DataPane() {
@@ -19,6 +20,7 @@ export function DataPane() {
     try {
       const count = await api.purgeRequestHistory();
       setPurgedCount(count);
+      notifyHistoryChanged();
     } catch (caught) {
       setError(String(caught));
     } finally {

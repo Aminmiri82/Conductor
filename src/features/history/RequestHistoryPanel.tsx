@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, RefreshCw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { api } from "@/lib/tauri";
 import type { RequestHistoryEntry } from "@/features/types";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
+import { HISTORY_CHANGED_EVENT } from "@/features/history/historyEvents";
 
 const HISTORY_LIMIT = 100;
 
@@ -20,23 +21,39 @@ export function RequestHistoryPanel({
   const [entries, setEntries] = useState<RequestHistoryEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const loadGeneration = useRef(0);
 
   const load = useCallback(async () => {
+    const generation = ++loadGeneration.current;
     setLoading(true);
     setError(null);
     try {
       const next = await api.listRequestHistory(HISTORY_LIMIT, null);
+      if (generation !== loadGeneration.current) return;
       setEntries(next);
     } catch (caught) {
+      if (generation !== loadGeneration.current) return;
       setError(String(caught));
     } finally {
-      setLoading(false);
+      if (generation === loadGeneration.current) {
+        setLoading(false);
+      }
     }
   }, []);
 
   useEffect(() => {
     if (!open) return;
     void load();
+  }, [load, open]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onHistoryChanged() {
+      void load();
+    }
+    window.addEventListener(HISTORY_CHANGED_EVENT, onHistoryChanged);
+    return () =>
+      window.removeEventListener(HISTORY_CHANGED_EVENT, onHistoryChanged);
   }, [load, open]);
 
   useEffect(() => {

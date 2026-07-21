@@ -58,6 +58,7 @@ export function CollectionSidebar() {
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const skipRenameCommitRef = useRef(false);
   const dnd = useTreeDnDValue();
 
   const activeCollection = collections.find(
@@ -94,11 +95,16 @@ export function CollectionSidebar() {
 
   function beginRename() {
     if (!activeCollection) return;
+    skipRenameCommitRef.current = false;
     setRenameValue(activeCollection.name);
     setRenaming(true);
   }
 
   async function commitRename() {
+    if (skipRenameCommitRef.current) {
+      skipRenameCommitRef.current = false;
+      return;
+    }
     if (!activeCollectionId) return;
     const trimmed = renameValue.trim();
     setRenaming(false);
@@ -107,6 +113,7 @@ export function CollectionSidebar() {
   }
 
   function cancelRename() {
+    skipRenameCommitRef.current = true;
     setRenaming(false);
   }
 
@@ -121,14 +128,24 @@ export function CollectionSidebar() {
 
   async function exportActiveCollection() {
     if (!activeCollectionId || !activeCollection) return;
-    const suggestedName = `${activeCollection.name || "collection"}.postman_collection.json`;
-    const path = await save({
-      defaultPath: suggestedName,
-      filters: [{ name: "Postman Collection", extensions: ["json"] }],
-    });
-    if (!path) return;
-    const contents = await exportCollection(activeCollectionId);
-    await api.saveTextFile(path, contents);
+    const confirmed = window.confirm(
+      `Export "${activeCollection.name}" as Postman JSON?\n\nAuth credentials are written in plaintext so the collection works when re-imported. Sensitive collection variables are exported with empty values.`,
+    );
+    if (!confirmed) return;
+    try {
+      const suggestedName = `${activeCollection.name || "collection"}.postman_collection.json`;
+      const path = await save({
+        defaultPath: suggestedName,
+        filters: [{ name: "Postman Collection", extensions: ["json"] }],
+      });
+      if (!path) return;
+      const contents = await exportCollection(activeCollectionId);
+      await api.saveTextFile(path, contents);
+    } catch (error) {
+      useWorkspaceStore.setState({
+        error: `Export failed: ${String(error)}`,
+      });
+    }
   }
 
   return (

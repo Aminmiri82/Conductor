@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import {
   buildCurlCommand,
   copyCurlToClipboard,
+  curlContainsSecrets,
 } from "@/features/requests/copyAsCurl";
 import {
   ResizableHandle,
@@ -76,17 +77,27 @@ export function RequestWorkspace() {
 
   async function handleCopyAsCurl() {
     if (!request) return;
+    const hasSecrets = curlContainsSecrets(request);
+    const includeSecrets =
+      !hasSecrets ||
+      window.confirm(
+        "This request includes secrets (tokens, passwords, or API keys).\n\nOK — copy with secrets\nCancel — copy with secrets redacted",
+      );
     const command = buildCurlCommand({
       method: request.method,
       request,
       preview,
+      redactSecrets: !includeSecrets,
     });
     try {
       await copyCurlToClipboard(command);
       setCopiedCurl(true);
+      useWorkspaceStore.getState().clearError();
       window.setTimeout(() => setCopiedCurl(false), 1500);
-    } catch {
-      // Clipboard failed — nothing else to do beyond leaving the state alone.
+    } catch (error) {
+      useWorkspaceStore.setState({
+        error: `Could not copy cURL: ${String(error)}`,
+      });
     }
   }
 
@@ -222,6 +233,11 @@ export function RequestWorkspace() {
                     <span className="ml-2 text-[var(--app-dim)]">
                       {response.durationMs} ms
                     </span>
+                    {response.bodyTruncated ? (
+                      <span className="ml-2 text-amber-300">
+                        body truncated (10 MiB cap)
+                      </span>
+                    ) : null}
                     {response.updatedVariables.length ? (
                       <span className="ml-2 text-emerald-300">
                         {response.updatedVariables.length} variable
