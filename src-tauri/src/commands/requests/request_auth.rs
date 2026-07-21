@@ -1,13 +1,15 @@
 use reqwest::header::{HeaderName, HeaderValue};
 use rusqlite::{params, OptionalExtension};
+use serde_json::Value;
 
 use crate::commands::models::{AuthConfig, RequestDetail};
-use crate::storage::StorageError;
+use crate::storage::{Secrets, StorageError};
 
 use super::{variable_resolver::resolve_text, variables::VariableContext};
 
 pub(super) fn inherited_auth_for_request(
     connection: &rusqlite::Connection,
+    secrets: &Secrets,
     request: &RequestDetail,
 ) -> Result<Option<AuthConfig>, StorageError> {
     let mut parent_id: Option<String> = connection
@@ -30,7 +32,11 @@ pub(super) fn inherited_auth_for_request(
         let Some((auth_json, next_parent_id)) = row else {
             break;
         };
-        if let Some(auth) = auth_json.as_deref().and_then(parse_json_optional) {
+        if let Some(auth) = auth_json
+            .as_deref()
+            .and_then(|value| decode_auth_json(secrets, value).transpose())
+            .transpose()?
+        {
             return Ok(Some(auth));
         }
         parent_id = next_parent_id;
@@ -45,13 +51,18 @@ pub(super) fn inherited_auth_for_request(
         .optional()?;
 
     if let Some(auth_json) = collection_auth {
-        if let Some(auth) = auth_json.as_deref().and_then(parse_json_optional) {
+        if let Some(auth) = auth_json
+            .as_deref()
+            .and_then(|value| decode_auth_json(secrets, value).transpose())
+            .transpose()?
+        {
             return Ok(Some(auth));
         }
     }
 
     Ok(None)
 }
+
 pub(super) fn effective_auth(
     request_auth: Option<&AuthConfig>,
     inherited_auth: Option<&AuthConfig>,
@@ -62,6 +73,7 @@ pub(super) fn effective_auth(
         None => inherited_auth.cloned(),
     }
 }
+
 pub(super) fn apply_auth(
     mut builder: reqwest::RequestBuilder,
     auth: Option<&AuthConfig>,
@@ -112,6 +124,68 @@ pub(super) fn apply_auth(
 
     Ok(builder)
 }
-fn parse_json_optional<T: serde::de::DeserializeOwned>(value: &str) -> Option<T> {
-    serde_json::from_str(value).ok()
+
+const AUTH_SECRET_FIELDS: &[&str] = &["token", "password", "value"];
+
+/// Parse an auth JSON blob stored in the database and return the plaintext
+/// [`AuthConfig`] used for IPC. Sensitive fields are decrypted.
+pub(crate) fn decode_auth_json(
+    secrets: &Secrets,
+    json: &str,
+) -> Result<Option<AuthConfig>, StorageError> {
+    if json.trim().is_empty() {
+        return Ok(None);
+    }
+    let Ok(mut value) = serde_json::from_str::<Value>(json) else {
+        return Ok(None);
+    };
+    for field in AUTH_SECRET_FIELDS {
+        if let Some(existing) = value.get(*field).and_then(Value::as_str) {
+            if !existing.is_empty() {
+                let plain = secrets.decrypt(existing)?;
+                value[*field] = Value::String(plain);
+            }
+        }
+    }
+    Ok(serde_json::from_value(value).ok())
+}
+
+/// Encode an [`AuthConfig`] as a JSON string suitable for persistence, with
+/// sensitive fields encrypted in place.
+pub(crate) fn encode_auth_json(
+    secrets: &Secrets,
+    auth: &AuthConfig,
+) -> Result<String, StorageError> {
+    encode_auth_value(secrets, serde_json::to_value(auth)?)
+}
+
+/// Encrypt sensitive fields inside an arbitrary auth JSON `Value`, then
+/// serialize it. Useful when the value came straight from `serde_json!()` or
+/// from an imported document.
+pub(crate) fn encode_auth_value(
+    secrets: &Secrets,
+    mut value: Value,
+) -> Result<String, StorageError> {
+    for field in AUTH_SECRET_FIELDS {
+        if let Some(existing) = value.get(*field).and_then(Value::as_str) {
+            if !existing.is_empty() {
+                let encrypted = secrets.encrypt(existing)?;
+                value[*field] = Value::String(encrypted);
+            }
+        }
+    }
+    Ok(value.to_string())
+}
+
+/// Redact sensitive fields (replace with a placeholder) inside an auth-like
+/// JSON value. Used when logging or storing request history.
+pub(crate) fn redact_auth_value(mut value: Value) -> Value {
+    for field in AUTH_SECRET_FIELDS {
+        if let Some(existing) = value.get(*field).and_then(Value::as_str) {
+            if !existing.is_empty() {
+                value[*field] = Value::String("[REDACTED]".to_string());
+            }
+        }
+    }
+    value
 }

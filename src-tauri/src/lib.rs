@@ -1,12 +1,21 @@
 mod commands;
 mod storage;
 
-use commands::collections::{get_collection_tree, import_postman_collection, list_collections};
+use std::sync::Mutex;
+use std::time::Duration;
+
+use commands::collections::{
+    delete_collection, export_postman_collection, get_collection_tree, import_postman_collection,
+    list_collections, rename_collection,
+};
+use commands::history::{
+    get_request_history, list_request_history, purge_expired_request_history, purge_request_history,
+};
 use commands::requests::{
-    create_environment, create_folder, create_request, delete_environment, delete_node,
-    delete_request, duplicate_request, get_request, import_postman_environment, list_environments,
-    list_variables, move_node, rename_environment, resolve_request, save_request, save_text_file,
-    save_variables, send_request,
+    cancel_send_request, create_environment, create_folder, create_request, delete_environment,
+    delete_node, delete_request, duplicate_request, get_request, import_postman_environment,
+    list_environments, list_variables, move_node, rename_environment, resolve_request,
+    save_request, save_text_file, save_variables, send_request,
 };
 use commands::storage::{database_status, get_workspace_state, set_workspace_state};
 use storage::Database;
@@ -14,32 +23,61 @@ use tauri::{
     menu::{Menu, MenuItemBuilder, PredefinedMenuItem, Submenu},
     Emitter, Manager,
 };
+use tokio_util::sync::CancellationToken;
+
+/// Cap responses to 10 MiB so a runaway server can't OOM the client.
+pub const MAX_RESPONSE_BODY_BYTES: usize = 10 * 1024 * 1024;
+/// Default HTTP client timeout for outbound API calls.
+pub const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct AppState {
     database: Database,
     http_client: reqwest::Client,
+    /// Token used to cancel the currently in-flight `send_request` invocation.
+    cancel_token: Mutex<CancellationToken>,
 }
 
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {name}! You've been greeted from Rust!")
+impl AppState {
+    /// Return the current cancellation token and rotate it so a new send
+    /// starts fresh.
+    pub fn take_cancel_token(&self) -> CancellationToken {
+        let mut guard = self
+            .cancel_token
+            .lock()
+            .expect("cancel token mutex poisoned");
+        let previous = guard.clone();
+        // Rotate so a subsequent call to `cancel_send_request` doesn't
+        // pre-cancel a request that hasn't started yet.
+        *guard = CancellationToken::new();
+        previous
+    }
+
+    /// Cancel the currently registered send token, if any.
+    pub fn cancel_current_send(&self) {
+        let guard = self
+            .cancel_token
+            .lock()
+            .expect("cancel token mutex poisoned");
+        guard.cancel();
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
             let database = Database::open(app_data_dir)?;
             let http_client = reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::limited(10))
+                .timeout(HTTP_TIMEOUT)
                 .build()?;
 
             app.manage(AppState {
                 database,
                 http_client,
+                cancel_token: Mutex::new(CancellationToken::new()),
             });
             app.set_menu(build_app_menu(app.handle())?)?;
             Ok(())
@@ -80,6 +118,9 @@ pub fn run() {
             list_collections,
             list_environments,
             list_variables,
+            rename_collection,
+            delete_collection,
+            export_postman_collection,
             rename_environment,
             resolve_request,
             move_node,
@@ -87,7 +128,11 @@ pub fn run() {
             save_text_file,
             save_variables,
             send_request,
-            greet
+            cancel_send_request,
+            list_request_history,
+            get_request_history,
+            purge_request_history,
+            purge_expired_request_history,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

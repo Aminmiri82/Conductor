@@ -280,9 +280,65 @@ pub struct SendRequestResult {
     pub body_bytes: usize,
     pub body_content_type: Option<String>,
     pub body_format: String,
+    pub body_truncated: bool,
     pub updated_variables: Vec<KeyValue>,
     pub variable_warnings: Vec<String>,
     pub unresolved_variables: Vec<UnresolvedVariable>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestHistoryEntry {
+    pub id: String,
+    pub request_id: Option<String>,
+    pub collection_id: Option<String>,
+    /// Convenience alias; kept `null` for now because history rows do not
+    /// snapshot the display name and the frontend can look it up on demand.
+    pub name: Option<String>,
+    pub method: String,
+    pub url: String,
+    pub status_code: Option<i64>,
+    pub status_text: Option<String>,
+    pub duration_ms: Option<i64>,
+    pub body_bytes: Option<i64>,
+    pub body_content_type: Option<String>,
+    pub error: Option<String>,
+    /// `created_at` mirrors the DB column. Also exposed as `executed_at` to
+    /// match the frontend contract.
+    pub executed_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListRequestHistoryInput {
+    #[serde(default)]
+    pub limit: Option<i64>,
+    #[serde(default)]
+    pub collection_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameCollectionInput {
+    pub collection_id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestHistoryDetail {
+    pub id: String,
+    pub request_id: Option<String>,
+    pub collection_id: Option<String>,
+    pub method: String,
+    pub url: String,
+    pub status_code: Option<i64>,
+    pub duration_ms: Option<i64>,
+    pub created_at: String,
+    /// Redacted request snapshot (secrets replaced with `[REDACTED]`).
+    pub request_json: Option<Value>,
+    /// Response metadata: headers, contentType, bodyBytes, bodyFormat, bodyTruncated.
+    pub response_meta_json: Option<Value>,
 }
 
 fn enabled() -> bool {

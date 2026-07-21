@@ -101,6 +101,7 @@ impl Secrets {
     }
 
     /// Whether the input looks like an already-encrypted payload.
+    #[allow(dead_code)]
     pub fn is_encrypted(value: &str) -> bool {
         is_encrypted(value)
     }

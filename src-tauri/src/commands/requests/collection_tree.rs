@@ -4,6 +4,7 @@ use tauri::State;
 use uuid::Uuid;
 
 use crate::commands::models::{CreateFolderInput, MoveNodeInput};
+use crate::commands::{AppError, AppResult};
 use crate::{storage::StorageError, AppState};
 
 const SORT_ORDER_STEP: i64 = 1024;
@@ -12,7 +13,7 @@ const SORT_ORDER_STEP: i64 = 1024;
 pub fn create_folder(
     input: CreateFolderInput,
     state: State<'_, AppState>,
-) -> Result<String, String> {
+) -> AppResult<String> {
     let now = Utc::now().to_rfc3339();
     let node_id = Uuid::new_v4().to_string();
 
@@ -45,10 +46,10 @@ pub fn create_folder(
             tx.commit()?;
             Ok(node_id.clone())
         })
-        .map_err(|error| error.to_string())
+        .map_err(AppError::from)
 }
 #[tauri::command]
-pub fn delete_node(node_id: String, state: State<'_, AppState>) -> Result<(), String> {
+pub fn delete_node(node_id: String, state: State<'_, AppState>) -> AppResult<()> {
     state
         .database
         .with_connection(|connection| {
@@ -64,10 +65,10 @@ pub fn delete_node(node_id: String, state: State<'_, AppState>) -> Result<(), St
             tx.commit()?;
             Ok(())
         })
-        .map_err(|error| error.to_string())
+        .map_err(AppError::from)
 }
 #[tauri::command]
-pub fn move_node(input: MoveNodeInput, state: State<'_, AppState>) -> Result<(), String> {
+pub fn move_node(input: MoveNodeInput, state: State<'_, AppState>) -> AppResult<()> {
     state
         .database
         .with_connection(|connection| {
@@ -105,7 +106,7 @@ pub fn move_node(input: MoveNodeInput, state: State<'_, AppState>) -> Result<(),
             tx.commit()?;
             Ok(())
         })
-        .map_err(|error| error.to_string())
+        .map_err(AppError::from)
 }
 pub(super) fn sort_order_for_position(
     tx: &rusqlite::Transaction<'_>,
