@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { api, isCancelledError } from "@/lib/tauri";
+import { notifyHistoryChanged } from "@/features/history/historyEvents";
 import {
   applyPathParamRowChanges,
   buildQueryString,
@@ -570,6 +571,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       );
       useResponseStore.getState().setResponse(request.id, response);
       set({ sending: false, cancelling: false });
+      notifyHistoryChanged();
       await get().resolveActiveRequest();
     } catch (error) {
       const cancelled = isCancelledError(error);
@@ -593,6 +595,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     } catch (error) {
       if (!isCancelledError(error)) {
         set({ error: String(error) });
+      }
+    } finally {
+      // If send already finished while cancel was in flight, clear the flag.
+      if (!get().sending) {
+        set({ cancelling: false });
       }
     }
   },
