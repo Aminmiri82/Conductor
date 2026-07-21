@@ -40,6 +40,10 @@ pub enum SecretsError {
 ///
 /// The key is stored in the OS keyring (preferred) with a fallback to a
 /// permissions-restricted file inside the app data directory.
+///
+/// Resolution never creates a second key when any persisted key already
+/// exists (file or keyring), so ciphertext stays decryptable across
+/// keyring availability flaps.
 #[derive(Clone)]
 pub struct Secrets {
     inner: Arc<SecretsInner>,
@@ -62,7 +66,7 @@ impl Secrets {
 
     /// Encrypt a plaintext value and return the tagged ciphertext string.
     pub fn encrypt(&self, plaintext: &str) -> Result<String, SecretsError> {
-        if is_encrypted(plaintext) {
+        if looks_like_ciphertext(plaintext) {
             return Ok(plaintext.to_string());
         }
         let mut nonce_bytes = [0u8; NONCE_LEN];
@@ -103,48 +107,56 @@ impl Secrets {
     /// Whether the input looks like an already-encrypted payload.
     #[allow(dead_code)]
     pub fn is_encrypted(value: &str) -> bool {
-        is_encrypted(value)
+        looks_like_ciphertext(value)
     }
 }
 
 pub fn is_encrypted(value: &str) -> bool {
-    value.starts_with(CIPHERTEXT_PREFIX)
+    looks_like_ciphertext(value)
+}
+
+/// True only when the value has a valid `enc:v1:` payload (prefix + base64
+/// body long enough to hold a nonce). A bare prefix alone is not treated as
+/// ciphertext, so plaintext that happens to start with `enc:v1:` is still
+/// encrypted.
+fn looks_like_ciphertext(value: &str) -> bool {
+    let Some(body) = value.strip_prefix(CIPHERTEXT_PREFIX) else {
+        return false;
+    };
+    match B64.decode(body.as_bytes()) {
+        Ok(raw) if raw.len() > NONCE_LEN => true,
+        _ => false,
+    }
 }
 
 fn resolve_master_key(app_data_dir: &Path) -> Result<[u8; KEY_LEN], SecretsError> {
-    // Try the OS keyring first.
-    match load_from_keyring() {
-        Ok(Some(bytes)) => return Ok(bytes),
-        Ok(None) => {
-            let generated = generate_key();
-            if store_in_keyring(&generated).is_ok() {
-                return Ok(generated);
-            }
-            // Fall through to file-based storage if we cannot persist to keyring.
-        }
-        Err(_) => {
-            // Keyring unavailable — fall back to file-based storage.
-        }
+    // Prefer an existing file key as the single source of truth. If the
+    // keyring later becomes available, migrate that same key into it —
+    // never mint a second master key.
+    if let Some(file_key) = try_load_key_file(app_data_dir)? {
+        let _ = store_in_keyring(&file_key);
+        return Ok(file_key);
     }
 
-    load_or_create_key_file(app_data_dir)
+    match load_from_keyring() {
+        Ok(Some(bytes)) => return Ok(bytes),
+        Ok(None) | Err(_) => {}
+    }
+
+    // Neither store has a key yet — generate once.
+    let generated = generate_key();
+    if store_in_keyring(&generated).is_ok() {
+        return Ok(generated);
+    }
+    write_key_file(&app_data_dir.join(KEY_FILE_NAME), &generated)?;
+    Ok(generated)
 }
 
 fn load_from_keyring() -> Result<Option<[u8; KEY_LEN]>, SecretsError> {
     let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT)
         .map_err(|error| SecretsError::Backend(error.to_string()))?;
     match entry.get_password() {
-        Ok(value) => {
-            let bytes = B64
-                .decode(value.as_bytes())
-                .map_err(|_| SecretsError::InvalidCiphertext)?;
-            if bytes.len() != KEY_LEN {
-                return Err(SecretsError::InvalidCiphertext);
-            }
-            let mut out = [0u8; KEY_LEN];
-            out.copy_from_slice(&bytes);
-            Ok(Some(out))
-        }
+        Ok(value) => Ok(Some(decode_key_bytes(&value)?)),
         Err(keyring::Error::NoEntry) => Ok(None),
         Err(error) => Err(SecretsError::Backend(error.to_string())),
     }
@@ -158,27 +170,28 @@ fn store_in_keyring(key: &[u8; KEY_LEN]) -> Result<(), SecretsError> {
         .map_err(|error| SecretsError::Backend(error.to_string()))
 }
 
-fn load_or_create_key_file(app_data_dir: &Path) -> Result<[u8; KEY_LEN], SecretsError> {
-    fs::create_dir_all(app_data_dir).map_err(|source| SecretsError::FileOperation {
-        path: app_data_dir.to_path_buf(),
+fn try_load_key_file(app_data_dir: &Path) -> Result<Option<[u8; KEY_LEN]>, SecretsError> {
+    let path = app_data_dir.join(KEY_FILE_NAME);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let contents = fs::read_to_string(&path).map_err(|source| SecretsError::FileOperation {
+        path: path.clone(),
         source,
     })?;
-    let path = app_data_dir.join(KEY_FILE_NAME);
-    if let Ok(contents) = fs::read_to_string(&path) {
-        let bytes = B64
-            .decode(contents.trim().as_bytes())
-            .map_err(|_| SecretsError::InvalidCiphertext)?;
-        if bytes.len() != KEY_LEN {
-            return Err(SecretsError::InvalidCiphertext);
-        }
-        let mut out = [0u8; KEY_LEN];
-        out.copy_from_slice(&bytes);
-        return Ok(out);
-    }
+    Ok(Some(decode_key_bytes(contents.trim())?))
+}
 
-    let generated = generate_key();
-    write_key_file(&path, &generated)?;
-    Ok(generated)
+fn decode_key_bytes(value: &str) -> Result<[u8; KEY_LEN], SecretsError> {
+    let bytes = B64
+        .decode(value.as_bytes())
+        .map_err(|_| SecretsError::InvalidCiphertext)?;
+    if bytes.len() != KEY_LEN {
+        return Err(SecretsError::InvalidCiphertext);
+    }
+    let mut out = [0u8; KEY_LEN];
+    out.copy_from_slice(&bytes);
+    Ok(out)
 }
 
 fn generate_key() -> [u8; KEY_LEN] {
@@ -188,18 +201,43 @@ fn generate_key() -> [u8; KEY_LEN] {
 }
 
 fn write_key_file(path: &Path, key: &[u8; KEY_LEN]) -> Result<(), SecretsError> {
-    fs::write(path, B64.encode(key)).map_err(|source| SecretsError::FileOperation {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    restrict_file_permissions(path)?;
-    Ok(())
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| SecretsError::FileOperation {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    write_key_file_atomic(path, key)
 }
 
 #[cfg(unix)]
-fn restrict_file_permissions(path: &Path) -> Result<(), SecretsError> {
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = fs::metadata(path)
+fn write_key_file_atomic(path: &Path, key: &[u8; KEY_LEN]) -> Result<(), SecretsError> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    // Create with 0600 so the key is never briefly world-readable.
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|source| SecretsError::FileOperation {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    file.write_all(B64.encode(key).as_bytes())
+        .map_err(|source| SecretsError::FileOperation {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    file.sync_all()
+        .map_err(|source| SecretsError::FileOperation {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    let mut perms = file
+        .metadata()
         .map_err(|source| SecretsError::FileOperation {
             path: path.to_path_buf(),
             source,
@@ -209,17 +247,25 @@ fn restrict_file_permissions(path: &Path) -> Result<(), SecretsError> {
     fs::set_permissions(path, perms).map_err(|source| SecretsError::FileOperation {
         path: path.to_path_buf(),
         source,
-    })
+    })?;
+    Ok(())
 }
 
 #[cfg(not(unix))]
-fn restrict_file_permissions(_path: &Path) -> Result<(), SecretsError> {
-    Ok(())
+fn write_key_file_atomic(path: &Path, key: &[u8; KEY_LEN]) -> Result<(), SecretsError> {
+    // Windows: rely on the user profile ACL for the app data directory.
+    // A full DACL lockdown would need platform-specific crates; document
+    // that keyring is preferred on desktop.
+    fs::write(path, B64.encode(key)).map_err(|source| SecretsError::FileOperation {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn test_secrets() -> Secrets {
         let key = [0x42u8; KEY_LEN];
@@ -227,6 +273,16 @@ mod tests {
         Secrets {
             inner: Arc::new(SecretsInner { cipher }),
         }
+    }
+
+    fn temp_dir() -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("conductor-secrets-{nanos}"));
+        fs::create_dir_all(&path).expect("temp dir");
+        path
     }
 
     #[test]
@@ -249,5 +305,23 @@ mod tests {
     fn decrypt_passthrough_for_plaintext() {
         let secrets = test_secrets();
         assert_eq!(secrets.decrypt("plain-text").unwrap(), "plain-text");
+    }
+
+    #[test]
+    fn bare_prefix_is_not_treated_as_ciphertext() {
+        let secrets = test_secrets();
+        let weird = format!("{CIPHERTEXT_PREFIX}not-valid");
+        let encrypted = secrets.encrypt(&weird).unwrap();
+        assert_ne!(encrypted, weird);
+        assert_eq!(secrets.decrypt(&encrypted).unwrap(), weird);
+    }
+
+    #[test]
+    fn file_key_is_reused_across_resolve_calls() {
+        let dir = temp_dir();
+        let first = resolve_master_key(&dir).expect("first resolve");
+        let second = resolve_master_key(&dir).expect("second resolve");
+        assert_eq!(first, second);
+        let _ = fs::remove_dir_all(&dir);
     }
 }

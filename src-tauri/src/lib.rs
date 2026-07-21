@@ -33,32 +33,77 @@ pub const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 pub struct AppState {
     database: Database,
     http_client: reqwest::Client,
-    /// Token used to cancel the currently in-flight `send_request` invocation.
-    cancel_token: Mutex<CancellationToken>,
+    /// Gate holding the token shared by the active `send_request` and cancel.
+    cancel_gate: CancelGate,
+}
+
+/// Owns the in-flight send cancellation token.
+///
+/// `begin()` installs a fresh token into the mutex and returns the same
+/// token to the caller. `cancel()` cancels whatever token is currently
+/// installed — so cancel always targets the active send.
+struct CancelGate {
+    token: Mutex<CancellationToken>,
+}
+
+impl CancelGate {
+    fn new() -> Self {
+        Self {
+            token: Mutex::new(CancellationToken::new()),
+        }
+    }
+
+    /// Abort any previous send, install a fresh token, and return it.
+    fn begin(&self) -> CancellationToken {
+        let mut guard = self.token.lock().expect("cancel token mutex poisoned");
+        guard.cancel();
+        let next = CancellationToken::new();
+        *guard = next.clone();
+        next
+    }
+
+    fn cancel(&self) {
+        self.token
+            .lock()
+            .expect("cancel token mutex poisoned")
+            .cancel();
+    }
 }
 
 impl AppState {
-    /// Return the current cancellation token and rotate it so a new send
-    /// starts fresh.
+    /// Return the cancellation token for this send (also stored for cancel).
     pub fn take_cancel_token(&self) -> CancellationToken {
-        let mut guard = self
-            .cancel_token
-            .lock()
-            .expect("cancel token mutex poisoned");
-        let previous = guard.clone();
-        // Rotate so a subsequent call to `cancel_send_request` doesn't
-        // pre-cancel a request that hasn't started yet.
-        *guard = CancellationToken::new();
-        previous
+        self.cancel_gate.begin()
     }
 
     /// Cancel the currently registered send token, if any.
     pub fn cancel_current_send(&self) {
-        let guard = self
-            .cancel_token
-            .lock()
-            .expect("cancel token mutex poisoned");
-        guard.cancel();
+        self.cancel_gate.cancel();
+    }
+}
+
+#[cfg(test)]
+mod cancel_gate_tests {
+    use super::*;
+
+    #[test]
+    fn cancel_targets_the_active_send_token() {
+        let gate = CancelGate::new();
+        let active = gate.begin();
+        assert!(!active.is_cancelled());
+        gate.cancel();
+        assert!(active.is_cancelled());
+    }
+
+    #[test]
+    fn begin_rotates_so_prior_token_is_cancelled() {
+        let gate = CancelGate::new();
+        let first = gate.begin();
+        let second = gate.begin();
+        assert!(first.is_cancelled());
+        assert!(!second.is_cancelled());
+        gate.cancel();
+        assert!(second.is_cancelled());
     }
 }
 
@@ -77,7 +122,7 @@ pub fn run() {
             app.manage(AppState {
                 database,
                 http_client,
-                cancel_token: Mutex::new(CancellationToken::new()),
+                cancel_gate: CancelGate::new(),
             });
             app.set_menu(build_app_menu(app.handle())?)?;
             Ok(())

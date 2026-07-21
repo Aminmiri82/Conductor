@@ -5,6 +5,9 @@ use tauri::State;
 use crate::commands::models::{
     ListRequestHistoryInput, RequestHistoryDetail, RequestHistoryEntry,
 };
+use crate::commands::requests::history_redaction::{
+    redact_request_value, redact_response_meta, redact_url,
+};
 use crate::commands::{AppError, AppResult};
 use crate::storage::StorageError;
 use crate::AppState;
@@ -40,7 +43,8 @@ pub fn list_request_history(
                     let response_meta_json: Option<String> = row.get(7)?;
                     let meta = response_meta_json
                         .as_deref()
-                        .and_then(|value| serde_json::from_str::<Value>(value).ok());
+                        .and_then(|value| serde_json::from_str::<Value>(value).ok())
+                        .map(redact_response_meta);
                     let body_bytes = meta
                         .as_ref()
                         .and_then(|value| value.get("bodyBytes"))
@@ -51,13 +55,14 @@ pub fn list_request_history(
                         .and_then(Value::as_str)
                         .map(ToString::to_string);
                     let created_at: String = row.get(8)?;
+                    let url: String = row.get(4)?;
                     Ok(RequestHistoryEntry {
                         id: row.get(0)?,
                         request_id: row.get(1)?,
                         collection_id: row.get(2)?,
                         name: None,
                         method: row.get(3)?,
-                        url: row.get(4)?,
+                        url: redact_url(&url),
                         status_code: row.get(5)?,
                         status_text: None,
                         duration_ms: row.get(6)?,
@@ -94,20 +99,26 @@ pub fn get_request_history(
 
         let request_json: String = row.get(7)?;
         let response_meta_json: Option<String> = row.get(8)?;
+        let url: String = row.get(4)?;
+
+        let request_json = serde_json::from_str::<Value>(&request_json).ok().map(|mut value| {
+            redact_request_value(&mut value);
+            value
+        });
+        let response_meta_json = response_meta_json
+            .and_then(|value| serde_json::from_str::<Value>(&value).ok())
+            .map(redact_response_meta);
 
         Ok(Some(RequestHistoryDetail {
             id: row.get(0)?,
             request_id: row.get(1)?,
             collection_id: row.get(2)?,
             method: row.get(3)?,
-            url: row.get(4)?,
+            url: redact_url(&url),
             status_code: row.get(5)?,
             duration_ms: row.get(6)?,
-            // request_json is stored pre-redacted at insert time, but re-run
-            // the redaction defensively in case a caller stored plaintext.
-            request_json: serde_json::from_str::<Value>(&request_json).ok(),
-            response_meta_json: response_meta_json
-                .and_then(|value| serde_json::from_str::<Value>(&value).ok()),
+            request_json,
+            response_meta_json,
             created_at: row.get(9)?,
         }))
     })?)
