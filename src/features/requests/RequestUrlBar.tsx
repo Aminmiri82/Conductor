@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   Save,
   SendHorizontal,
+  Square,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,22 +23,26 @@ const methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 export function RequestUrlBar({
   request,
   sending,
+  cancelling,
   saving,
   dirty,
   unresolvedKeys,
   variableValues,
   onChange,
   onSend,
+  onCancel,
   onSave,
 }: {
   request: RequestDetail;
   sending: boolean;
+  cancelling: boolean;
   saving: boolean;
   dirty: boolean;
   unresolvedKeys: string[];
   variableValues: Record<string, string>;
   onChange: (patch: Partial<RequestDetail>) => void;
   onSend: () => void;
+  onCancel: () => void;
   onSave: () => void;
 }) {
   const urlMode = useWorkspaceUiStore(
@@ -95,15 +100,27 @@ export function RequestUrlBar({
       >
         <Save className={`size-4 ${saving ? "opacity-60" : ""}`} />
       </Button>
-      <Button
-        className="h-8 shrink-0 gap-1.5 bg-[var(--app-accent)] px-3 text-xs font-bold uppercase tracking-[0.04em] text-[var(--app-accent-fg)] hover:bg-[var(--app-accent)]/90"
-        onClick={onSend}
-        disabled={sending}
-        style={{ borderRadius: "var(--app-radius)" }}
-      >
-        <SendHorizontal className="size-3.5" />
-        {sending ? "Sending" : "Send"}
-      </Button>
+      {sending ? (
+        <Button
+          className="h-8 shrink-0 gap-1.5 border border-destructive/60 bg-destructive/10 px-3 text-xs font-bold uppercase tracking-[0.04em] text-destructive hover:bg-destructive/20"
+          onClick={onCancel}
+          disabled={cancelling}
+          style={{ borderRadius: "var(--app-radius)" }}
+          title="Cancel request"
+        >
+          <Square className="size-3.5 fill-current" />
+          {cancelling ? "Cancelling" : "Cancel"}
+        </Button>
+      ) : (
+        <Button
+          className="h-8 shrink-0 gap-1.5 bg-[var(--app-accent)] px-3 text-xs font-bold uppercase tracking-[0.04em] text-[var(--app-accent-fg)] hover:bg-[var(--app-accent)]/90"
+          onClick={onSend}
+          style={{ borderRadius: "var(--app-radius)" }}
+        >
+          <SendHorizontal className="size-3.5" />
+          Send
+        </Button>
+      )}
     </div>
   );
 }

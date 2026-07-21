@@ -37,10 +37,14 @@ export function RequestWorkspace() {
   const sendActiveRequest = useWorkspaceStore(
     (state) => state.sendActiveRequest,
   );
+  const cancelSendRequest = useWorkspaceStore(
+    (state) => state.cancelSendRequest,
+  );
   const saveActiveRequest = useWorkspaceStore(
     (state) => state.saveActiveRequest,
   );
   const sending = useWorkspaceStore((state) => state.sending);
+  const cancelling = useWorkspaceStore((state) => state.cancelling);
   const saving = useWorkspaceStore((state) => state.saving);
   const activeTab = useWorkspaceStore((state) =>
     state.tabs.find((tab) => tab.requestId === state.activeRequestId),
@@ -85,12 +89,14 @@ export function RequestWorkspace() {
         <RequestUrlBar
           request={request}
           sending={sending}
+          cancelling={cancelling}
           saving={saving}
           dirty={Boolean(activeRequestId && activeTab?.dirty)}
           unresolvedKeys={unresolved.map((item) => item.key)}
           variableValues={variableValues}
           onChange={updateRequest}
           onSend={() => void sendActiveRequest()}
+          onCancel={() => void cancelSendRequest()}
           onSave={() => void saveActiveRequest()}
         />
         {unresolved.length ? (
