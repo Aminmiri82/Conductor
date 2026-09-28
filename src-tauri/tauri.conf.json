@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "conductor",
+  "productName": "Conductor",
   "version": "0.1.0",
   "identifier": "com.yaramiri.conductor",
   "build": {

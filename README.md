@@ -32,6 +32,16 @@ pnpm install
 pnpm tauri dev
 ```
 
+## Build a local Mac app
+
+With the development prerequisites installed, run:
+
+```bash
+pnpm build:mac
+```
+
+This creates `src-tauri/target/release/bundle/macos/Conductor.app` for your Mac's architecture. Copy it to Applications and open it normally; no development server is needed. This build uses a local ad hoc signature and does not require an Apple developer account. Distribution to other Macs has separate signing and notarization requirements.
+
 ## Contributing
 
 Contributions are welcome, as long as they're good. Open an issue to discuss anything non-trivial before opening a PR, keep changes focused, and match the existing style.
