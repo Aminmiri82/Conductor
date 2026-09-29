@@ -10,7 +10,9 @@ import {
 describe("path params", () => {
   it("only treats `:name` segments as path params, not ports or variables", () => {
     expect(
-      parsePathParamKeys("http://localhost:8080/{{version}}/users/:userId/posts/:postId?sort=:asc"),
+      parsePathParamKeys(
+        "http://localhost:8080/{{version}}/users/:userId/posts/:postId?sort=:asc",
+      ),
     ).toEqual(["userId", "postId"]);
   });
 
@@ -48,8 +50,8 @@ describe("query params", () => {
       { key: "q", value: "a b", enabled: true },
       { key: "debug", value: "true", enabled: false },
     ]);
-    expect(replaceQueryInUrl("https://api.test/search?old=1#results", query)).toBe(
-      "https://api.test/search?q=a+b#results",
-    );
+    expect(
+      replaceQueryInUrl("https://api.test/search?old=1#results", query),
+    ).toBe("https://api.test/search?q=a+b#results");
   });
 });

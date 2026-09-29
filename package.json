@@ -19,7 +19,11 @@
     "lint:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings",
     "format:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml",
     "bindings": "UPDATE_BINDINGS=1 cargo test --manifest-path src-tauri/Cargo.toml bindings_are_up_to_date",
-    "check": "pnpm typecheck && pnpm test:run && cargo fmt --manifest-path src-tauri/Cargo.toml --check && pnpm lint:rust && pnpm test:rust"
+    "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test:run && cargo fmt --manifest-path src-tauri/Cargo.toml --check && pnpm lint:rust && pnpm test:rust",
+    "lint": "oxlint . --deny-warnings --report-unused-disable-directives",
+    "lint:fix": "pnpm lint --fix",
+    "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"*.{js,ts,json,html}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"*.{js,ts,json,html}\""
   },
   "dependencies": {
     "@codemirror/lang-json": "^6.0.2",
@@ -51,6 +55,8 @@
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
+    "oxlint": "^1.86.0",
+    "prettier": "^3.9.9",
     "tailwindcss": "^4.2.4",
     "typescript": "~5.8.3",
     "vite": "^7.0.4",

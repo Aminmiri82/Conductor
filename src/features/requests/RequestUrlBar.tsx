@@ -40,7 +40,9 @@ export function RequestUrlBar({
   onSend: () => void;
   onSave: () => void;
 }) {
-  const urlMode = useWorkspaceUiStore((state) => state.workspaceUi.urlDisplayMode);
+  const urlMode = useWorkspaceUiStore(
+    (state) => state.workspaceUi.urlDisplayMode,
+  );
 
   return (
     <div className="flex min-w-0 items-center gap-2">
@@ -198,7 +200,9 @@ function VariableToken({
         <span className="group-hover:hidden">
           <span className="text-[var(--app-dim)]">{"{{"}</span>
           <span
-            className={unresolved ? "text-amber-300" : "text-[var(--app-accent)]"}
+            className={
+              unresolved ? "text-amber-300" : "text-[var(--app-accent)]"
+            }
           >
             {name}
           </span>
@@ -219,7 +223,9 @@ function VariableToken({
     return (
       <span className="group/var relative">
         <span className="text-[var(--app-dim)]">{"{{"}</span>
-        <span className={unresolved ? "text-amber-300" : "text-[var(--app-accent)]"}>
+        <span
+          className={unresolved ? "text-amber-300" : "text-[var(--app-accent)]"}
+        >
           {name}
         </span>
         <span className="text-[var(--app-dim)]">{"}}"}</span>
@@ -292,12 +298,18 @@ function VariableTooltip({
     <span className="pointer-events-none absolute left-0 top-[calc(100%+6px)] z-50 hidden max-w-[520px] whitespace-nowrap border border-[var(--app-line)] bg-[var(--app-panel)] px-2 py-1 text-[11px] font-normal text-[var(--app-text)] shadow-lg group-hover/var:block">
       <span className="text-[var(--app-dim)]">{name}</span>
       <span className="px-1 text-[var(--app-dim)]">=</span>
-      <span>{unresolved ? "undefined" : resolvedValue || "resolved value unavailable"}</span>
+      <span>
+        {unresolved
+          ? "undefined"
+          : resolvedValue || "resolved value unavailable"}
+      </span>
     </span>
   );
 }
 
-function parseUrlTokens(url: string): Array<
+function parseUrlTokens(
+  url: string,
+): Array<
   | { kind: "text"; value: string }
   | { kind: "variable"; value: string; name: string }
 > {

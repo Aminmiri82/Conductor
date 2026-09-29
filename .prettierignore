@@ -1,0 +1,10 @@
+node_modules/
+dist/
+dist-ssr/
+src-tauri/
+.agent-app/
+src/bindings.ts
+pnpm-lock.yaml
+postman-collection-example/
+*.postman_collection.json
+*.postman_environment.json

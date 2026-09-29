@@ -49,7 +49,8 @@ export function AuthEditor({
         <div className="rounded-md border border-border/70 bg-background/30 p-3 text-xs text-muted-foreground">
           {inheritedAuth ? (
             <>
-              Inherited <span className="text-foreground">{labelFor(inheritedAuth)}</span>
+              Inherited{" "}
+              <span className="text-foreground">{labelFor(inheritedAuth)}</span>
             </>
           ) : (
             "No parent auth is configured."
@@ -63,7 +64,9 @@ export function AuthEditor({
             className="h-8 border-border/70 bg-background/40 font-mono text-xs"
             value={auth.token ?? ""}
             placeholder="{{accessToken}}"
-            onChange={(event) => onChange({ ...auth, token: event.target.value })}
+            onChange={(event) =>
+              onChange({ ...auth, token: event.target.value })
+            }
           />
         </div>
       ) : null}
@@ -74,7 +77,9 @@ export function AuthEditor({
             <Input
               className="h-8 border-border/70 bg-background/40 font-mono text-xs"
               value={auth.username ?? ""}
-              onChange={(event) => onChange({ ...auth, username: event.target.value })}
+              onChange={(event) =>
+                onChange({ ...auth, username: event.target.value })
+              }
             />
           </div>
           <div className="grid grid-cols-[140px_minmax(0,1fr)] items-center gap-3">
@@ -83,7 +88,9 @@ export function AuthEditor({
               className="h-8 border-border/70 bg-background/40 font-mono text-xs"
               value={auth.password ?? ""}
               type="password"
-              onChange={(event) => onChange({ ...auth, password: event.target.value })}
+              onChange={(event) =>
+                onChange({ ...auth, password: event.target.value })
+              }
             />
           </div>
         </>
@@ -111,7 +118,9 @@ export function AuthEditor({
               className="h-8 border-border/70 bg-background/40 font-mono text-xs"
               value={auth.key ?? ""}
               placeholder="Authorization"
-              onChange={(event) => onChange({ ...auth, key: event.target.value })}
+              onChange={(event) =>
+                onChange({ ...auth, key: event.target.value })
+              }
             />
           </div>
           <div className="grid grid-cols-[140px_minmax(0,1fr)] items-center gap-3">
@@ -120,7 +129,9 @@ export function AuthEditor({
               className="h-8 border-border/70 bg-background/40 font-mono text-xs"
               value={auth.value ?? ""}
               placeholder="Bearer {{token}}"
-              onChange={(event) => onChange({ ...auth, value: event.target.value })}
+              onChange={(event) =>
+                onChange({ ...auth, value: event.target.value })
+              }
             />
           </div>
         </>

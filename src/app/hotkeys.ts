@@ -16,8 +16,12 @@ type AppMenuAction =
 
 export function useAppHotkeys() {
   const toggleSidebar = useWorkspaceStore((state) => state.toggleSidebar);
-  const saveActiveRequest = useWorkspaceStore((state) => state.saveActiveRequest);
-  const sendActiveRequest = useWorkspaceStore((state) => state.sendActiveRequest);
+  const saveActiveRequest = useWorkspaceStore(
+    (state) => state.saveActiveRequest,
+  );
+  const sendActiveRequest = useWorkspaceStore(
+    (state) => state.sendActiveRequest,
+  );
   const closeRequestTab = useWorkspaceStore((state) => state.closeRequestTab);
   const createRequestIn = useWorkspaceStore((state) => state.createRequestIn);
   const duplicateRequest = useWorkspaceStore((state) => state.duplicateRequest);

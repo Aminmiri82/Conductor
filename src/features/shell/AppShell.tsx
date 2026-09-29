@@ -55,11 +55,17 @@ export function AppShell() {
         </div>
       ) : null}
 
-      <div className={error ? "h-[calc(100vh-5rem)]" : "h-[calc(100vh-2.75rem)]"}>
+      <div
+        className={error ? "h-[calc(100vh-5rem)]" : "h-[calc(100vh-2.75rem)]"}
+      >
         <ResizablePanelGroup orientation="horizontal">
           {sidebarVisible ? (
             <>
-              <ResizablePanel defaultSize="300px" minSize="240px" maxSize="460px">
+              <ResizablePanel
+                defaultSize="300px"
+                minSize="240px"
+                maxSize="460px"
+              >
                 <CollectionSidebar />
               </ResizablePanel>
               <ResizableHandle className="bg-[var(--app-line)]" />

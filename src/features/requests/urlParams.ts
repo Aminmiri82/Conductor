@@ -18,7 +18,9 @@ export function parsePathParamKeys(url: string): string[] {
   return out;
 }
 
-export function parseQueryEntries(url: string): Array<{ key: string; value: string }> {
+export function parseQueryEntries(
+  url: string,
+): Array<{ key: string; value: string }> {
   const query = extractQuery(url);
   if (!query) return [];
   const seen = new Set<string>();
@@ -63,7 +65,10 @@ export function deriveQueryRows(url: string, previous: KeyValue[]): KeyValue[] {
   return rows;
 }
 
-export function derivePathParamRows(url: string, previous: KeyValue[]): KeyValue[] {
+export function derivePathParamRows(
+  url: string,
+  previous: KeyValue[],
+): KeyValue[] {
   const keys = parsePathParamKeys(url);
   return keys.map((key) => {
     const prior = previous.find((row) => row.key === key);
@@ -80,7 +85,9 @@ export function buildQueryString(rows: KeyValue[]): string {
   for (const row of rows) {
     if (!row.key) continue;
     if (row.enabled === false) continue;
-    parts.push(`${encodeQueryComponent(row.key)}=${encodeQueryComponent(row.value)}`);
+    parts.push(
+      `${encodeQueryComponent(row.key)}=${encodeQueryComponent(row.value)}`,
+    );
   }
   return parts.join("&");
 }
@@ -89,11 +96,7 @@ export function replaceQueryInUrl(url: string, queryString: string): string {
   const qIdx = url.indexOf("?");
   const hIdx = url.indexOf("#", qIdx === -1 ? 0 : qIdx);
   const head =
-    qIdx === -1
-      ? hIdx === -1
-        ? url
-        : url.slice(0, hIdx)
-      : url.slice(0, qIdx);
+    qIdx === -1 ? (hIdx === -1 ? url : url.slice(0, hIdx)) : url.slice(0, qIdx);
   const fragment = hIdx === -1 ? "" : url.slice(hIdx);
   if (!queryString) return head + fragment;
   return `${head}?${queryString}${fragment}`;

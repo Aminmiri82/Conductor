@@ -20,7 +20,8 @@ export type {
 
 export type VariableScope = "global" | "collection" | "environment";
 
-export type RequestEditorTab = "params" | "headers" | "auth" | "body" | "variables";
+export type RequestEditorTab =
+  "params" | "headers" | "auth" | "body" | "variables";
 
 export type AppTheme = "softpro" | "conductor" | "brutalist";
 

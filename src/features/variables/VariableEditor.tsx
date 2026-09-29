@@ -27,15 +27,26 @@ type RequestVariableRow = {
 };
 
 export function VariableEditor({ request }: { request: RequestDetail }) {
-  const variableNames = useMemo(() => extractRequestVariableNames(request), [request]);
+  const variableNames = useMemo(
+    () => extractRequestVariableNames(request),
+    [request],
+  );
   const [globalVariables, setGlobalVariables] = useState<VariableEntry[]>([]);
-  const [collectionVariables, setCollectionVariables] = useState<VariableEntry[]>([]);
-  const [environmentVariables, setEnvironmentVariables] = useState<VariableEntry[]>([]);
+  const [collectionVariables, setCollectionVariables] = useState<
+    VariableEntry[]
+  >([]);
+  const [environmentVariables, setEnvironmentVariables] = useState<
+    VariableEntry[]
+  >([]);
   const [rows, setRows] = useState<RequestVariableRow[]>([]);
-  const [removedVariables, setRemovedVariables] = useState<Set<string>>(new Set());
+  const [removedVariables, setRemovedVariables] = useState<Set<string>>(
+    new Set(),
+  );
   const [savedAt, setSavedAt] = useState<number>();
   const [saving, setSaving] = useState(false);
-  const resolveActiveRequest = useWorkspaceStore((state) => state.resolveActiveRequest);
+  const resolveActiveRequest = useWorkspaceStore(
+    (state) => state.resolveActiveRequest,
+  );
   const activeEnvironmentId = useWorkspaceUiStore(
     (state) => state.workspaceUi.activeEnvironmentId,
   );
@@ -58,7 +69,15 @@ export function VariableEditor({ request }: { request: RequestDetail }) {
       setGlobalVariables(globals);
       setCollectionVariables(collection);
       setEnvironmentVariables(environment);
-      setRows(buildRows(variableNames, globals, collection, environment, activeEnvironmentId));
+      setRows(
+        buildRows(
+          variableNames,
+          globals,
+          collection,
+          environment,
+          activeEnvironmentId,
+        ),
+      );
       setRemovedVariables(new Set());
       setSavedAt(undefined);
     });
@@ -125,8 +144,11 @@ export function VariableEditor({ request }: { request: RequestDetail }) {
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex min-h-12 items-center justify-between gap-3 border-b border-[var(--app-line)] px-4 py-2">
         <div className="min-w-0 text-xs text-[var(--app-dim)]">
-          Shows variables referenced in this request. Manage the full list in Settings.
-          {activeEnvironmentName ? ` Active environment: ${activeEnvironmentName}.` : ""}
+          Shows variables referenced in this request. Manage the full list in
+          Settings.
+          {activeEnvironmentName
+            ? ` Active environment: ${activeEnvironmentName}.`
+            : ""}
         </div>
         <div className="flex items-center gap-2">
           <span className="w-16 text-right text-xs text-[var(--app-dim)]">
@@ -191,7 +213,9 @@ export function VariableEditor({ request }: { request: RequestDetail }) {
                     className="app-mono h-8 rounded-none border-0 bg-transparent text-xs shadow-none focus-visible:ring-0"
                     value={row.value}
                     type={row.sensitive ? "password" : "text"}
-                    onChange={(event) => updateRow(index, { value: event.target.value })}
+                    onChange={(event) =>
+                      updateRow(index, { value: event.target.value })
+                    }
                   />
                   <input
                     type="checkbox"
@@ -249,7 +273,9 @@ function buildRows(
   environmentVariables: VariableEntry[],
   activeEnvironmentId: string | null | undefined,
 ): RequestVariableRow[] {
-  const globals = new Map(globalVariables.map((variable) => [variable.key, variable]));
+  const globals = new Map(
+    globalVariables.map((variable) => [variable.key, variable]),
+  );
   const collection = new Map(
     collectionVariables.map((variable) => [variable.key, variable]),
   );
@@ -258,7 +284,8 @@ function buildRows(
   );
 
   return keys.map((key) => {
-    const variable = environment.get(key) ?? collection.get(key) ?? globals.get(key);
+    const variable =
+      environment.get(key) ?? collection.get(key) ?? globals.get(key);
     const scope = environment.has(key)
       ? "environment"
       : collection.has(key)
@@ -290,7 +317,8 @@ function mergeVariables(
   const rowsByKey = new Map(rows.map((row) => [row.key, row]));
   const merged = existing
     .filter((variable) => {
-      if (removedVariables.has(scopedVariableId(scope, variable.key))) return false;
+      if (removedVariables.has(scopedVariableId(scope, variable.key)))
+        return false;
       const row = rowsByKey.get(variable.key);
       return !row || row.originalScope !== scope || row.scope === scope;
     })

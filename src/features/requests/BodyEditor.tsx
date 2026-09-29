@@ -24,7 +24,10 @@ export function BodyEditor({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-11 items-center gap-2 border-b border-border/50 px-3">
-        <Select value={body.mode} onValueChange={(mode) => onChange({ ...body, mode })}>
+        <Select
+          value={body.mode}
+          onValueChange={(mode) => onChange({ ...body, mode })}
+        >
           <SelectTrigger className="h-8 w-44 border-border/70 bg-background/40 text-xs">
             <SelectValue />
           </SelectTrigger>
@@ -122,7 +125,9 @@ function GraphqlEditor({
           className="min-h-[380px] resize-none rounded-none border-0 bg-transparent p-3 font-mono text-xs leading-5 shadow-none focus-visible:ring-0"
           value={query}
           spellCheck={false}
-          onChange={(event) => onChange({ query: event.target.value, variables })}
+          onChange={(event) =>
+            onChange({ query: event.target.value, variables })
+          }
         />
       </div>
       <div className="min-w-0">
@@ -134,7 +139,9 @@ function GraphqlEditor({
           value={variables}
           placeholder="{}"
           spellCheck={false}
-          onChange={(event) => onChange({ query, variables: event.target.value })}
+          onChange={(event) =>
+            onChange({ query, variables: event.target.value })
+          }
         />
       </div>
     </div>
@@ -236,7 +243,9 @@ function FormDataEditor({
             type="checkbox"
             className="mx-auto size-3 accent-violet-400"
             checked={row.enabled}
-            onChange={(event) => update(index, { enabled: event.target.checked })}
+            onChange={(event) =>
+              update(index, { enabled: event.target.checked })
+            }
           />
           <Input
             className="h-8 rounded-none border-0 bg-transparent font-mono text-xs shadow-none focus-visible:ring-0"
@@ -270,7 +279,9 @@ function FormDataEditor({
                 onClick={() => void chooseFile(index)}
               >
                 <FileUp className="mr-2 size-3.5 shrink-0" />
-                <span className="truncate">{row.filePath || "Choose file"}</span>
+                <span className="truncate">
+                  {row.filePath || "Choose file"}
+                </span>
               </Button>
               <Input
                 className="h-8 w-32 rounded-none border-0 bg-transparent font-mono text-xs shadow-none focus-visible:ring-0"

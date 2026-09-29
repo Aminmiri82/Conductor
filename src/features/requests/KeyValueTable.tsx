@@ -43,7 +43,9 @@ export function KeyValueTable({
             type="checkbox"
             className="mx-auto size-3 accent-[var(--app-accent)]"
             checked={row.enabled}
-            onChange={(event) => update(index, { enabled: event.target.checked })}
+            onChange={(event) =>
+              update(index, { enabled: event.target.checked })
+            }
           />
           <Input
             className="app-mono h-8 rounded-none border-0 bg-transparent text-xs shadow-none focus-visible:ring-0"
@@ -72,7 +74,9 @@ export function KeyValueTable({
           variant="ghost"
           size="sm"
           className="h-7 gap-1.5 text-xs text-[var(--app-dim)]"
-          onClick={() => onChange([...rows, { key: "", value: "", enabled: true }])}
+          onClick={() =>
+            onChange([...rows, { key: "", value: "", enabled: true }])
+          }
         >
           <Plus className="size-3.5" />
           Add row

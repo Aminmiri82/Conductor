@@ -80,7 +80,9 @@ export function CollectionSidebar() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const collections = useWorkspaceStore((state) => state.collections);
   const tree = useWorkspaceStore((state) => state.tree);
-  const activeCollectionId = useWorkspaceStore((state) => state.activeCollectionId);
+  const activeCollectionId = useWorkspaceStore(
+    (state) => state.activeCollectionId,
+  );
   const activeRequestId = useWorkspaceStore((state) => state.activeRequestId);
   const selectCollection = useWorkspaceStore((state) => state.selectCollection);
   const selectRequest = useWorkspaceStore((state) => state.selectRequest);
@@ -93,9 +95,9 @@ export function CollectionSidebar() {
   const moveNode = useWorkspaceStore((state) => state.moveNode);
 
   const [draggingNode, setDraggingNode] = useState<CollectionNode | null>(null);
-  const [draggingDescendantIds, setDraggingDescendantIds] = useState<Set<string>>(
-    () => new Set(),
-  );
+  const [draggingDescendantIds, setDraggingDescendantIds] = useState<
+    Set<string>
+  >(() => new Set());
   const [target, setTarget] = useState<DropTarget>(null);
   const [openIds, setOpenIds] = useState<Set<string>>(() => new Set());
   const [scrollTop, setScrollTop] = useState(0);
@@ -127,7 +129,8 @@ export function CollectionSidebar() {
     [openIds, tree],
   );
   const rootDropHeight = dnd.draggingId ? 32 : 8;
-  const totalTreeHeight = visibleNodes.length * TREE_ROW_HEIGHT + rootDropHeight;
+  const totalTreeHeight =
+    visibleNodes.length * TREE_ROW_HEIGHT + rootDropHeight;
   const startIndex = Math.max(
     0,
     Math.floor(scrollTop / TREE_ROW_HEIGHT) - TREE_OVERSCAN,
@@ -204,7 +207,8 @@ export function CollectionSidebar() {
       } else {
         parentId = node.parentId ?? null;
         const sameParent = (source.parentId ?? null) === (parentId ?? null);
-        const insertAt = t.intent === "before" ? node.position : node.position + 1;
+        const insertAt =
+          t.intent === "before" ? node.position : node.position + 1;
         position =
           sameParent && source.position < insertAt ? insertAt - 1 : insertAt;
       }
@@ -289,10 +293,14 @@ export function CollectionSidebar() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-40">
-                <DropdownMenuItem onSelect={() => void createRequestIn(null, tree.length)}>
+                <DropdownMenuItem
+                  onSelect={() => void createRequestIn(null, tree.length)}
+                >
                   Add request
                 </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => void createFolderIn(null, tree.length)}>
+                <DropdownMenuItem
+                  onSelect={() => void createFolderIn(null, tree.length)}
+                >
                   Add folder
                 </DropdownMenuItem>
               </DropdownMenuContent>
@@ -305,7 +313,8 @@ export function CollectionSidebar() {
           className="app-scroll min-h-0 flex-1 overflow-auto p-2"
           onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
           onDragLeave={(event) => {
-            if (event.currentTarget.contains(event.relatedTarget as Node)) return;
+            if (event.currentTarget.contains(event.relatedTarget as Node))
+              return;
             setTarget(null);
           }}
         >
@@ -358,7 +367,13 @@ function RootEndDropZone({
   const active = dnd.target?.kind === "root-end";
 
   if (!dragging) {
-    return <div aria-hidden className="absolute h-2" style={{ top, left: 0, right: 0 }} />;
+    return (
+      <div
+        aria-hidden
+        className="absolute h-2"
+        style={{ top, left: 0, right: 0 }}
+      />
+    );
   }
 
   return (
@@ -396,8 +411,14 @@ type TreeRowProps = {
   onToggleOpen: (nodeId: string) => void;
   onOpenFolder: (nodeId: string) => void;
   onSelectRequest: (requestId: string) => Promise<void>;
-  onCreateRequest: (parentId: string | null | undefined, position: number) => Promise<void>;
-  onCreateFolder: (parentId: string | null | undefined, position: number) => Promise<void>;
+  onCreateRequest: (
+    parentId: string | null | undefined,
+    position: number,
+  ) => Promise<void>;
+  onCreateFolder: (
+    parentId: string | null | undefined,
+    position: number,
+  ) => Promise<void>;
   onDuplicateRequest: (requestId: string) => Promise<void>;
   onDeleteRequest: (requestId: string) => Promise<void>;
   onDeleteNode: (node: CollectionNode) => Promise<void>;
@@ -553,12 +574,16 @@ function TreeRow({
           {isFolder ? (
             <>
               <ContextMenuItem
-                onSelect={() => void onCreateRequest(node.id, node.children.length)}
+                onSelect={() =>
+                  void onCreateRequest(node.id, node.children.length)
+                }
               >
                 Add request
               </ContextMenuItem>
               <ContextMenuItem
-                onSelect={() => void onCreateFolder(node.id, node.children.length)}
+                onSelect={() =>
+                  void onCreateFolder(node.id, node.children.length)
+                }
               >
                 Add folder
               </ContextMenuItem>
@@ -624,7 +649,10 @@ function methodColor(method: string): CSSProperties {
       color: "var(--app-delete)",
       backgroundColor: "var(--app-delete-bg)",
     },
-    PATCH: { color: "var(--app-patch)", backgroundColor: "var(--app-patch-bg)" },
+    PATCH: {
+      color: "var(--app-patch)",
+      backgroundColor: "var(--app-patch-bg)",
+    },
   };
   return {
     ...(map[normalized] ?? {
@@ -663,7 +691,10 @@ function collectNodeIdsInto(node: CollectionNode, ids: Set<string>) {
   }
 }
 
-function findNode(nodes: CollectionNode[], id: string): CollectionNode | undefined {
+function findNode(
+  nodes: CollectionNode[],
+  id: string,
+): CollectionNode | undefined {
   for (const node of nodes) {
     if (node.id === id) return node;
     const child = findNode(node.children, id);

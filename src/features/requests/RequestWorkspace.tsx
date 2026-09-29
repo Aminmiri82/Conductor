@@ -34,15 +34,21 @@ export function RequestWorkspace() {
     activeRequestId ? state.drafts.get(activeRequestId) : undefined,
   );
   const updateRequest = useWorkspaceStore((state) => state.updateRequest);
-  const sendActiveRequest = useWorkspaceStore((state) => state.sendActiveRequest);
-  const saveActiveRequest = useWorkspaceStore((state) => state.saveActiveRequest);
+  const sendActiveRequest = useWorkspaceStore(
+    (state) => state.sendActiveRequest,
+  );
+  const saveActiveRequest = useWorkspaceStore(
+    (state) => state.saveActiveRequest,
+  );
   const sending = useWorkspaceStore((state) => state.sending);
   const saving = useWorkspaceStore((state) => state.saving);
   const activeTab = useWorkspaceStore((state) =>
     state.tabs.find((tab) => tab.requestId === state.activeRequestId),
   );
   const activeEditorTab = useWorkspaceUiStore((state) =>
-    request ? (state.workspaceUi.requestEditorTabs[request.id] ?? "params") : "params",
+    request
+      ? (state.workspaceUi.requestEditorTabs[request.id] ?? "params")
+      : "params",
   );
   const setRequestEditorTab = useWorkspaceUiStore(
     (state) => state.setRequestEditorTab,
@@ -154,7 +160,9 @@ export function RequestWorkspace() {
                     auth={request.auth ?? { authType: "inherit" }}
                     inheritedAuth={request.inheritedAuth}
                     onChange={(auth) =>
-                      updateRequest({ auth: auth.authType === "inherit" ? null : auth })
+                      updateRequest({
+                        auth: auth.authType === "inherit" ? null : auth,
+                      })
                     }
                   />
                 </div>
@@ -181,14 +189,17 @@ export function RequestWorkspace() {
                 </div>
                 {response ? (
                   <div className="text-xs">
-                    <span className="text-[var(--app-accent)]">{response.statusCode}</span>
+                    <span className="text-[var(--app-accent)]">
+                      {response.statusCode}
+                    </span>
                     <span className="ml-2 text-[var(--app-dim)]">
                       {response.durationMs} ms
                     </span>
                     {response.updatedVariables.length ? (
                       <span className="ml-2 text-emerald-300">
                         {response.updatedVariables.length} variable
-                        {response.updatedVariables.length === 1 ? "" : "s"} saved
+                        {response.updatedVariables.length === 1 ? "" : "s"}{" "}
+                        saved
                       </span>
                     ) : null}
                     {response.variableWarnings.length ? (
@@ -214,10 +225,7 @@ export function RequestWorkspace() {
             <div className="min-h-0 flex-1">
               {response ? (
                 <Suspense fallback={<ResponsePlaceholder sending={sending} />}>
-                  <ResponseViewer
-                    sending={sending}
-                    value={response.body}
-                  />
+                  <ResponseViewer sending={sending} value={response.body} />
                 </Suspense>
               ) : (
                 <ResponsePlaceholder sending={sending} />
@@ -257,7 +265,11 @@ function ParameterSection({
         {title}
       </div>
       {rows.length ? (
-        <KeyValueTable rows={rows} onChange={onChange} placeholder={placeholder} />
+        <KeyValueTable
+          rows={rows}
+          onChange={onChange}
+          placeholder={placeholder}
+        />
       ) : (
         <div
           className="border px-3 py-3 text-xs text-[var(--app-dim)]"
@@ -285,11 +297,17 @@ function emptyBody() {
   };
 }
 
-function resolveUrlVariableValues(rawUrl: string, resolvedUrl: string | undefined) {
+function resolveUrlVariableValues(
+  rawUrl: string,
+  resolvedUrl: string | undefined,
+) {
   if (!resolvedUrl) return {};
   const tokens = parseUrlTokens(rawUrl);
   const variableNames = tokens
-    .filter((token): token is { kind: "variable"; name: string } => token.kind === "variable")
+    .filter(
+      (token): token is { kind: "variable"; name: string } =>
+        token.kind === "variable",
+    )
     .map((token) => token.name);
   if (!variableNames.length) return {};
 
@@ -308,9 +326,9 @@ function resolveUrlVariableValues(rawUrl: string, resolvedUrl: string | undefine
   );
 }
 
-function parseUrlTokens(url: string): Array<
-  { kind: "text"; value: string } | { kind: "variable"; name: string }
-> {
+function parseUrlTokens(
+  url: string,
+): Array<{ kind: "text"; value: string } | { kind: "variable"; name: string }> {
   const tokens: Array<
     { kind: "text"; value: string } | { kind: "variable"; name: string }
   > = [];
