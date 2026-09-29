@@ -71,8 +71,10 @@ dependency needs a reason that is stated in the change description.
 
 Dev builds are unoptimized, so measure release builds for memory and startup:
 
-- `pnpm build:mac`, launch the app, and read its memory in Activity Monitor
-  (or `ps -o rss= -p <pid>`) at idle and after opening a large collection.
+- Build with `pnpm tauri build --bundles app --config '{"bundle":{"macOS":{"signingIdentity":"-"}}}'`,
+  launch the resulting app with a throwaway `CONDUCTOR_DATA_DIR`, and read its
+  memory in Activity Monitor (or `ps -o rss= -p <pid>`) at idle and after
+  opening a large collection.
 - `pnpm build` prints frontend chunk sizes; a jump in the main chunk means
   something is no longer lazy.
 - For Rust hot paths (import, resolution, sending), time the operation before

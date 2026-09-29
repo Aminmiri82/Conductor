@@ -32,6 +32,8 @@ pnpm install
 pnpm tauri dev
 ```
 
+Development runs keep their data in `~/Library/Application Support/com.yaramiri.conductor.dev/` on macOS. The installed release app uses `~/Library/Application Support/com.yaramiri.conductor/`.
+
 ## Checks
 
 ```bash
@@ -44,15 +46,20 @@ Use `pnpm lint` to check JavaScript and TypeScript throughout the repo, or `pnpm
 
 Use `pnpm format` to format frontend source and root JavaScript, TypeScript, JSON, and HTML files, or `pnpm format:check` to check them without writing. Prettier handles formatting separately from Oxlint. Generated bindings and build output are excluded; Rust formatting stays with `pnpm format:rust`.
 
-## Build a local Mac app
+## Install a local Mac app
 
-With the development prerequisites installed, run:
+With the development prerequisites installed, build the current checkout and
+replace `/Applications/Conductor.app` in one step:
 
 ```bash
-pnpm build:mac
+pnpm install:mac
 ```
 
-This creates `src-tauri/target/release/bundle/macos/Conductor.app` for your Mac's architecture. Copy it to Applications and open it normally; no development server is needed. This build uses a local ad hoc signature and does not require an Apple developer account. Distribution to other Macs has separate signing and notarization requirements.
+This asks the installed app to quit if it is running, checks the bundle identifier, and replaces only the app bundle. Collections and settings stay in `~/Library/Application Support/com.yaramiri.conductor/`. The command does not fetch changes from Git; update your checkout first if you want newer source. It needs write access to `/Applications`.
+
+Release builds can be published through GitHub Actions, and the app checks for
+updates from Settings → About. See [Mac Releases](./docs/02-workflows/01-mac-releases.md)
+for the release steps and Apple notarization requirements.
 
 ## Contributing
 

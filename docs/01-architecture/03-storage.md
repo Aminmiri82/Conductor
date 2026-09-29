@@ -9,12 +9,15 @@ app data directory. Imported Postman files are kept next to it in
 
 ## Where The Data Lives
 
-On macOS the default directory is
-`~/Library/Application Support/com.yaramiri.conductor/`. **`pnpm tauri dev`
-and the installed app share this directory**, so a dev run reads and writes
-Yara's real collections, environments, and secrets.
+On macOS the installed release app uses
+`~/Library/Application Support/com.yaramiri.conductor/`. A debug build, including
+`pnpm tauri dev`, uses
+`~/Library/Application Support/com.yaramiri.conductor.dev/` instead. The dev
+directory starts empty; existing release collections, environments, and secrets
+stay in the release directory. This selection is made in
+[`lib.rs`](../../src-tauri/src/lib.rs).
 
-Set `CONDUCTOR_DATA_DIR` to point any run somewhere else:
+Set `CONDUCTOR_DATA_DIR` to point any run, debug or release, somewhere else:
 
 ```bash
 CONDUCTOR_DATA_DIR="$(mktemp -d)" pnpm tauri dev

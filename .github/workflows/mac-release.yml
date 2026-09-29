@@ -1,0 +1,39 @@
+name: Mac release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.24.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: pnpm install --frozen-lockfile
+      - name: Build release draft
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        with:
+          tagName: app-v__VERSION__
+          releaseName: Conductor v__VERSION__
+          releaseBody: Publish this draft after checking the Apple Silicon build.
+          releaseDraft: true
+          args: --target aarch64-apple-darwin --bundles app --config src-tauri/tauri.release.conf.json

@@ -1,6 +1,6 @@
 [package]
 name = "conductor"
-version = "0.1.0"
+version = "0.1.1"
 description = "A lightweight, fast desktop API client"
 authors = ["Yara Miri"]
 edition = "2021"
@@ -41,3 +41,5 @@ tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
 specta-typescript = "=0.0.12"
 # Keep in lockstep with @hypothesi/tauri-mcp-server in .mcp.json.
 tauri-plugin-mcp-bridge = { version = "=0.13.0", optional = true }
+tauri-plugin-updater = "=2.12.0"
+tauri-plugin-process = "=2.3.1"

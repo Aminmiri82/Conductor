@@ -19,3 +19,8 @@ reading every page is not required.
 
 Testing rules live in the
 [writing-tests skill](../.agents/skills/writing-tests/SKILL.md).
+
+## Workflows
+
+- [Mac Releases](./02-workflows/01-mac-releases.md): Local installation, GitHub
+  release drafts, updates, and Apple notarization.

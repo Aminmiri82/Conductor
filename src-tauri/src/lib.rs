@@ -64,7 +64,9 @@ pub fn run() {
 
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_dialog::init());
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build());
 
     // Agent automation bridge (`pnpm dev:agent`). Never in normal or release builds.
     #[cfg(feature = "mcp-bridge")]
@@ -81,10 +83,10 @@ pub fn run() {
                 r#"{"identifier":"mcp-bridge","windows":["*"],"permissions":["mcp-bridge:default"]}"#,
             )?;
 
-            // CONDUCTOR_DATA_DIR points dev and agent runs at a throwaway database.
+            // Explicit data directories also keep agent runs isolated.
             let app_data_dir = match std::env::var_os("CONDUCTOR_DATA_DIR") {
                 Some(dir) => std::path::PathBuf::from(dir),
-                None => app.path().app_data_dir()?,
+                None => default_data_dir(app.path().app_data_dir()?, cfg!(debug_assertions)),
             };
             let database = Database::open(app_data_dir)?;
             let http_client = reqwest::Client::builder()
@@ -119,6 +121,14 @@ pub fn run() {
         .invoke_handler(specta.invoke_handler())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn default_data_dir(app_data_dir: std::path::PathBuf, development: bool) -> std::path::PathBuf {
+    if development {
+        app_data_dir.with_file_name("com.yaramiri.conductor.dev")
+    } else {
+        app_data_dir
+    }
 }
 
 fn build_app_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>> {
@@ -224,4 +234,22 @@ fn build_app_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result
             &help_menu,
         ],
     )
+}
+
+#[cfg(test)]
+mod data_dir_tests {
+    use super::default_data_dir;
+    use std::path::PathBuf;
+
+    #[test]
+    fn development_and_release_use_separate_default_data_directories() {
+        let release =
+            PathBuf::from("/Users/yara/Library/Application Support/com.yaramiri.conductor");
+
+        assert_eq!(default_data_dir(release.clone(), false), release);
+        assert_eq!(
+            default_data_dir(release, true),
+            PathBuf::from("/Users/yara/Library/Application Support/com.yaramiri.conductor.dev")
+        );
+    }
 }
