@@ -27,3 +27,6 @@ postman-collection-example/
 *.sln
 *.sw?
 .cursor/
+
+# Agent app runs (scripts/agent-app.sh)
+.agent-app/

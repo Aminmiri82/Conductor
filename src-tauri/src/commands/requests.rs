@@ -22,6 +22,7 @@ use std::fs as std_fs;
 use crate::commands::models::SaveTextFileInput;
 
 #[tauri::command]
+#[specta::specta]
 pub fn save_text_file(input: SaveTextFileInput) -> Result<(), String> {
     std_fs::write(input.path, input.contents).map_err(|error| error.to_string())
 }

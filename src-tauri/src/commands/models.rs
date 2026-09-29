@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CollectionSummary {
     pub id: String,
@@ -10,7 +10,7 @@ pub struct CollectionSummary {
     pub updated_at: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvironmentSummary {
     pub id: String,
@@ -18,7 +18,7 @@ pub struct EnvironmentSummary {
     pub updated_at: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CollectionNode {
     pub id: String,
@@ -32,7 +32,7 @@ pub struct CollectionNode {
     pub children: Vec<CollectionNode>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct KeyValue {
     pub key: String,
@@ -41,7 +41,7 @@ pub struct KeyValue {
     pub enabled: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct BodyField {
     pub key: String,
@@ -56,7 +56,7 @@ pub struct BodyField {
     pub content_type: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RequestBody {
     pub mode: String,
@@ -74,7 +74,7 @@ pub struct RequestBody {
     pub file: Option<FileBody>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphqlBody {
     #[serde(default)]
@@ -83,7 +83,7 @@ pub struct GraphqlBody {
     pub variables: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct FileBody {
     #[serde(default)]
@@ -117,7 +117,7 @@ impl RequestBody {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthConfig {
     pub auth_type: String,
@@ -135,7 +135,7 @@ pub struct AuthConfig {
     pub add_to: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RequestDetail {
     pub id: String,
@@ -150,12 +150,14 @@ pub struct RequestDetail {
     pub inherited_auth: Option<AuthConfig>,
     pub effective_auth: Option<AuthConfig>,
     pub body: Option<RequestBody>,
+    #[specta(type = Option<specta_typescript::Unknown>)]
     pub pre_request_script: Option<Value>,
+    #[specta(type = Option<specta_typescript::Unknown>)]
     pub test_script: Option<Value>,
     pub updated_at: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct VariableEntry {
     pub scope: String,
@@ -170,14 +172,14 @@ pub struct VariableEntry {
     pub variable_type: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct UnresolvedVariable {
     pub key: String,
     pub locations: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedRequestPreview {
     pub url: String,
@@ -187,7 +189,7 @@ pub struct ResolvedRequestPreview {
     pub unresolved_variables: Vec<UnresolvedVariable>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SendRequestInput {
     pub request: RequestDetail,
@@ -195,20 +197,20 @@ pub struct SendRequestInput {
     pub environment_id: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateEnvironmentInput {
     pub name: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RenameEnvironmentInput {
     pub environment_id: String,
     pub name: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateRequestInput {
     pub collection_id: String,
@@ -217,14 +219,14 @@ pub struct CreateRequestInput {
     pub name: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateRequestResult {
     pub request_id: String,
     pub node_id: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateFolderInput {
     pub collection_id: String,
@@ -233,20 +235,20 @@ pub struct CreateFolderInput {
     pub name: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct DuplicateRequestInput {
     pub request_id: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct DuplicateRequestResult {
     pub request_id: String,
     pub node_id: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct MoveNodeInput {
     pub node_id: String,
@@ -254,21 +256,21 @@ pub struct MoveNodeInput {
     pub position: i64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveTextFileInput {
     pub path: String,
     pub contents: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ResponseHeader {
     pub key: String,
     pub value: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SendRequestResult {
     pub history_id: String,

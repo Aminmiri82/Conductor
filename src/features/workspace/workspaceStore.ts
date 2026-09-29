@@ -38,6 +38,10 @@ type WorkspaceState = {
   activeCollectionId?: string;
   activeRequestId?: string;
   sidebarVisible: boolean;
+  // The sidebar starts open so there is something to pick, then hides once on
+  // the first opened request. After that, or after any manual toggle, it stays
+  // where the user puts it.
+  sidebarAutoHidePending: boolean;
   collectionLoading: boolean;
   requestLoading: boolean;
   saving: boolean;
@@ -75,6 +79,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   tree: [],
   tabs: [],
   sidebarVisible: true,
+  sidebarAutoHidePending: true,
   collectionLoading: false,
   requestLoading: false,
   saving: false,
@@ -183,6 +188,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   selectRequest: async (requestId) => {
+    if (get().sidebarAutoHidePending) {
+      set({ sidebarVisible: false, sidebarAutoHidePending: false });
+    }
     const existingDraft = getDraft(requestId);
     if (existingDraft) {
       set({
@@ -486,7 +494,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
-  toggleSidebar: () => set((state) => ({ sidebarVisible: !state.sidebarVisible })),
+  toggleSidebar: () =>
+    set((state) => ({
+      sidebarVisible: !state.sidebarVisible,
+      sidebarAutoHidePending: false,
+    })),
   clearError: () => set({ error: undefined }),
 }));
 

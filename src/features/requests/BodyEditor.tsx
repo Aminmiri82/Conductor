@@ -65,7 +65,7 @@ export function BodyEditor({
         {body.mode === "formdata" ? (
           <div className="p-3">
             <FormDataEditor
-              rows={body.formData}
+              rows={body.formData ?? []}
               onChange={(formData) => onChange({ ...body, formData })}
             />
           </div>
@@ -73,7 +73,7 @@ export function BodyEditor({
         {body.mode === "urlencoded" ? (
           <div className="p-3">
             <KeyValueTable
-              rows={body.urlencoded}
+              rows={body.urlencoded ?? []}
               onChange={(urlencoded) => onChange({ ...body, urlencoded })}
               placeholder="Field"
             />

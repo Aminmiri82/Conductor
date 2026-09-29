@@ -13,6 +13,7 @@ use super::models::{CollectionNode, CollectionSummary};
 const SORT_ORDER_STEP: i64 = 1024;
 
 #[tauri::command]
+#[specta::specta]
 pub fn list_collections(state: State<'_, AppState>) -> Result<Vec<CollectionSummary>, String> {
     state
         .database
@@ -36,6 +37,7 @@ pub fn list_collections(state: State<'_, AppState>) -> Result<Vec<CollectionSumm
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn get_collection_tree(
     collection_id: String,
     state: State<'_, AppState>,
@@ -69,6 +71,7 @@ pub fn get_collection_tree(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn import_postman_collection(
     postman_json: String,
     state: State<'_, AppState>,

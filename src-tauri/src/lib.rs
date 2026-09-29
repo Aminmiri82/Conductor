@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod bindings;
 mod commands;
 mod storage;
 
@@ -20,18 +22,70 @@ pub struct AppState {
     http_client: reqwest::Client,
 }
 
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {name}! You've been greeted from Rust!")
+/// Registers every command exposed to the frontend. Tauri's command macros
+/// live at the crate root, so this must stay in `lib.rs`.
+fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
+    tauri_specta::Builder::<tauri::Wry>::new()
+        .commands(tauri_specta::collect_commands![
+            database_status,
+            get_workspace_state,
+            set_workspace_state,
+            create_environment,
+            create_folder,
+            create_request,
+            delete_environment,
+            delete_node,
+            delete_request,
+            duplicate_request,
+            get_collection_tree,
+            get_request,
+            import_postman_environment,
+            import_postman_collection,
+            list_collections,
+            list_environments,
+            list_variables,
+            rename_environment,
+            resolve_request,
+            move_node,
+            save_request,
+            save_text_file,
+            save_variables,
+            send_request,
+        ])
+        // Commands reject with the error string, matching plain `invoke`.
+        .error_handling(tauri_specta::ErrorHandlingMode::Throw)
+        // Positions, byte counts, and durations never approach 2^53.
+        .dangerously_cast_bigints_to_number()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let specta = specta_builder();
+
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_dialog::init());
+
+    // Agent automation bridge (`pnpm dev:agent`). Never in normal or release builds.
+    #[cfg(feature = "mcp-bridge")]
+    let builder = builder.plugin(
+        tauri_plugin_mcp_bridge::Builder::new()
+            .bind_address("127.0.0.1")
+            .build(),
+    );
+
+    builder
         .setup(|app| {
-            let app_data_dir = app.path().app_data_dir()?;
+            #[cfg(feature = "mcp-bridge")]
+            app.add_capability(
+                r#"{"identifier":"mcp-bridge","windows":["*"],"permissions":["mcp-bridge:default"]}"#,
+            )?;
+
+            // CONDUCTOR_DATA_DIR points dev and agent runs at a throwaway database.
+            let app_data_dir = match std::env::var_os("CONDUCTOR_DATA_DIR") {
+                Some(dir) => std::path::PathBuf::from(dir),
+                None => app.path().app_data_dir()?,
+            };
             let database = Database::open(app_data_dir)?;
             let http_client = reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::limited(10))
@@ -62,33 +116,7 @@ pub fn run() {
                 let _ = app.emit("app-menu-action", action);
             }
         })
-        .invoke_handler(tauri::generate_handler![
-            database_status,
-            get_workspace_state,
-            set_workspace_state,
-            create_environment,
-            create_folder,
-            create_request,
-            delete_environment,
-            delete_node,
-            delete_request,
-            duplicate_request,
-            get_collection_tree,
-            get_request,
-            import_postman_environment,
-            import_postman_collection,
-            list_collections,
-            list_environments,
-            list_variables,
-            rename_environment,
-            resolve_request,
-            move_node,
-            save_request,
-            save_text_file,
-            save_variables,
-            send_request,
-            greet
-        ])
+        .invoke_handler(specta.invoke_handler())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

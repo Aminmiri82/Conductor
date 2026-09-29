@@ -21,6 +21,7 @@ use super::variables::{load_variable_context, save_script_variable};
 use super::{postman_scripts, request_auth, request_body, variable_resolver};
 
 #[tauri::command]
+#[specta::specta]
 pub fn resolve_request(
     request: RequestDetail,
     environment_id: Option<String>,
@@ -37,6 +38,7 @@ pub fn resolve_request(
         .map_err(|error| error.to_string())
 }
 #[tauri::command]
+#[specta::specta]
 pub async fn send_request(
     input: SendRequestInput,
     state: State<'_, AppState>,

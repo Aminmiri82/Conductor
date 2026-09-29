@@ -27,6 +27,7 @@ impl VariableContext {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn list_environments(state: State<'_, AppState>) -> Result<Vec<EnvironmentSummary>, String> {
     state
         .database
@@ -47,6 +48,7 @@ pub fn list_environments(state: State<'_, AppState>) -> Result<Vec<EnvironmentSu
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn create_environment(
     input: CreateEnvironmentInput,
     state: State<'_, AppState>,
@@ -69,6 +71,7 @@ pub fn create_environment(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn rename_environment(
     input: RenameEnvironmentInput,
     state: State<'_, AppState>,
@@ -93,6 +96,7 @@ pub fn rename_environment(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn delete_environment(
     environment_id: String,
     state: State<'_, AppState>,
@@ -110,6 +114,7 @@ pub fn delete_environment(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn import_postman_environment(
     postman_json: String,
     file_name: Option<String>,
@@ -140,6 +145,7 @@ pub fn import_postman_environment(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn list_variables(
     scope: String,
     collection_id: Option<String>,
@@ -184,6 +190,7 @@ pub fn list_variables(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn save_variables(
     scope: String,
     collection_id: Option<String>,

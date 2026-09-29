@@ -32,6 +32,14 @@ pnpm install
 pnpm tauri dev
 ```
 
+## Checks
+
+```bash
+pnpm check
+```
+
+Runs the TypeScript typecheck, frontend tests, `cargo fmt --check`, `cargo clippy`, and the Rust tests. See [docs/](./docs/index.md) for architecture notes.
+
 ## Build a local Mac app
 
 With the development prerequisites installed, run:

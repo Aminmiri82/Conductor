@@ -9,6 +9,7 @@ use crate::{storage::StorageError, AppState};
 const SORT_ORDER_STEP: i64 = 1024;
 
 #[tauri::command]
+#[specta::specta]
 pub fn create_folder(
     input: CreateFolderInput,
     state: State<'_, AppState>,
@@ -48,6 +49,7 @@ pub fn create_folder(
         .map_err(|error| error.to_string())
 }
 #[tauri::command]
+#[specta::specta]
 pub fn delete_node(node_id: String, state: State<'_, AppState>) -> Result<(), String> {
     state
         .database
@@ -67,6 +69,7 @@ pub fn delete_node(node_id: String, state: State<'_, AppState>) -> Result<(), St
         .map_err(|error| error.to_string())
 }
 #[tauri::command]
+#[specta::specta]
 pub fn move_node(input: MoveNodeInput, state: State<'_, AppState>) -> Result<(), String> {
     state
         .database

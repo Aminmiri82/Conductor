@@ -1,49 +1,37 @@
-import { invoke } from "@tauri-apps/api/core";
-import type {
-  CollectionNode,
-  CollectionSummary,
-  CreateRequestResult,
-  DuplicateRequestResult,
-  EnvironmentSummary,
-  RequestDetail,
-  ResolvedRequestPreview,
-  WorkspaceUiState,
-  SendRequestResult,
-  VariableEntry,
-} from "@/features/types";
+import { commands, type RequestDetail, type VariableEntry } from "@/bindings";
+import type { VariableScope, WorkspaceUiState } from "@/features/types";
 
+// Call-site conveniences over the generated `commands`. Command names, argument
+// names, and payload types come from Rust; add new commands in Rust and run
+// `pnpm bindings` rather than calling `invoke` directly.
 export const api = {
-  listCollections: () => invoke<CollectionSummary[]>("list_collections"),
-  listEnvironments: () => invoke<EnvironmentSummary[]>("list_environments"),
-  createEnvironment: (name: string) =>
-    invoke<string>("create_environment", { input: { name } }),
+  listCollections: commands.listCollections,
+  listEnvironments: commands.listEnvironments,
+  createEnvironment: (name: string) => commands.createEnvironment({ name }),
   renameEnvironment: (environmentId: string, name: string) =>
-    invoke<void>("rename_environment", { input: { environmentId, name } }),
-  deleteEnvironment: (environmentId: string) =>
-    invoke<void>("delete_environment", { environmentId }),
+    commands.renameEnvironment({ environmentId, name }),
+  deleteEnvironment: commands.deleteEnvironment,
   importEnvironment: (contents: string, fileName?: string | null) =>
-    invoke<string>("import_postman_environment", {
-      postmanJson: contents,
-      fileName,
-    }),
+    commands.importPostmanEnvironment(contents, fileName ?? null),
+  // Workspace UI state is opaque JSON to Rust; the store normalizes it on load.
   getWorkspaceState: (key: string) =>
-    invoke<WorkspaceUiState | null>("get_workspace_state", { key }),
+    commands.getWorkspaceState(key) as Promise<WorkspaceUiState | null>,
   setWorkspaceState: (key: string, value: WorkspaceUiState) =>
-    invoke<void>("set_workspace_state", { key, value }),
-  getCollectionTree: (collectionId: string) =>
-    invoke<CollectionNode[]>("get_collection_tree", { collectionId }),
-  importPostmanCollection: (postmanJson: string) =>
-    invoke<string>("import_postman_collection", { postmanJson }),
-  getRequest: (requestId: string) =>
-    invoke<RequestDetail>("get_request", { requestId }),
+    commands.setWorkspaceState(key, value),
+  getCollectionTree: commands.getCollectionTree,
+  importPostmanCollection: commands.importPostmanCollection,
+  getRequest: commands.getRequest,
   createRequest: (
     collectionId: string,
     parentId: string | null | undefined,
     position: number,
     name: string,
   ) =>
-    invoke<CreateRequestResult>("create_request", {
-      input: { collectionId, parentId, position, name },
+    commands.createRequest({
+      collectionId,
+      parentId: parentId ?? null,
+      position,
+      name,
     }),
   createFolder: (
     collectionId: string,
@@ -51,37 +39,44 @@ export const api = {
     position: number,
     name: string,
   ) =>
-    invoke<string>("create_folder", {
-      input: { collectionId, parentId, position, name },
+    commands.createFolder({
+      collectionId,
+      parentId: parentId ?? null,
+      position,
+      name,
     }),
   duplicateRequest: (requestId: string) =>
-    invoke<DuplicateRequestResult>("duplicate_request", { input: { requestId } }),
-  deleteRequest: (requestId: string) =>
-    invoke<void>("delete_request", { requestId }),
-  deleteNode: (nodeId: string) =>
-    invoke<void>("delete_node", { nodeId }),
+    commands.duplicateRequest({ requestId }),
+  deleteRequest: commands.deleteRequest,
+  deleteNode: commands.deleteNode,
   moveNode: (
     nodeId: string,
     parentId: string | null | undefined,
     position: number,
-  ) => invoke<void>("move_node", { input: { nodeId, parentId, position } }),
+  ) => commands.moveNode({ nodeId, parentId: parentId ?? null, position }),
   saveTextFile: (path: string, contents: string) =>
-    invoke<void>("save_text_file", { input: { path, contents } }),
-  saveRequest: (request: RequestDetail) =>
-    invoke<void>("save_request", { request }),
+    commands.saveTextFile({ path, contents }),
+  saveRequest: commands.saveRequest,
   resolveRequest: (request: RequestDetail, environmentId?: string | null) =>
-    invoke<ResolvedRequestPreview>("resolve_request", { request, environmentId }),
+    commands.resolveRequest(request, environmentId ?? null),
   sendRequest: (request: RequestDetail, environmentId?: string | null) =>
-    invoke<SendRequestResult>("send_request", { input: { request, environmentId } }),
+    commands.sendRequest({ request, environmentId }),
   listVariables: (
-    scope: "global" | "collection" | "environment",
+    scope: VariableScope,
     collectionId?: string | null,
     environmentId?: string | null,
-  ) => invoke<VariableEntry[]>("list_variables", { scope, collectionId, environmentId }),
+  ) =>
+    commands.listVariables(scope, collectionId ?? null, environmentId ?? null),
   saveVariables: (
-    scope: "global" | "collection" | "environment",
+    scope: VariableScope,
     collectionId: string | null | undefined,
     environmentId: string | null | undefined,
     variables: VariableEntry[],
-  ) => invoke<void>("save_variables", { scope, collectionId, environmentId, variables }),
+  ) =>
+    commands.saveVariables(
+      scope,
+      collectionId ?? null,
+      environmentId ?? null,
+      variables,
+    ),
 };

@@ -16,6 +16,7 @@ use super::{
 };
 
 #[tauri::command]
+#[specta::specta]
 pub fn get_request(
     request_id: String,
     state: State<'_, AppState>,
@@ -61,7 +62,7 @@ pub fn get_request(
                     })
                 },
             )?;
-            request.inherited_auth = request_auth::inherited_auth_for_request(&connection, &request)?;
+            request.inherited_auth = request_auth::inherited_auth_for_request(connection, &request)?;
             request.effective_auth = request_auth::effective_auth(request.auth.as_ref(), request.inherited_auth.as_ref());
             request_body::normalize_body_files(&mut request);
             Ok(request)
@@ -69,6 +70,7 @@ pub fn get_request(
         .map_err(|error| error.to_string())
 }
 #[tauri::command]
+#[specta::specta]
 pub fn create_request(
     input: CreateRequestInput,
     state: State<'_, AppState>,
@@ -121,6 +123,7 @@ pub fn create_request(
         .map_err(|error| error.to_string())
 }
 #[tauri::command]
+#[specta::specta]
 pub fn duplicate_request(
     input: DuplicateRequestInput,
     state: State<'_, AppState>,
@@ -215,6 +218,7 @@ pub fn duplicate_request(
         .map_err(|error| error.to_string())
 }
 #[tauri::command]
+#[specta::specta]
 pub fn delete_request(request_id: String, state: State<'_, AppState>) -> Result<(), String> {
     state
         .database
@@ -225,6 +229,7 @@ pub fn delete_request(request_id: String, state: State<'_, AppState>) -> Result<
         .map_err(|error| error.to_string())
 }
 #[tauri::command]
+#[specta::specta]
 pub fn save_request(request: RequestDetail, state: State<'_, AppState>) -> Result<(), String> {
     let now = Utc::now().to_rfc3339();
     state
@@ -283,10 +288,7 @@ struct DuplicateSource {
     name: String,
     node_auth_json: Option<String>,
 }
-fn parse_json<T: serde::de::DeserializeOwned>(value: &str) -> T
-where
-    T: Default,
-{
+fn parse_json<T: serde::de::DeserializeOwned + Default>(value: &str) -> T {
     serde_json::from_str(value).unwrap_or_default()
 }
 fn parse_json_optional<T: serde::de::DeserializeOwned>(value: &str) -> Option<T> {

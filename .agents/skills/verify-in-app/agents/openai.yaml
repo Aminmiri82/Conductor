@@ -1,0 +1,4 @@
+interface:
+  display_name: "Verify In App"
+  short_description: "Run Conductor on isolated data and check it with computer use"
+  default_prompt: "Use $verify-in-app to start Conductor with pnpm agent:start, then verify the affected flow with your own computer use. The tauri MCP tools in the skill are for Claude; you do not need them."

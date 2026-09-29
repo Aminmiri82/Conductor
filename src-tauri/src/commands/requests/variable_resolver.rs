@@ -119,7 +119,7 @@ fn replace_path_param(url: &str, key: &str, value: &str) -> String {
         let boundary = after
             .chars()
             .next()
-            .map_or(true, |ch| matches!(ch, '/' | '?' | '#' | '&'));
+            .is_none_or(|ch| matches!(ch, '/' | '?' | '#' | '&'));
         if boundary {
             out.push_str(value);
             rest = after;

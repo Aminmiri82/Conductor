@@ -1,0 +1,41 @@
+---
+title: Storage
+description: Where Conductor keeps its data, how the schema changes before 1.0, and how to run against a throwaway database.
+---
+
+Conductor keeps everything in one SQLite database, `conductor.sqlite3`, in the
+app data directory. Imported Postman files are kept next to it in
+`raw-imports/`.
+
+## Where The Data Lives
+
+On macOS the default directory is
+`~/Library/Application Support/com.yaramiri.conductor/`. **`pnpm tauri dev`
+and the installed app share this directory**, so a dev run reads and writes
+Yara's real collections, environments, and secrets.
+
+Set `CONDUCTOR_DATA_DIR` to point any run somewhere else:
+
+```bash
+CONDUCTOR_DATA_DIR="$(mktemp -d)" pnpm tauri dev
+```
+
+Agents use `pnpm agent:start`, which does this with `.agent-app/data` (see
+the [verify-in-app skill](../../.agents/skills/verify-in-app/SKILL.md)).
+
+## Changing The Schema
+
+Conductor is pre-production and does not preserve backwards compatibility,
+including the database. To change the schema:
+
+1. Edit [`schema/001_initial.sql`](../../src-tauri/src/storage/schema/001_initial.sql)
+   in place.
+2. Start from an empty data directory (a fresh `CONDUCTOR_DATA_DIR`) to pick
+   it up. Existing databases are not upgraded.
+
+Do not add new migration steps to
+[`migrations.rs`](../../src-tauri/src/storage/migrations.rs) unless Yara asks.
+The one step already there predates this rule.
+
+When a schema change breaks Yara's existing database, say so in the change
+description so she knows to reset it.

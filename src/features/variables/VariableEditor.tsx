@@ -357,12 +357,12 @@ function extractRequestVariableNames(request: RequestDetail): string[] {
   if (request.body) {
     collect(request.body.raw);
     collect(request.body.rawLanguage);
-    collectKeyValues(request.body.formData, collect);
-    for (const field of request.body.formData) {
+    collectKeyValues(request.body.formData ?? [], collect);
+    for (const field of request.body.formData ?? []) {
       collect(field.filePath);
       collect(field.contentType);
     }
-    collectKeyValues(request.body.urlencoded, collect);
+    collectKeyValues(request.body.urlencoded ?? [], collect);
     collect(request.body.graphql?.query);
     collect(request.body.graphql?.variables);
     collect(request.body.file?.path);

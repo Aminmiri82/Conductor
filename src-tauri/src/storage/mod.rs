@@ -51,7 +51,7 @@ pub enum StorageError {
     InvalidInput(String),
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct DatabaseStatus {
     pub path: String,
