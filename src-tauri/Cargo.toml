@@ -18,7 +18,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [features]
-# Lets AI agents drive the webview over MCP. Enabled only by `pnpm dev:agent`.
+# Lets AI agents drive the webview over MCP. Enabled for isolated agent builds.
 mcp-bridge = ["dep:tauri-plugin-mcp-bridge"]
 
 [dependencies]

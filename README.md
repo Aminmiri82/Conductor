@@ -46,19 +46,11 @@ Use `pnpm lint` to check JavaScript and TypeScript throughout the repo, or `pnpm
 
 Use `pnpm format` to format frontend source and root JavaScript, TypeScript, JSON, and HTML files, or `pnpm format:check` to check them without writing. Prettier handles formatting separately from Oxlint. Generated bindings and build output are excluded; Rust formatting stays with `pnpm format:rust`.
 
-## Install a local Mac app
+## Releases and updates
 
-With the development prerequisites installed, build the current checkout and
-replace `/Applications/Conductor.app` in one step:
-
-```bash
-pnpm install:mac
-```
-
-This asks the installed app to quit if it is running, checks the bundle identifier, and replaces only the app bundle. Collections and settings stay in `~/Library/Application Support/com.yaramiri.conductor/`. The command does not fetch changes from Git; update your checkout first if you want newer source. It needs write access to `/Applications`.
-
-Release builds can be published through GitHub Actions, and the app checks for
-updates from Settings → About. See [Mac Releases](./docs/02-workflows/01-mac-releases.md)
+Release PRs automatically maintain versions and release notes. Merging one
+builds a draft on GitHub Actions; publishing it makes the update available
+from the app menu or Settings → About. See [Mac Releases](./docs/02-workflows/01-mac-releases.md)
 for the release steps and Apple notarization requirements.
 
 ## Contributing

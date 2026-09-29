@@ -22,5 +22,5 @@ Testing rules live in the
 
 ## Workflows
 
-- [Mac Releases](./02-workflows/01-mac-releases.md): Local installation, GitHub
-  release drafts, updates, and Apple notarization.
+- [Mac Releases](./02-workflows/01-mac-releases.md): Bot-maintained release PRs, draft
+  builds and signed updates.

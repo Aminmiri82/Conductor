@@ -1,3 +1,5 @@
+#[cfg(any(test, feature = "mcp-bridge"))]
+mod agent_data_dir;
 #[cfg(test)]
 mod bindings;
 mod commands;
@@ -83,7 +85,12 @@ pub fn run() {
                 r#"{"identifier":"mcp-bridge","windows":["*"],"permissions":["mcp-bridge:default"]}"#,
             )?;
 
-            // Explicit data directories also keep agent runs isolated.
+            #[cfg(feature = "mcp-bridge")]
+            let app_data_dir = agent_data_dir::resolve(
+                std::env::var_os("CONDUCTOR_DATA_DIR").map(std::path::PathBuf::from),
+                &app.path().app_data_dir()?,
+            )?;
+            #[cfg(not(feature = "mcp-bridge"))]
             let app_data_dir = match std::env::var_os("CONDUCTOR_DATA_DIR") {
                 Some(dir) => std::path::PathBuf::from(dir),
                 None => default_data_dir(app.path().app_data_dir()?, cfg!(debug_assertions)),
@@ -124,6 +131,7 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
+#[cfg(any(test, not(feature = "mcp-bridge")))]
 fn default_data_dir(app_data_dir: std::path::PathBuf, development: bool) -> std::path::PathBuf {
     if development {
         app_data_dir.with_file_name("com.yaramiri.conductor.dev")

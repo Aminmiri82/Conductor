@@ -4,7 +4,6 @@
   "version": "0.1.2",
   "type": "module",
   "scripts": {
-    "install:mac": "bash scripts/install-mac.sh",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
@@ -23,7 +22,8 @@
     "lint": "oxlint . --deny-warnings --report-unused-disable-directives",
     "lint:fix": "pnpm lint --fix",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"*.{js,ts,json,html}\"",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"*.{js,ts,json,html}\""
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"*.{js,ts,json,html}\"",
+    "agent:status": "bash scripts/agent-app.sh status"
   },
   "dependencies": {
     "@codemirror/lang-json": "^6.0.2",

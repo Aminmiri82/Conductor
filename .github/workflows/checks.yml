@@ -1,0 +1,39 @@
+name: Checks
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: macos-latest
+    steps:
+      - name: Check PR title for automatic release notes
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          node -e 'if (!/^(feat|fix|perf|revert|docs|refactor|build|ci|test|chore)(\([^\r\n)]+\))?!?: \S.+$/.test(process.env.PR_TITLE)) { console.error("Use a conventional PR title, e.g. fix(mac): keep agent data isolated. It becomes the release note when squash-merged."); process.exit(1); }'
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/check-release-version.mjs
+      - run: pnpm check
+      - run: git diff --exit-code -- src-tauri/Cargo.lock src/bindings.ts

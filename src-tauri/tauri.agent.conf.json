@@ -3,12 +3,28 @@
   "productName": "Conductor Agent",
   "identifier": "com.yaramiri.conductor.agent",
   "app": {
-    "withGlobalTauri": true
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Conductor Agent \u2014 isolated data",
+        "width": 850,
+        "height": 625,
+        "dragDropEnabled": false
+      }
+    ]
   },
   "plugins": {
     "updater": {
-      "endpoints": ["http://127.0.0.1:18765/latest.json"],
+      "endpoints": [
+        "http://127.0.0.1:18765/latest.json"
+      ],
       "dangerousInsecureTransportProtocol": true
+    }
+  },
+  "bundle": {
+    "macOS": {
+      "signingIdentity": "-"
     }
   }
 }

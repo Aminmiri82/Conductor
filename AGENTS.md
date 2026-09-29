@@ -33,7 +33,7 @@ Use [the docs index](docs/index.md) to find the page for your task; unrelated pa
 - `pnpm check` is the definition of green: `tsc`, Vitest, `cargo fmt --check`, `cargo clippy -D warnings`, and `cargo test` (which includes the bindings check). Run it before calling a change done, and fix failures your change caused without asking.
 - After changing a command or IPC type, run `pnpm bindings` and include the regenerated `src/bindings.ts`.
 - Use the smallest proof that works: a unit test for logic. After a visual change (layout, styling, focus, what shows when), check your own work with the verify-in-app skill before reporting done.
-- Never run the app against the real data directory, and never send requests to a real environment. Run the app with `pnpm agent:start`/`pnpm agent:stop` and send to local servers.
+- Never run the app against the real data directory, and never send requests to a real environment. Run the app with `pnpm agent:start`/`pnpm agent:stop` and send to local servers. Before computer use, `pnpm agent:status` must verify the tracked app; follow the [identity checks](.agents/skills/verify-in-app/SKILL.md). Never target the installed app by name.
 - Never `pkill`/`kill` by name or pattern; Yara runs other dev servers and her own Conductor. Stop only PIDs you started.
 
 ## Taste
