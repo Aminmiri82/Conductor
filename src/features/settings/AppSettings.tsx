@@ -1,4 +1,10 @@
-import { type ChangeEvent, useEffect, useRef, useState } from "react";
+import {
+  type ChangeEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import type { Update } from "@tauri-apps/plugin-updater";
 import {
@@ -109,6 +115,11 @@ export function AppSettings({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const [updateCheckRequested, setUpdateCheckRequested] = useState(false);
+  const consumeUpdateCheck = useCallback(
+    () => setUpdateCheckRequested(false),
+    [],
+  );
   const workspaceUi = useWorkspaceUiStore((state) => state.workspaceUi);
   const setWorkspacePreference = useWorkspaceUiStore(
     (state) => state.setWorkspacePreference,
@@ -116,6 +127,20 @@ export function AppSettings({
   const activeCollectionId = useWorkspaceStore(
     (state) => state.activeCollectionId,
   );
+
+  useEffect(() => {
+    function requestUpdateCheck() {
+      setWorkspacePreference("settingsTab", "about");
+      setUpdateCheckRequested(true);
+      onOpenChange(true);
+    }
+    window.addEventListener("conductor:check-for-updates", requestUpdateCheck);
+    return () =>
+      window.removeEventListener(
+        "conductor:check-for-updates",
+        requestUpdateCheck,
+      );
+  }, [onOpenChange, setWorkspacePreference]);
 
   useEffect(() => {
     if (!open) return;
@@ -179,7 +204,12 @@ export function AppSettings({
                 <VariablesPane activeCollectionId={activeCollectionId} />
               ) : null}
               {tab === "shortcuts" ? <ShortcutsPane /> : null}
-              {tab === "about" ? <AboutPane /> : null}
+              {tab === "about" ? (
+                <AboutPane
+                  updateCheckRequested={updateCheckRequested}
+                  consumeUpdateCheck={consumeUpdateCheck}
+                />
+              ) : null}
             </div>
           </ScrollArea>
         </div>
@@ -788,13 +818,20 @@ function ShortcutsPane() {
   );
 }
 
-function AboutPane() {
+function AboutPane({
+  updateCheckRequested,
+  consumeUpdateCheck,
+}: {
+  updateCheckRequested: boolean;
+  consumeUpdateCheck: () => void;
+}) {
   const [version, setVersion] = useState("");
   const [busy, setBusy] = useState(false);
   const [availableVersion, setAvailableVersion] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const updateRef = useRef<Update | null>(null);
   const mountedRef = useRef(true);
+  const busyRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -808,7 +845,9 @@ function AboutPane() {
     };
   }, []);
 
-  async function checkForUpdates() {
+  const checkForUpdates = useCallback(async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     setMessage("");
     setAvailableVersion(null);
@@ -833,19 +872,28 @@ function AboutPane() {
         setMessage(`Could not check for updates: ${String(error)}`);
       }
     } finally {
+      busyRef.current = false;
       if (mountedRef.current) setBusy(false);
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    if (!updateCheckRequested) return;
+    consumeUpdateCheck();
+    void checkForUpdates();
+  }, [updateCheckRequested, consumeUpdateCheck, checkForUpdates]);
 
   async function installUpdate() {
     const update = updateRef.current;
     if (!update) return;
+    busyRef.current = true;
     setBusy(true);
     setMessage(`Installing Conductor ${update.version}...`);
     try {
       await update.downloadAndInstall();
     } catch (error) {
       setMessage(`Could not install the update: ${String(error)}`);
+      busyRef.current = false;
       setBusy(false);
       return;
     }
@@ -856,6 +904,7 @@ function AboutPane() {
       const { relaunch } = await import("@tauri-apps/plugin-process");
       await relaunch();
     } catch {
+      busyRef.current = false;
       setBusy(false);
     }
   }

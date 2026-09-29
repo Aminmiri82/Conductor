@@ -6,6 +6,7 @@ import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 type AppMenuAction =
   | "open-request"
   | "settings"
+  | "check-for-updates"
   | "new-request"
   | "duplicate-request"
   | "save-request"
@@ -44,6 +45,9 @@ export function useAppHotkeys() {
       }
       if (action === "settings") {
         window.dispatchEvent(new Event("conductor:open-settings"));
+      }
+      if (action === "check-for-updates") {
+        window.dispatchEvent(new Event("conductor:check-for-updates"));
       }
       if (action === "save-request") {
         void saveActiveRequest();

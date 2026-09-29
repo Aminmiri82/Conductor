@@ -111,6 +111,7 @@ pub fn run() {
                 "toggle_sidebar" => Some("toggle-sidebar"),
                 "focus_url" => Some("focus-url"),
                 "settings" => Some("settings"),
+                "check_for_updates" => Some("check-for-updates"),
                 _ => None,
             };
 
@@ -214,6 +215,8 @@ fn build_app_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result
                 true,
                 &[
                     &PredefinedMenuItem::about(app, None, None)?,
+                    &MenuItemBuilder::with_id("check_for_updates", "Check for Updates...")
+                        .build(app)?,
                     &PredefinedMenuItem::separator(app)?,
                     &MenuItemBuilder::with_id("settings", "Settings...")
                         .accelerator("CmdOrCtrl+,")
