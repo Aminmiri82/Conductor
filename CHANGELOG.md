@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.5](https://github.com/Aminmiri82/Conductor/compare/app-v0.1.4...app-v0.1.5) (2026-09-30)
+
+
+### Fixes
+
+* **ci:** use Conductor release titles ([#7](https://github.com/Aminmiri82/Conductor/issues/7)) ([ab0eb0e](https://github.com/Aminmiri82/Conductor/commit/ab0eb0e5bdbe7fac4774ba4e9bf130b1b046a535))
+
 ## [0.1.4](https://github.com/Aminmiri82/Conductor/compare/app-v0.1.3...app-v0.1.4) (2026-09-30)
 
 
