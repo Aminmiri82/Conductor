@@ -51,6 +51,11 @@ jobs:
             if (!['ahead', 'identical'].includes(comparison.status)) throw new Error('Release commit is not on main');
             if (release.target_commitish !== commit.sha) throw new Error('Draft and tag must point to the same immutable commit');
             if (!release.body?.trim()) throw new Error('Draft is missing generated release notes');
+            // Uploading to an existing release ID does not apply tauri-action's releaseName.
+            await github.rest.repos.updateRelease({
+              ...context.repo, release_id: release.id,
+              name: `Conductor v${tag.slice('app-v'.length)}`,
+            });
             core.setOutput('id', release.id);
             core.setOutput('sha', commit.sha);
             core.setOutput('notes', release.body);
@@ -89,7 +94,6 @@ jobs:
         with:
           releaseId: ${{ needs.draft.outputs.id }}
           tagName: ${{ inputs.release-tag }}
-          releaseName: Conductor v__VERSION__
           releaseBody: ${{ needs.draft.outputs.notes }}
           releaseDraft: true
           args: --target aarch64-apple-darwin --bundles app --config src-tauri/tauri.release.conf.json
