@@ -53,7 +53,7 @@ jobs:
             if (!release.body?.trim()) throw new Error('Draft is missing generated release notes');
             // Uploading to an existing release ID does not apply tauri-action's releaseName.
             await github.rest.repos.updateRelease({
-              ...context.repo, release_id: release.id,
+              ...context.repo, release_id: release.id, tag_name: tag,
               name: `Conductor v${tag.slice('app-v'.length)}`,
             });
             core.setOutput('id', release.id);
