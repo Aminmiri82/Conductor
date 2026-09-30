@@ -37,7 +37,12 @@ jobs:
           script: |
             const tag = process.env.RELEASE_TAG;
             if (!/^app-v\d+\.\d+\.\d+$/.test(tag)) throw new Error('Expected app-vX.Y.Z');
-            const { data: release } = await github.rest.repos.getReleaseByTag({ ...context.repo, tag });
+            // The tag lookup only returns published releases; listing includes drafts.
+            const releases = await github.paginate(github.rest.repos.listReleases, {
+              ...context.repo, per_page: 100,
+            });
+            const release = releases.find((release) => release.tag_name === tag);
+            if (!release) throw new Error(`Release ${tag} was not found`);
             if (!release.draft) throw new Error('Refusing to replace a published release');
             const { data: commit } = await github.rest.repos.getCommit({ ...context.repo, ref: tag });
             const { data: comparison } = await github.rest.repos.compareCommitsWithBasehead({
