@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.6](https://github.com/Aminmiri82/Conductor/compare/app-v0.1.5...app-v0.1.6) (2026-09-30)
+
+
+### Automation
+
+* preserve draft tags during title updates ([#9](https://github.com/Aminmiri82/Conductor/issues/9)) ([c1df0e0](https://github.com/Aminmiri82/Conductor/commit/c1df0e037c444b5e0fa07b8eeab631bbc7c63a18))
+
 ## [0.1.5](https://github.com/Aminmiri82/Conductor/compare/app-v0.1.4...app-v0.1.5) (2026-09-30)
 
 
