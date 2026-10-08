@@ -28,6 +28,7 @@ export const commands = {
 	moveNode: (input: MoveNodeInput) => __TAURI_INVOKE<null>("move_node", { input }),
 	saveRequest: (request: RequestDetail) => __TAURI_INVOKE<null>("save_request", { request }),
 	saveTextFile: (input: SaveTextFileInput) => __TAURI_INVOKE<null>("save_text_file", { input }),
+	saveResponseBody: (input: SaveResponseBodyInput) => __TAURI_INVOKE<null>("save_response_body", { input }),
 	saveVariables: (scope: string, collectionId: string | null, environmentId: string | null, variables: VariableEntry[]) => __TAURI_INVOKE<null>("save_variables", { scope, collectionId, environmentId, variables }),
 	sendRequest: (input: SendRequestInput) => __TAURI_INVOKE<SendRequestResult>("send_request", { input }),
 };
@@ -182,9 +183,17 @@ export type ResolvedRequestPreview = {
 	unresolvedVariables: UnresolvedVariable[],
 };
 
+/**  Binary bodies stay as raw bytes in Rust; see `save_response_body`. */
+export type ResponseBodyFormat = "json" | "text" | "binary";
+
 export type ResponseHeader = {
 	key: string,
 	value: string,
+};
+
+export type SaveResponseBodyInput = {
+	historyId: string,
+	path: string,
 };
 
 export type SaveTextFileInput = {
@@ -203,10 +212,13 @@ export type SendRequestResult = {
 	statusText: string,
 	durationMs: number,
 	headers: ResponseHeader[],
+	/**  Pretty-printed for JSON, as received for text, empty for binary. */
 	body: string,
 	bodyBytes: number,
 	bodyContentType: string | null,
-	bodyFormat: string,
+	bodyFormat: ResponseBodyFormat,
+	/**  What the save dialog suggests, from `Content-Disposition` when sent. */
+	downloadFileName: string,
 	updatedVariables: KeyValue[],
 	variableWarnings: string[],
 	unresolvedVariables: UnresolvedVariable[],

@@ -263,6 +263,13 @@ pub struct SaveTextFileInput {
     pub contents: String,
 }
 
+#[derive(Debug, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveResponseBodyInput {
+    pub history_id: String,
+    pub path: String,
+}
+
 #[derive(Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ResponseHeader {
@@ -278,13 +285,25 @@ pub struct SendRequestResult {
     pub status_text: String,
     pub duration_ms: u128,
     pub headers: Vec<ResponseHeader>,
+    /// Pretty-printed for JSON, as received for text, empty for binary.
     pub body: String,
     pub body_bytes: usize,
     pub body_content_type: Option<String>,
-    pub body_format: String,
+    pub body_format: ResponseBodyFormat,
+    /// What the save dialog suggests, from `Content-Disposition` when sent.
+    pub download_file_name: String,
     pub updated_variables: Vec<KeyValue>,
     pub variable_warnings: Vec<String>,
     pub unresolved_variables: Vec<UnresolvedVariable>,
+}
+
+/// Binary bodies stay as raw bytes in Rust; see `save_response_body`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
+#[serde(rename_all = "lowercase")]
+pub enum ResponseBodyFormat {
+    Json,
+    Text,
+    Binary,
 }
 
 fn enabled() -> bool {

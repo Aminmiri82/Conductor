@@ -9,8 +9,8 @@ use commands::collections::{get_collection_tree, import_postman_collection, list
 use commands::requests::{
     create_environment, create_folder, create_request, delete_environment, delete_node,
     delete_request, duplicate_request, get_request, import_postman_environment, list_environments,
-    list_variables, move_node, rename_environment, resolve_request, save_request, save_text_file,
-    save_variables, send_request,
+    list_variables, move_node, rename_environment, resolve_request, save_request,
+    save_response_body, save_text_file, save_variables, send_request, BinaryBodies,
 };
 use commands::storage::{database_status, get_workspace_state, set_workspace_state};
 use storage::Database;
@@ -22,6 +22,7 @@ use tauri::{
 pub struct AppState {
     database: Database,
     http_client: reqwest::Client,
+    binary_bodies: BinaryBodies,
 }
 
 /// Registers every command exposed to the frontend. Tauri's command macros
@@ -51,6 +52,7 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             move_node,
             save_request,
             save_text_file,
+            save_response_body,
             save_variables,
             send_request,
         ])
@@ -103,6 +105,7 @@ pub fn run() {
             app.manage(AppState {
                 database,
                 http_client,
+                binary_bodies: BinaryBodies::default(),
             });
             app.set_menu(build_app_menu(app.handle())?)?;
             Ok(())

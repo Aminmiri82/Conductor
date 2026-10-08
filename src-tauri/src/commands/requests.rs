@@ -4,6 +4,7 @@ mod request_auth;
 mod request_body;
 mod request_sender;
 mod request_store;
+mod response_files;
 mod variable_resolver;
 mod variables;
 
@@ -12,6 +13,7 @@ pub use request_sender::{resolve_request, send_request};
 pub use request_store::{
     create_request, delete_request, duplicate_request, get_request, save_request,
 };
+pub use response_files::{save_response_body, BinaryBodies};
 pub use variables::{
     create_environment, delete_environment, import_postman_environment, list_environments,
     list_variables, rename_environment, save_variables,
