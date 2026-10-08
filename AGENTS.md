@@ -12,11 +12,8 @@ It's a Tauri 2 desktop app with a Rust + SQLite backend and a React + Zustand fr
 ## Relevant Context
 
 Use [the docs index](docs/index.md) to find the page for your task; unrelated pages are not prerequisites. Setup is in [README.md](README.md).
-
-- Adding or changing a command, or any type that crosses to the frontend: [IPC And Generated Types](docs/01-architecture/02-ipc-and-types.md).
 - Adding or revising tests: the [writing-tests skill](.agents/skills/writing-tests/SKILL.md).
-- Confirming a visual change, or any change when Yara asks: the [verify-in-app skill](.agents/skills/verify-in-app/SKILL.md).
-- Writing docs: the [writing-docs skill](.agents/skills/writing-docs/SKILL.md).
+- Confirming a visual change, or any change when user asks: the [verify-in-app skill](.agents/skills/verify-in-app/SKILL.md).
 
 ## Where Code Lives
 
