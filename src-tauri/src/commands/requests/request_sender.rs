@@ -11,14 +11,14 @@ use tauri::State;
 use uuid::Uuid;
 
 use crate::commands::models::{
-    KeyValue, RequestDetail, ResolvedRequestPreview, ResponseHeader, SendRequestInput,
-    SendRequestResult,
+    KeyValue, RequestDetail, ResolvedRequestPreview, ResponseBodyFormat, ResponseHeader,
+    SendRequestInput, SendRequestResult,
 };
 use crate::AppState;
 
 use super::postman_scripts::ScriptVariableScope;
 use super::variables::{load_variable_context, save_script_variable};
-use super::{postman_scripts, request_auth, request_body, variable_resolver};
+use super::{postman_scripts, request_auth, request_body, response_files, variable_resolver};
 
 #[tauri::command]
 #[specta::specta]
@@ -112,11 +112,30 @@ pub async fn send_request(
             value: value.to_str().unwrap_or_default().to_string(),
         })
         .collect::<Vec<_>>();
-    let body_text = response.text().await.map_err(|error| error.to_string())?;
-    let body_bytes = body_text.len();
-    let body_json = serde_json::from_str::<Value>(&body_text).ok();
-    let (body, body_format) = format_response_body(&body_text, body_json.as_ref());
+    let content_disposition = response_headers
+        .get(reqwest::header::CONTENT_DISPOSITION)
+        .and_then(|value| value.to_str().ok());
+    let raw_body = response.bytes().await.map_err(|error| error.to_string())?;
+    let body_bytes = raw_body.len();
     let history_id = Uuid::new_v4().to_string();
+    let (body, body_format, body_json) =
+        if response_files::is_binary_body(&raw_body, content_type.as_deref()) {
+            let body_format = ResponseBodyFormat::Binary;
+            state
+                .binary_bodies
+                .insert(&input.request.id, &history_id, raw_body);
+            (String::new(), body_format, None)
+        } else {
+            let body_text = String::from_utf8_lossy(&raw_body);
+            let body_json = serde_json::from_str::<Value>(&body_text).ok();
+            let (body, body_format) = format_response_body(&body_text, body_json.as_ref());
+            (body, body_format, body_json)
+        };
+    let download_file_name = response_files::download_file_name(
+        content_disposition,
+        content_type.as_deref(),
+        body_format,
+    );
     let now = Utc::now().to_rfc3339();
     let script_writes = postman_scripts::collect_postman_script_variables(
         input.request.test_script.as_ref(),
@@ -210,20 +229,49 @@ pub async fn send_request(
         body_bytes,
         body_content_type: content_type,
         body_format,
+        download_file_name,
         updated_variables,
         variable_warnings,
         unresolved_variables: preview.unresolved_variables,
     })
 }
-fn format_response_body(body_text: &str, body_json: Option<&Value>) -> (String, String) {
+fn format_response_body(
+    body_text: &str,
+    body_json: Option<&Value>,
+) -> (String, ResponseBodyFormat) {
     if let Some(json) = body_json {
         let pretty = serde_json::to_string_pretty(json).unwrap_or_else(|_| body_text.to_string());
-        return (pretty, "json".to_string());
+        return (pretty, ResponseBodyFormat::Json);
     }
-    (body_text.to_string(), "text".to_string())
+    (body_text.to_string(), ResponseBodyFormat::Text)
 }
 fn url_without_query(url: &str) -> Result<String, String> {
     let mut parsed = Url::parse(url).map_err(|error| error.to_string())?;
     parsed.set_query(None);
     Ok(parsed.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pretty_json_body_keeps_the_key_order_the_server_sent() {
+        let raw = r#"{"schemaVersion":1,"generatedAt":"now","products":[{"productId":"a","manufacturer":"ST","breakPrice1":2.9}]}"#;
+        let json = serde_json::from_str::<Value>(raw).ok();
+
+        let (body, format) = format_response_body(raw, json.as_ref());
+
+        assert_eq!(format, ResponseBodyFormat::Json);
+        let keys = [
+            "schemaVersion",
+            "generatedAt",
+            "products",
+            "productId",
+            "manufacturer",
+            "breakPrice1",
+        ];
+        let positions = keys.map(|key| body.find(&format!("\"{key}\"")).expect("key present"));
+        assert!(positions.is_sorted(), "keys out of server order:\n{body}");
+    }
 }

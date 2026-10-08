@@ -56,6 +56,8 @@ export const api = {
   ) => commands.moveNode({ nodeId, parentId: parentId ?? null, position }),
   saveTextFile: (path: string, contents: string) =>
     commands.saveTextFile({ path, contents }),
+  saveResponseBody: (historyId: string, path: string) =>
+    commands.saveResponseBody({ historyId, path }),
   saveRequest: commands.saveRequest,
   resolveRequest: (request: RequestDetail, environmentId?: string | null) =>
     commands.resolveRequest(request, environmentId ?? null),

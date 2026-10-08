@@ -20,7 +20,7 @@ import { useDraftStore } from "@/features/workspace/draftStore";
 import { useResponseStore } from "@/features/workspace/responseStore";
 import { useWorkspaceUiStore } from "@/features/workspace/workspaceUiStore";
 import { api } from "@/lib/tauri";
-import type { KeyValue } from "@/features/types";
+import type { KeyValue, SendRequestResult } from "@/features/types";
 
 const ResponseViewer = lazy(() =>
   import("@/features/requests/ResponseViewer").then((module) => ({
@@ -216,14 +216,16 @@ export function RequestWorkspace() {
                 size="sm"
                 className="h-7 gap-1.5 text-xs"
                 disabled={!response}
-                onClick={() => response && void downloadJson(response)}
+                onClick={() => response && void downloadBody(response)}
               >
                 <Download className="size-3.5" />
-                JSON
+                Download
               </Button>
             </div>
             <div className="min-h-0 flex-1">
-              {response ? (
+              {response?.bodyFormat === "binary" && !sending ? (
+                <BinaryResponse response={response} />
+              ) : response ? (
                 <Suspense fallback={<ResponsePlaceholder sending={sending} />}>
                   <ResponseViewer sending={sending} value={response.body} />
                 </Suspense>
@@ -244,6 +246,22 @@ function ResponsePlaceholder({ sending }: { sending: boolean }) {
       {sending ? "Sending request" : "Send a request to see the response."}
     </div>
   );
+}
+
+function BinaryResponse({ response }: { response: SendRequestResult }) {
+  return (
+    <div className="h-full min-h-0 min-w-0 p-3 [overflow-wrap:anywhere] font-mono text-xs leading-5 text-[var(--app-dim)]">
+      Binary response ({formatBytes(response.bodyBytes)}
+      {response.bodyContentType ? `, ${response.bodyContentType}` : ""}). Use
+      Download to save {response.downloadFileName}.
+    </div>
+  );
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function ParameterSection({
@@ -352,12 +370,18 @@ function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-async function downloadJson(value: unknown) {
-  const path = await save({
-    defaultPath: "conductor-response.json",
-    filters: [{ name: "JSON", extensions: ["json"] }],
-  });
+// Saves only the response body.
+// Binary bodies never reach the webview, so Rust writes those bytes itself.
+async function downloadBody(response: SendRequestResult) {
+  const path = await save({ defaultPath: response.downloadFileName });
   if (!path) return;
-  const content = JSON.stringify(value, null, 2);
-  await api.saveTextFile(path, content);
+  try {
+    if (response.bodyFormat === "binary") {
+      await api.saveResponseBody(response.historyId, path);
+    } else {
+      await api.saveTextFile(path, response.body);
+    }
+  } catch (error) {
+    useWorkspaceStore.setState({ error: String(error) });
+  }
 }
