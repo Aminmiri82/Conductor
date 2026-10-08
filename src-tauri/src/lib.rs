@@ -5,19 +5,25 @@ mod bindings;
 mod commands;
 mod storage;
 
-use commands::collections::{get_collection_tree, import_postman_collection, list_collections};
-use commands::requests::{
-    create_environment, create_folder, create_request, delete_environment, delete_node,
-    delete_request, duplicate_request, get_request, import_postman_environment, list_environments,
-    list_variables, move_node, rename_environment, resolve_request, save_request,
-    save_response_body, save_text_file, save_variables, send_request, BinaryBodies,
+use commands::collections::{
+    create_folder, delete_node, get_collection_tree, import_postman_collection, list_collections,
+    move_node,
 };
-use commands::storage::{database_status, get_workspace_state, set_workspace_state};
+use commands::requests::{
+    create_request, duplicate_request, get_request, resolve_request, save_request,
+    save_response_body, save_text_file, send_request, BinaryBodies,
+};
+use commands::variables::{
+    apply_variable_changes, create_environment, delete_environment, import_postman_environment,
+    list_environments, list_variables, rename_environment,
+};
+use commands::workspace_state::{get_workspace_state, set_workspace_state};
 use storage::Database;
 use tauri::{
     menu::{Menu, MenuItemBuilder, PredefinedMenuItem, Submenu},
-    Emitter, Manager,
+    Manager,
 };
+use tauri_specta::Event;
 
 pub struct AppState {
     database: Database,
@@ -25,20 +31,62 @@ pub struct AppState {
     binary_bodies: BinaryBodies,
 }
 
+/// What the user picked in the app menu, sent to the webview as the typed
+/// `app-menu-action` event.
+#[derive(
+    Debug, Clone, Copy, serde::Serialize, serde::Deserialize, specta::Type, tauri_specta::Event,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum AppMenuAction {
+    OpenRequest,
+    NewRequest,
+    DuplicateRequest,
+    SaveRequest,
+    SendRequest,
+    CloseRequest,
+    ToggleSidebar,
+    FocusUrl,
+    Settings,
+    CheckForUpdates,
+}
+
+impl AppMenuAction {
+    /// The ids given to the menu items in `build_app_menu`; predefined items
+    /// (copy, quit) have none of ours.
+    fn from_menu_id(id: &str) -> Option<Self> {
+        Some(match id {
+            "open_request" => Self::OpenRequest,
+            "new_request" => Self::NewRequest,
+            "duplicate_request" => Self::DuplicateRequest,
+            "save_request" => Self::SaveRequest,
+            "send_request" => Self::SendRequest,
+            "close_request" => Self::CloseRequest,
+            "toggle_sidebar" => Self::ToggleSidebar,
+            "focus_url" => Self::FocusUrl,
+            "settings" => Self::Settings,
+            "check_for_updates" => Self::CheckForUpdates,
+            _ => return None,
+        })
+    }
+}
+
 /// Registers every command exposed to the frontend. Tauri's command macros
 /// live at the crate root, so this must stay in `lib.rs`.
+///
+/// Commands are declared `#[tauri::command(async)]` even when synchronous:
+/// Tauri otherwise runs sync commands on the main thread, where a large
+/// import or file write freezes the window.
 fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
     tauri_specta::Builder::<tauri::Wry>::new()
         .commands(tauri_specta::collect_commands![
-            database_status,
             get_workspace_state,
             set_workspace_state,
+            apply_variable_changes,
             create_environment,
             create_folder,
             create_request,
             delete_environment,
             delete_node,
-            delete_request,
             duplicate_request,
             get_collection_tree,
             get_request,
@@ -53,9 +101,9 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             save_request,
             save_text_file,
             save_response_body,
-            save_variables,
             send_request,
         ])
+        .events(tauri_specta::collect_events![AppMenuAction])
         // Commands reject with the error string, matching plain `invoke`.
         .error_handling(tauri_specta::ErrorHandlingMode::Throw)
         // Positions, byte counts, and durations never approach 2^53.
@@ -65,9 +113,9 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let specta = specta_builder();
+    let invoke_handler = specta.invoke_handler();
 
     let builder = tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build());
@@ -81,7 +129,8 @@ pub fn run() {
     );
 
     builder
-        .setup(|app| {
+        .setup(move |app| {
+            specta.mount_events(app);
             #[cfg(feature = "mcp-bridge")]
             app.add_capability(
                 r#"{"identifier":"mcp-bridge","windows":["*"],"permissions":["mcp-bridge:default"]}"#,
@@ -98,9 +147,7 @@ pub fn run() {
                 None => default_data_dir(app.path().app_data_dir()?, cfg!(debug_assertions)),
             };
             let database = Database::open(app_data_dir)?;
-            let http_client = reqwest::Client::builder()
-                .redirect(reqwest::redirect::Policy::limited(10))
-                .build()?;
+            let http_client = build_http_client()?;
 
             app.manage(AppState {
                 database,
@@ -111,27 +158,25 @@ pub fn run() {
             Ok(())
         })
         .on_menu_event(|app, event| {
-            let action = match event.id().as_ref() {
-                "open_request" => Some("open-request"),
-                "new_request" => Some("new-request"),
-                "duplicate_request" => Some("duplicate-request"),
-                "save_request" => Some("save-request"),
-                "send_request" => Some("send-request"),
-                "close_request" => Some("close-request"),
-                "toggle_sidebar" => Some("toggle-sidebar"),
-                "focus_url" => Some("focus-url"),
-                "settings" => Some("settings"),
-                "check_for_updates" => Some("check-for-updates"),
-                _ => None,
-            };
-
-            if let Some(action) = action {
-                let _ = app.emit("app-menu-action", action);
+            if let Some(action) = AppMenuAction::from_menu_id(event.id().as_ref()) {
+                let _ = action.emit(app);
             }
         })
-        .invoke_handler(specta.invoke_handler())
+        .invoke_handler(invoke_handler)
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn build_http_client() -> reqwest::Result<reqwest::Client> {
+    // reqwest is built without a bundled crypto provider; use ring, which the
+    // updater installs too (whichever runs first wins).
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    // No overall timeout: slow endpoints and big downloads are normal. These
+    // only stop a send hanging forever on an unreachable or silent server.
+    reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .read_timeout(std::time::Duration::from_secs(300))
+        .build()
 }
 
 #[cfg(any(test, not(feature = "mcp-bridge")))]
@@ -248,6 +293,14 @@ fn build_app_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result
             &help_menu,
         ],
     )
+}
+
+#[cfg(test)]
+mod http_client_tests {
+    #[test]
+    fn http_client_builds_with_the_app_tls_setup() {
+        super::build_http_client().expect("client should build at startup");
+    }
 }
 
 #[cfg(test)]

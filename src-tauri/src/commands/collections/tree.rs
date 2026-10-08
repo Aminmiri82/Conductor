@@ -1,79 +1,178 @@
+use std::collections::HashMap;
+
 use chrono::Utc;
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension};
 use tauri::State;
 use uuid::Uuid;
 
-use crate::commands::models::{CreateFolderInput, MoveNodeInput};
-use crate::{storage::StorageError, AppState};
+use crate::commands::{
+    error::CommandError,
+    models::{CollectionNode, CollectionNodeKind, CreateFolderInput, MoveNodeInput},
+};
+use crate::storage::{insert_node, NewNode, NodeKind, StorageError};
+use crate::AppState;
 
 const SORT_ORDER_STEP: i64 = 1024;
 
-#[tauri::command]
+/// The `sort_order` of the node at `index` among evenly spaced siblings.
+pub(crate) fn sort_order_at(index: usize) -> i64 {
+    (index as i64 + 1) * SORT_ORDER_STEP
+}
+
+#[derive(Debug)]
+struct FlatNode {
+    id: String,
+    parent_id: Option<String>,
+    name: String,
+    request: Option<FlatRequest>,
+}
+
+#[derive(Debug)]
+struct FlatRequest {
+    request_id: String,
+    method: String,
+}
+
+#[tauri::command(async)]
+#[specta::specta]
+pub fn get_collection_tree(
+    collection_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<CollectionNode>, CommandError> {
+    Ok(state
+        .database
+        .with_read_connection(|connection| read_tree(connection, &collection_id))?)
+}
+
+pub(super) fn read_tree(
+    connection: &Connection,
+    collection_id: &str,
+) -> Result<Vec<CollectionNode>, StorageError> {
+    let mut statement = connection.prepare(
+        "SELECT n.id, n.parent_id, n.name, n.request_id, r.method
+         FROM collection_nodes n
+         LEFT JOIN requests r ON r.id = n.request_id
+         WHERE n.collection_id = ?
+         ORDER BY n.parent_id, n.sort_order",
+    )?;
+    let rows = statement.query_map(params![collection_id], |row| {
+        // The schema gives exactly the request nodes a `request_id`, and its
+        // foreign key guarantees the request row (and so its method) exists.
+        let request = row
+            .get::<_, Option<String>>(3)?
+            .map(|request_id| {
+                Ok::<_, rusqlite::Error>(FlatRequest {
+                    request_id,
+                    method: row.get(4)?,
+                })
+            })
+            .transpose()?;
+        Ok(FlatNode {
+            id: row.get(0)?,
+            parent_id: row.get(1)?,
+            name: row.get(2)?,
+            request,
+        })
+    })?;
+    let nodes = rows.collect::<Result<Vec<_>, _>>()?;
+    Ok(build_tree(nodes))
+}
+
+fn build_tree(nodes: Vec<FlatNode>) -> Vec<CollectionNode> {
+    let mut by_parent: HashMap<Option<String>, Vec<FlatNode>> = HashMap::new();
+    for node in nodes {
+        by_parent
+            .entry(node.parent_id.clone())
+            .or_default()
+            .push(node);
+    }
+    build_tree_from_map(&mut by_parent, None)
+}
+
+fn build_tree_from_map(
+    by_parent: &mut HashMap<Option<String>, Vec<FlatNode>>,
+    parent_id: Option<String>,
+) -> Vec<CollectionNode> {
+    let nodes = by_parent.remove(&parent_id).unwrap_or_default();
+    nodes
+        .into_iter()
+        .enumerate()
+        .map(|(position, node)| {
+            let kind = match node.request {
+                Some(FlatRequest { request_id, method }) => {
+                    CollectionNodeKind::Request { request_id, method }
+                }
+                None => CollectionNodeKind::Folder {
+                    children: build_tree_from_map(by_parent, Some(node.id.clone())),
+                },
+            };
+            CollectionNode {
+                id: node.id,
+                parent_id: node.parent_id,
+                position: position as i64,
+                name: node.name,
+                kind,
+            }
+        })
+        .collect()
+}
+
+#[tauri::command(async)]
 #[specta::specta]
 pub fn create_folder(
     input: CreateFolderInput,
     state: State<'_, AppState>,
-) -> Result<String, String> {
+) -> Result<String, CommandError> {
     let now = Utc::now().to_rfc3339();
     let node_id = Uuid::new_v4().to_string();
 
-    state
-        .database
-        .with_connection(|connection| {
-            let tx = connection.transaction()?;
-            let sort_order = sort_order_for_position(
-                &tx,
-                &input.collection_id,
-                input.parent_id.as_deref(),
-                input.position,
-                None,
-            )?;
-            tx.execute(
-                "INSERT INTO collection_nodes
-                 (id, collection_id, parent_id, sort_order, kind, name, request_id, auth_json,
-                  created_at, updated_at)
-                 VALUES (?, ?, ?, ?, 'folder', ?, NULL, NULL, ?, ?)",
-                params![
-                    node_id,
-                    input.collection_id,
-                    input.parent_id,
-                    sort_order,
-                    input.name,
-                    now,
-                    now
-                ],
-            )?;
-            tx.commit()?;
-            Ok(node_id.clone())
-        })
-        .map_err(|error| error.to_string())
+    Ok(state.database.with_connection(|connection| {
+        let tx = connection.transaction()?;
+        let sort_order = sort_order_for_position(
+            &tx,
+            &input.collection_id,
+            input.parent_id.as_deref(),
+            input.position,
+            None,
+        )?;
+        insert_node(
+            &tx,
+            &NewNode {
+                id: &node_id,
+                collection_id: &input.collection_id,
+                parent_id: input.parent_id.as_deref(),
+                sort_order,
+                kind: NodeKind::Folder,
+                name: &input.name,
+                auth_json: None,
+            },
+            &now,
+        )?;
+        tx.commit()?;
+        Ok(node_id.clone())
+    })?)
 }
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
-pub fn delete_node(node_id: String, state: State<'_, AppState>) -> Result<(), String> {
-    state
-        .database
-        .with_connection(|connection| {
-            let tx = connection.transaction()?;
-            let request_ids = collect_request_ids_for_subtree(&tx, &node_id)?;
-            tx.execute(
-                "DELETE FROM collection_nodes WHERE id = ?",
-                params![node_id],
-            )?;
-            for request_id in request_ids {
-                tx.execute("DELETE FROM requests WHERE id = ?", params![request_id])?;
-            }
-            tx.commit()?;
-            Ok(())
-        })
-        .map_err(|error| error.to_string())
+pub fn delete_node(node_id: String, state: State<'_, AppState>) -> Result<(), CommandError> {
+    Ok(state.database.with_connection(|connection| {
+        let tx = connection.transaction()?;
+        let request_ids = collect_request_ids_for_subtree(&tx, &node_id)?;
+        tx.execute(
+            "DELETE FROM collection_nodes WHERE id = ?",
+            params![node_id],
+        )?;
+        for request_id in request_ids {
+            tx.execute("DELETE FROM requests WHERE id = ?", params![request_id])?;
+        }
+        tx.commit()?;
+        Ok(())
+    })?)
 }
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
-pub fn move_node(input: MoveNodeInput, state: State<'_, AppState>) -> Result<(), String> {
-    state
-        .database
-        .with_connection(|connection| {
+pub fn move_node(input: MoveNodeInput, state: State<'_, AppState>) -> Result<(), CommandError> {
+    Ok(state.database.with_connection(|connection| {
             let tx = connection.transaction()?;
             let (collection_id, kind): (String, String) = tx.query_row(
                 "SELECT collection_id, kind FROM collection_nodes WHERE id = ?",
@@ -107,10 +206,9 @@ pub fn move_node(input: MoveNodeInput, state: State<'_, AppState>) -> Result<(),
             )?;
             tx.commit()?;
             Ok(())
-        })
-        .map_err(|error| error.to_string())
+        })?)
 }
-pub(super) fn sort_order_for_position(
+pub(crate) fn sort_order_for_position(
     tx: &rusqlite::Transaction<'_>,
     collection_id: &str,
     parent_id: Option<&str>,
@@ -140,7 +238,7 @@ pub(super) fn sort_order_for_position(
     })
 }
 
-pub(super) fn sort_order_after(
+pub(crate) fn sort_order_after(
     tx: &rusqlite::Transaction<'_>,
     collection_id: &str,
     parent_id: Option<&str>,
@@ -226,7 +324,7 @@ fn rebalance_siblings(
 
     let mut update = tx.prepare("UPDATE collection_nodes SET sort_order = ? WHERE id = ?")?;
     for (index, id) in sibling_ids.iter().enumerate() {
-        update.execute(params![(index as i64 + 1) * SORT_ORDER_STEP, id])?;
+        update.execute(params![sort_order_at(index), id])?;
     }
 
     Ok(())

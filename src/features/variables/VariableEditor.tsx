@@ -1,7 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
-import { Save, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Save } from "lucide-react";
+import {
+  CellInput,
+  CheckboxCell,
+  HeaderRow,
+  RemoveButton,
+  Row,
+} from "@/components/EditableTable";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
@@ -11,42 +17,107 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { api } from "@/lib/tauri";
-import type { KeyValue, RequestDetail, VariableEntry } from "@/features/types";
+import { pickOption } from "@/lib/options";
+import { variableNames } from "@/features/variables/variableTokens";
+import { useSaveVariables } from "@/features/variables/useSaveVariables";
+import {
+  requestVariableChanges,
+  type RemovedVariable,
+  type RequestVariableRow,
+} from "@/features/variables/variableChanges";
+import type {
+  KeyValue,
+  RequestDetail,
+  VariableEntry,
+  VariableScope,
+} from "@/features/types";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { useWorkspaceUiStore } from "@/features/workspace/workspaceUiStore";
 
-type VariableScope = "environment" | "collection" | "global";
+const scopeOptions = [
+  ["environment", "Environment"],
+  ["collection", "Collection"],
+  ["global", "Global"],
+] as const satisfies readonly (readonly [VariableScope, string])[];
 
-type RequestVariableRow = {
-  key: string;
-  value: string;
-  scope: VariableScope;
-  originalScope: VariableScope | null;
-  enabled: boolean;
-  sensitive: boolean;
+const columns =
+  "grid-cols-[32px_minmax(130px,.8fr)_112px_minmax(170px,1.2fr)_80px_44px]";
+
+type ScopedVariables = {
+  // Which collection and environment these were listed for.
+  source: string;
+  global: VariableEntry[];
+  collection: VariableEntry[];
+  environment: VariableEntry[];
 };
 
+function sourceKey(collectionId: string, environmentId?: string | null) {
+  return `${collectionId}\n${environmentId ?? ""}`;
+}
+
+async function loadScopedVariables(
+  collectionId: string,
+  environmentId: string | null | undefined,
+): Promise<ScopedVariables> {
+  const [global, collection, environment] = await Promise.all([
+    api.listVariables({ scope: "global" }),
+    api.listVariables({ scope: "collection", collectionId }),
+    environmentId
+      ? api.listVariables({ scope: "environment", environmentId })
+      : Promise.resolve([]),
+  ]);
+  return {
+    source: sourceKey(collectionId, environmentId),
+    global,
+    collection,
+    environment,
+  };
+}
+
 export function VariableEditor({ request }: { request: RequestDetail }) {
+  const { name, url, headers, query, pathParams, auth, body } = request;
+  const { preRequestScript, testScript } = request;
   const variableNames = useMemo(
-    () => extractRequestVariableNames(request),
-    [request],
+    () =>
+      extractRequestVariableNames({
+        name,
+        url,
+        headers,
+        query,
+        pathParams,
+        auth,
+        body,
+        preRequestScript,
+        testScript,
+      }),
+    [
+      name,
+      url,
+      headers,
+      query,
+      pathParams,
+      auth,
+      body,
+      preRequestScript,
+      testScript,
+    ],
   );
-  const [globalVariables, setGlobalVariables] = useState<VariableEntry[]>([]);
-  const [collectionVariables, setCollectionVariables] = useState<
-    VariableEntry[]
-  >([]);
-  const [environmentVariables, setEnvironmentVariables] = useState<
-    VariableEntry[]
-  >([]);
-  const [rows, setRows] = useState<RequestVariableRow[]>([]);
-  const [removedVariables, setRemovedVariables] = useState<Set<string>>(
-    new Set(),
-  );
+  const [stored, setStored] = useState<ScopedVariables>({
+    source: "",
+    global: [],
+    collection: [],
+    environment: [],
+  });
+  // Unsaved edits are kept per key, apart from the stored variables, so
+  // editing the request (which changes which names show) never discards them.
+  const [edits, setEdits] = useState<
+    ReadonlyMap<string, Partial<RequestVariableRow>>
+  >(new Map());
+  const [removedVariables, setRemovedVariables] = useState<
+    ReadonlyMap<string, RemovedVariable>
+  >(new Map());
   const [savedAt, setSavedAt] = useState<number>();
-  const [saving, setSaving] = useState(false);
-  const resolveActiveRequest = useWorkspaceStore(
-    (state) => state.resolveActiveRequest,
-  );
+  const { saving, save: saveVariables } = useSaveVariables();
   const activeEnvironmentId = useWorkspaceUiStore(
     (state) => state.workspaceUi.activeEnvironmentId,
   );
@@ -54,90 +125,88 @@ export function VariableEditor({ request }: { request: RequestDetail }) {
   const activeEnvironmentName = environments.find(
     (environment) => environment.id === activeEnvironmentId,
   )?.name;
+  const source = sourceKey(request.collectionId, activeEnvironmentId);
+  const currentSource = useRef(source);
+  currentSource.current = source;
+  // Until the current environment's variables load, the rows are the previous
+  // environment's; saving them then would write them to the new one.
+  const ready = stored.source === source;
 
   useEffect(() => {
     let mounted = true;
 
-    void Promise.all([
-      api.listVariables("global", null, null),
-      api.listVariables("collection", request.collectionId, null),
-      activeEnvironmentId
-        ? api.listVariables("environment", null, activeEnvironmentId)
-        : Promise.resolve([]),
-    ]).then(([globals, collection, environment]) => {
-      if (!mounted) return;
-      setGlobalVariables(globals);
-      setCollectionVariables(collection);
-      setEnvironmentVariables(environment);
-      setRows(
-        buildRows(
-          variableNames,
-          globals,
-          collection,
-          environment,
-          activeEnvironmentId,
-        ),
-      );
-      setRemovedVariables(new Set());
-      setSavedAt(undefined);
-    });
+    loadScopedVariables(request.collectionId, activeEnvironmentId).then(
+      (loaded) => {
+        if (!mounted) return;
+        setStored(loaded);
+        setEdits(new Map());
+        setRemovedVariables(new Map());
+        setSavedAt(undefined);
+      },
+      (error) => {
+        if (mounted) useWorkspaceStore.getState().setError(error);
+      },
+    );
 
     return () => {
       mounted = false;
     };
-  }, [activeEnvironmentId, request.collectionId, variableNames]);
+  }, [activeEnvironmentId, request.collectionId]);
+
+  const rows = useMemo(
+    () =>
+      buildRows(
+        variableNames,
+        stored.global,
+        stored.collection,
+        stored.environment,
+        activeEnvironmentId,
+      )
+        .map((row) => ({ ...row, ...edits.get(row.key) }))
+        .filter(
+          (row) =>
+            !removedVariables.has(
+              scopedVariableId(row.originalScope ?? row.scope, row.key),
+            ),
+        ),
+    [activeEnvironmentId, edits, removedVariables, stored, variableNames],
+  );
 
   async function save() {
-    setSaving(true);
-    const nextGlobalVariables = mergeVariables(
-      globalVariables,
+    if (!ready) return;
+    const submittedEdits = edits;
+    const submittedRemovals = removedVariables;
+    const changes = requestVariableChanges({
       rows,
-      "global",
-      null,
-      null,
-      removedVariables,
-    );
-    const nextCollectionVariables = mergeVariables(
-      collectionVariables,
-      rows,
-      "collection",
-      request.collectionId,
-      null,
-      removedVariables,
-    );
-    const nextEnvironmentVariables = activeEnvironmentId
-      ? mergeVariables(
-          environmentVariables,
-          rows,
-          "environment",
-          null,
-          activeEnvironmentId,
-          removedVariables,
-        )
-      : environmentVariables;
-
-    await api.saveVariables("global", null, null, nextGlobalVariables);
-    await api.saveVariables(
-      "collection",
-      request.collectionId,
-      null,
-      nextCollectionVariables,
-    );
-    if (activeEnvironmentId) {
-      await api.saveVariables(
-        "environment",
-        null,
+      edited: edits,
+      removed: removedVariables.values(),
+      targetFor: (scope) => {
+        if (scope === "global") return { scope };
+        if (scope === "collection") {
+          return { scope, collectionId: request.collectionId };
+        }
+        return activeEnvironmentId
+          ? { scope, environmentId: activeEnvironmentId }
+          : null;
+      },
+    });
+    if (!(await saveVariables(changes))) return;
+    try {
+      const reloaded = await loadScopedVariables(
+        request.collectionId,
         activeEnvironmentId,
-        nextEnvironmentVariables,
       );
+      if (reloaded.source !== currentSource.current) return;
+      setStored(reloaded);
+      // Edits typed while the save ran stay pending.
+      setEdits((current) => (current === submittedEdits ? new Map() : current));
+      setRemovedVariables((current) =>
+        current === submittedRemovals ? new Map() : current,
+      );
+      setSavedAt(Date.now());
+    } catch (error) {
+      useWorkspaceStore.getState().setError(error);
     }
-    setGlobalVariables(nextGlobalVariables);
-    setCollectionVariables(nextCollectionVariables);
-    setEnvironmentVariables(nextEnvironmentVariables);
-    setRemovedVariables(new Set());
-    setSaving(false);
-    setSavedAt(Date.now());
-    await resolveActiveRequest();
   }
 
   return (
@@ -157,7 +226,7 @@ export function VariableEditor({ request }: { request: RequestDetail }) {
           <Button
             className="h-8 gap-1.5 bg-[var(--app-accent)] px-3 text-xs text-[var(--app-accent-fg)] hover:bg-[var(--app-accent)]/90"
             onClick={save}
-            disabled={saving || rows.length === 0}
+            disabled={saving || !ready || rows.length === 0}
           >
             <Save className="size-3.5" />
             Save
@@ -167,74 +236,63 @@ export function VariableEditor({ request }: { request: RequestDetail }) {
       <ScrollArea className="min-h-0 flex-1">
         <div className="p-4">
           <div className="overflow-hidden border border-[var(--app-line)] bg-[var(--app-panel)]">
-            <div className="grid h-9 grid-cols-[32px_minmax(130px,.8fr)_112px_minmax(170px,1.2fr)_80px_44px] items-center border-b border-[var(--app-line)] bg-[rgb(255_255_255/.02)] px-1 text-[11px] uppercase tracking-[0.06em] text-[var(--app-dim)]">
+            <HeaderRow columns={columns} className="h-9">
               <div />
               <div>Key</div>
               <div>Scope</div>
               <div>Value</div>
               <div>Secret</div>
               <div />
-            </div>
+            </HeaderRow>
             {rows.length ? (
               rows.map((row, index) => (
-                <div
-                  key={row.key}
-                  className="grid grid-cols-[32px_minmax(130px,.8fr)_112px_minmax(170px,1.2fr)_80px_44px] items-center border-b border-[var(--app-line)] px-1 last:border-b-0"
-                >
-                  <input
-                    type="checkbox"
-                    className="mx-auto size-3 accent-[var(--app-accent)]"
+                <Row key={row.key} columns={columns}>
+                  <CheckboxCell
                     checked={row.enabled}
-                    onChange={(event) =>
-                      updateRow(index, { enabled: event.target.checked })
-                    }
+                    onChange={(enabled) => updateRow(index, { enabled })}
                   />
                   <div className="app-mono truncate px-2 text-xs text-[var(--app-text)]">
                     {row.key}
                   </div>
                   <Select
                     value={row.scope}
-                    onValueChange={(scope) =>
-                      updateRow(index, { scope: scope as VariableScope })
-                    }
+                    onValueChange={(value) => {
+                      const scope = pickOption(scopeOptions, value);
+                      if (scope) updateRow(index, { scope });
+                    }}
                   >
                     <SelectTrigger className="h-8 rounded-none border-0 bg-transparent px-2 text-xs shadow-none focus:ring-0">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {activeEnvironmentId ? (
-                        <SelectItem value="environment">Environment</SelectItem>
-                      ) : null}
-                      <SelectItem value="collection">Collection</SelectItem>
-                      <SelectItem value="global">Global</SelectItem>
+                      {scopeOptions
+                        .filter(
+                          ([id]) => id !== "environment" || activeEnvironmentId,
+                        )
+                        .map(([id, label]) => (
+                          <SelectItem key={id} value={id}>
+                            {label}
+                          </SelectItem>
+                        ))}
                     </SelectContent>
                   </Select>
-                  <Input
-                    className="app-mono h-8 rounded-none border-0 bg-transparent text-xs shadow-none focus-visible:ring-0"
+                  <CellInput
                     value={row.value}
                     type={row.sensitive ? "password" : "text"}
                     onChange={(event) =>
                       updateRow(index, { value: event.target.value })
                     }
                   />
-                  <input
-                    type="checkbox"
-                    className="mx-auto size-3 accent-[var(--app-accent)]"
+                  <CheckboxCell
                     checked={row.sensitive}
-                    onChange={(event) =>
-                      updateRow(index, { sensitive: event.target.checked })
-                    }
+                    onChange={(sensitive) => updateRow(index, { sensitive })}
                   />
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="size-7 text-[var(--app-dim)] hover:text-destructive"
+                  <RemoveButton
+                    className="hover:text-destructive"
                     onClick={() => removeRow(index)}
                     title="Remove variable"
-                  >
-                    <Trash2 className="size-3.5" />
-                  </Button>
-                </div>
+                  />
+                </Row>
               ))
             ) : (
               <div className="px-3 py-8 text-center text-xs text-[var(--app-dim)]">
@@ -248,8 +306,10 @@ export function VariableEditor({ request }: { request: RequestDetail }) {
   );
 
   function updateRow(index: number, patch: Partial<RequestVariableRow>) {
-    setRows((current) =>
-      current.map((row, i) => (i === index ? { ...row, ...patch } : row)),
+    const key = rows[index]?.key;
+    if (key === undefined) return;
+    setEdits((current) =>
+      new Map(current).set(key, { ...current.get(key), ...patch }),
     );
     setSavedAt(undefined);
   }
@@ -259,9 +319,11 @@ export function VariableEditor({ request }: { request: RequestDetail }) {
     if (!row) return;
     const scopeToRemove = row.originalScope ?? row.scope;
     setRemovedVariables((current) =>
-      new Set(current).add(scopedVariableId(scopeToRemove, row.key)),
+      new Map(current).set(scopedVariableId(scopeToRemove, row.key), {
+        scope: scopeToRemove,
+        key: row.key,
+      }),
     );
-    setRows((current) => current.filter((_, i) => i !== index));
     setSavedAt(undefined);
   }
 }
@@ -306,67 +368,30 @@ function buildRows(
   });
 }
 
-function mergeVariables(
-  existing: VariableEntry[],
-  rows: RequestVariableRow[],
-  scope: VariableScope,
-  collectionId: string | null,
-  environmentId: string | null,
-  removedVariables: Set<string>,
-): VariableEntry[] {
-  const rowsByKey = new Map(rows.map((row) => [row.key, row]));
-  const merged = existing
-    .filter((variable) => {
-      if (removedVariables.has(scopedVariableId(scope, variable.key)))
-        return false;
-      const row = rowsByKey.get(variable.key);
-      return !row || row.originalScope !== scope || row.scope === scope;
-    })
-    .map((variable) => {
-      const row = rowsByKey.get(variable.key);
-      if (!row || row.scope !== scope) return variable;
-      return rowToVariable(row, scope, collectionId, environmentId);
-    });
-  const existingKeys = new Set(merged.map((variable) => variable.key));
-
-  for (const row of rows) {
-    if (row.scope === scope && !existingKeys.has(row.key)) {
-      merged.push(rowToVariable(row, scope, collectionId, environmentId));
-    }
-  }
-
-  return merged;
-}
-
-function rowToVariable(
-  row: RequestVariableRow,
-  scope: VariableScope,
-  collectionId: string | null,
-  environmentId: string | null,
-): VariableEntry {
-  return {
-    scope,
-    collectionId: scope === "collection" ? collectionId : null,
-    environmentId: scope === "environment" ? environmentId : null,
-    key: row.key,
-    value: row.value,
-    initialValue: null,
-    enabled: row.enabled,
-    sensitive: row.sensitive,
-    variableType: null,
-  };
-}
-
 function scopedVariableId(scope: VariableScope, key: string) {
   return `${scope}:${key}`;
 }
 
-function extractRequestVariableNames(request: RequestDetail): string[] {
+function extractRequestVariableNames(
+  request: Pick<
+    RequestDetail,
+    | "name"
+    | "url"
+    | "headers"
+    | "query"
+    | "pathParams"
+    | "auth"
+    | "body"
+    | "preRequestScript"
+    | "testScript"
+  >,
+): string[] {
   const names = new Set<string>();
   const collect = (value?: string | null) => {
     if (!value) return;
-    for (const match of value.matchAll(/\{\{\s*([^{}\s]+)\s*\}\}/g)) {
-      names.add(match[1]);
+    // `{{}}` has no name to edit; Rust lists it as unresolved.
+    for (const name of variableNames(value)) {
+      if (name) names.add(name);
     }
   };
 
@@ -380,11 +405,9 @@ function extractRequestVariableNames(request: RequestDetail): string[] {
   collect(request.auth?.password);
   collect(request.auth?.key);
   collect(request.auth?.value);
-  collect(request.auth?.addTo);
 
   if (request.body) {
     collect(request.body.raw);
-    collect(request.body.rawLanguage);
     collectKeyValues(request.body.formData ?? [], collect);
     for (const field of request.body.formData ?? []) {
       collect(field.filePath);

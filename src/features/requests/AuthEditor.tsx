@@ -6,18 +6,33 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { AuthConfig } from "@/features/types";
+import type { ApiKeyLocation, AuthConfig, AuthType } from "@/features/types";
+import { pickOption } from "@/lib/options";
+
+// No `auth` at all means the request inherits it from its parent.
+const authChoices = [
+  ["inherit", "Inherit from parent"],
+  ["noauth", "No auth"],
+  ["bearer", "Bearer token"],
+  ["basic", "Basic auth"],
+  ["apikey", "API key"],
+] as const satisfies readonly (readonly [AuthType | "inherit", string])[];
+
+const apiKeyLocations = [
+  ["header", "Header"],
+  ["query", "Query param"],
+] as const satisfies readonly (readonly [ApiKeyLocation, string])[];
 
 export function AuthEditor({
   auth,
   inheritedAuth,
   onChange,
 }: {
-  auth: AuthConfig;
+  auth: AuthConfig | null;
   inheritedAuth?: AuthConfig | null;
-  onChange: (auth: AuthConfig) => void;
+  onChange: (auth: AuthConfig | null) => void;
 }) {
-  const selectedType = auth.authType;
+  const selectedType = auth?.authType ?? "inherit";
 
   return (
     <div className="max-w-2xl space-y-3">
@@ -25,23 +40,21 @@ export function AuthEditor({
         <label className="text-xs text-muted-foreground">Type</label>
         <Select
           value={selectedType}
-          onValueChange={(authType) => {
-            if (authType === "inherit") {
-              onChange({ authType });
-              return;
-            }
-            onChange({ ...emptyAuth(authType), ...auth, authType });
+          onValueChange={(value) => {
+            const choice = pickOption(authChoices, value);
+            if (choice === "inherit") onChange(null);
+            else if (choice) onChange(switchAuthType(auth, choice));
           }}
         >
           <SelectTrigger className="h-8 border-border/70 bg-background/40 text-xs">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="inherit">Inherit from parent</SelectItem>
-            <SelectItem value="noauth">No auth</SelectItem>
-            <SelectItem value="bearer">Bearer token</SelectItem>
-            <SelectItem value="basic">Basic auth</SelectItem>
-            <SelectItem value="apikey">API key</SelectItem>
+            {authChoices.map(([id, label]) => (
+              <SelectItem key={id} value={id}>
+                {label}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>
@@ -57,7 +70,7 @@ export function AuthEditor({
           )}
         </div>
       ) : null}
-      {selectedType === "bearer" ? (
+      {auth?.authType === "bearer" ? (
         <div className="grid grid-cols-[140px_minmax(0,1fr)] items-center gap-3">
           <label className="text-xs text-muted-foreground">Token</label>
           <Input
@@ -70,7 +83,7 @@ export function AuthEditor({
           />
         </div>
       ) : null}
-      {selectedType === "basic" ? (
+      {auth?.authType === "basic" ? (
         <>
           <div className="grid grid-cols-[140px_minmax(0,1fr)] items-center gap-3">
             <label className="text-xs text-muted-foreground">Username</label>
@@ -95,20 +108,26 @@ export function AuthEditor({
           </div>
         </>
       ) : null}
-      {selectedType === "apikey" ? (
+      {auth?.authType === "apikey" ? (
         <>
           <div className="grid grid-cols-[140px_minmax(0,1fr)] items-center gap-3">
             <label className="text-xs text-muted-foreground">Add to</label>
             <Select
               value={auth.addTo ?? "header"}
-              onValueChange={(addTo) => onChange({ ...auth, addTo })}
+              onValueChange={(value) => {
+                const addTo = pickOption(apiKeyLocations, value);
+                if (addTo) onChange({ ...auth, addTo });
+              }}
             >
               <SelectTrigger className="h-8 border-border/70 bg-background/40 text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="header">Header</SelectItem>
-                <SelectItem value="query">Query param</SelectItem>
+                {apiKeyLocations.map(([id, label]) => (
+                  <SelectItem key={id} value={id}>
+                    {label}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -140,17 +159,32 @@ export function AuthEditor({
   );
 }
 
-function emptyAuth(authType: string): AuthConfig {
+// Keeps values typed under other types. Rust sends unset fields as null, so
+// defaults fill per field instead of being spread underneath.
+function switchAuthType(
+  auth: AuthConfig | null,
+  authType: AuthType,
+): AuthConfig {
+  const next = { ...auth, authType };
   if (authType === "apikey") {
-    return { authType, key: "Authorization", value: "", addTo: "header" };
+    next.key ??= "Authorization";
+    next.value ??= "";
+    next.addTo ??= "header";
   }
-  return { authType };
+  return next;
 }
 
 function labelFor(auth: AuthConfig) {
-  if (auth.authType === "bearer") return "Bearer token";
-  if (auth.authType === "basic") return "Basic auth";
-  if (auth.authType === "apikey") return `API key (${auth.addTo ?? "header"})`;
-  if (auth.authType === "noauth") return "No auth";
-  return auth.authType;
+  switch (auth.authType) {
+    case "bearer":
+      return "Bearer token";
+    case "basic":
+      return "Basic auth";
+    case "apikey":
+      return `API key (${auth.addTo ?? "header"})`;
+    case "noauth":
+      return "No auth";
+    case "unsupported":
+      return "an unsupported auth type";
+  }
 }

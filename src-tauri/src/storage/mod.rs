@@ -1,25 +1,26 @@
 mod connection;
 mod migrations;
+mod rows;
+
+pub use rows::{
+    insert_node, insert_request, upsert_variable, NewNode, NewRequest, NewVariable, NodeKind,
+};
 
 use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc, Mutex,
+        Mutex,
     },
 };
 
-use rusqlite::{params, Connection};
-use serde::Serialize;
+use rusqlite::Connection;
 use thiserror::Error;
 
-#[derive(Clone)]
 pub struct Database {
-    write_connection: Arc<Mutex<Connection>>,
-    read_connections: Arc<Vec<Mutex<Connection>>>,
-    next_read_connection: Arc<AtomicUsize>,
-    path: PathBuf,
-    raw_import_dir: PathBuf,
+    write_connection: Mutex<Connection>,
+    read_connections: Vec<Mutex<Connection>>,
+    next_read_connection: AtomicUsize,
 }
 
 #[derive(Debug, Error)]
@@ -40,53 +41,20 @@ pub enum StorageError {
     Sqlite(#[from] rusqlite::Error),
     #[error("json operation failed: {0}")]
     Json(#[from] serde_json::Error),
-    #[error("file operation failed at {path}: {source}")]
-    FileOperation {
-        path: PathBuf,
-        source: std::io::Error,
-    },
     #[error("cannot move a folder into itself or one of its descendants")]
     InvalidTreeMove,
     #[error("{0}")]
     InvalidInput(String),
 }
 
-#[derive(Debug, Serialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct DatabaseStatus {
-    pub path: String,
-    pub schema_version: i64,
-    pub collection_count: i64,
-    pub request_count: i64,
-}
-
 impl Database {
     pub fn open(app_data_dir: impl AsRef<Path>) -> Result<Self, StorageError> {
-        let app_data_dir = app_data_dir.as_ref();
-        let raw_import_dir = app_data_dir.join("raw-imports");
-        let (write_connection, read_connections, path) = connection::open(app_data_dir)?;
+        let (write_connection, read_connections) = connection::open(app_data_dir)?;
 
         Ok(Self {
-            write_connection: Arc::new(Mutex::new(write_connection)),
-            read_connections: Arc::new(read_connections.into_iter().map(Mutex::new).collect()),
-            next_read_connection: Arc::new(AtomicUsize::new(0)),
-            path,
-            raw_import_dir,
-        })
-    }
-
-    pub fn status(&self) -> Result<DatabaseStatus, StorageError> {
-        let connection = self.read_connection()?;
-        let schema_version =
-            connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))?;
-        let collection_count = count_rows(&connection, "collections")?;
-        let request_count = count_rows(&connection, "requests")?;
-
-        Ok(DatabaseStatus {
-            path: self.path.display().to_string(),
-            schema_version,
-            collection_count,
-            request_count,
+            write_connection: Mutex::new(write_connection),
+            read_connections: read_connections.into_iter().map(Mutex::new).collect(),
+            next_read_connection: AtomicUsize::new(0),
         })
     }
 
@@ -106,10 +74,6 @@ impl Database {
         operation(&connection)
     }
 
-    pub fn raw_import_dir(&self) -> &Path {
-        &self.raw_import_dir
-    }
-
     fn write_connection(&self) -> Result<std::sync::MutexGuard<'_, Connection>, StorageError> {
         self.write_connection
             .lock()
@@ -125,10 +89,13 @@ impl Database {
     }
 }
 
-fn count_rows(connection: &Connection, table_name: &str) -> Result<i64, rusqlite::Error> {
-    connection.query_row(
-        &format!("SELECT COUNT(*) FROM {table_name}"),
-        params![],
-        |row| row.get(0),
-    )
+/// An in-memory database with the real schema, for tests.
+#[cfg(test)]
+pub fn test_connection() -> Connection {
+    let connection = Connection::open_in_memory().expect("open in-memory database");
+    connection
+        .pragma_update(None, "foreign_keys", "ON")
+        .expect("enable foreign keys");
+    migrations::run(&connection).expect("apply schema");
+    connection
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyPathParamRowChanges,
+  loadQuery,
   buildQueryString,
   deriveQueryRows,
   parsePathParamKeys,
@@ -43,6 +44,69 @@ describe("query params", () => {
       { key: "page", value: "2", enabled: true },
       { key: "debug", value: "true", enabled: false },
     ]);
+  });
+
+  it("keeps every row of a repeated query key, in URL order", () => {
+    const rows = deriveQueryRows("https://api.test/items?id=1&id=2&page=3", []);
+    expect(rows).toEqual([
+      { key: "id", value: "1", enabled: true },
+      { key: "id", value: "2", enabled: true },
+      { key: "page", value: "3", enabled: true },
+    ]);
+    expect(buildQueryString(rows)).toBe("id=1&id=2&page=3");
+  });
+
+  it("matches repeated keys to their previous rows in order when the URL is edited", () => {
+    const rows = deriveQueryRows("https://api.test/items?id=1&id=20", [
+      { key: "id", value: "1", enabled: true },
+      { key: "id", value: "2", enabled: true },
+      { key: "id", value: "3", enabled: false },
+    ]);
+    expect(rows).toEqual([
+      { key: "id", value: "1", enabled: true },
+      { key: "id", value: "20", enabled: true },
+      { key: "id", value: "3", enabled: false },
+    ]);
+  });
+
+  it("loading a request keeps stored disabled rows and cuts them from the URL", () => {
+    const loaded = loadQuery(
+      "https://api.test/items?debug=true&id=1&id=2#top",
+      [
+        { key: "debug", value: "true", enabled: false },
+        { key: "id", value: "1", enabled: true },
+        { key: "id", value: "2", enabled: false },
+      ],
+    );
+    expect(loaded).toEqual({
+      url: "https://api.test/items?id=1#top",
+      query: [
+        { key: "debug", value: "true", enabled: false },
+        { key: "id", value: "1", enabled: true },
+        { key: "id", value: "2", enabled: false },
+      ],
+    });
+  });
+
+  it("an imported disabled row stays disabled after the URL is edited", () => {
+    const loaded = loadQuery("https://api.test/items?debug=true&id=1", [
+      { key: "debug", value: "true", enabled: false },
+      { key: "id", value: "1", enabled: true },
+    ]);
+    const edited = deriveQueryRows(
+      loaded.url.replace("api.test", "api.tests"),
+      loaded.query,
+    );
+    expect(edited).toEqual([
+      { key: "id", value: "1", enabled: true },
+      { key: "debug", value: "true", enabled: false },
+    ]);
+    expect(buildQueryString(edited)).toBe("id=1");
+  });
+
+  it("loading leaves a URL with no disabled rows exactly as written", () => {
+    const url = "{{base}}/items?token={{token}}&q=a%20b";
+    expect(loadQuery(url, []).url).toBe(url);
   });
 
   it("rewriting the query string preserves the fragment and leaves disabled rows out", () => {

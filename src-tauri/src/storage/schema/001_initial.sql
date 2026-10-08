@@ -1,9 +1,7 @@
 CREATE TABLE IF NOT EXISTS collections (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
-    source TEXT NOT NULL DEFAULT 'postman',
     auth_json TEXT,
-    raw_postman_file_path TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -65,7 +63,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_collection_nodes_request_id
 CREATE TABLE IF NOT EXISTS environments (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
-    source TEXT NOT NULL DEFAULT 'manual',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -75,11 +72,9 @@ CREATE TABLE IF NOT EXISTS variables (
     collection_id TEXT,
     environment_id TEXT,
     key TEXT NOT NULL,
-    initial_value TEXT,
     current_value TEXT NOT NULL,
     enabled INTEGER NOT NULL DEFAULT 1,
     sensitive INTEGER NOT NULL DEFAULT 0,
-    variable_type TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     CHECK (
@@ -113,20 +108,3 @@ CREATE TABLE IF NOT EXISTS workspace_state (
     value_json TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
-
-CREATE TABLE IF NOT EXISTS request_history (
-    id TEXT PRIMARY KEY,
-    request_id TEXT,
-    collection_id TEXT,
-    method TEXT NOT NULL,
-    url TEXT NOT NULL,
-    status_code INTEGER,
-    duration_ms INTEGER,
-    request_json TEXT NOT NULL,
-    response_meta_json TEXT,
-    response_body_path TEXT,
-    created_at TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_request_history_created_at
-    ON request_history(created_at DESC);

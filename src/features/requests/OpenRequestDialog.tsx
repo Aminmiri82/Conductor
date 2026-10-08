@@ -54,8 +54,8 @@ export function OpenRequestDialog({
               >
                 <FileJson className="size-4 text-[var(--app-dim)]" />
                 <span
-                  className="app-mono shrink-0 px-1.5 py-0.5 text-[10px] font-bold"
-                  style={methodColor(request.method)}
+                  className="method-badge app-mono shrink-0 px-1.5 py-0.5 text-[10px] font-bold"
+                  data-method={request.method}
                 >
                   {request.method}
                 </span>
@@ -78,40 +78,11 @@ function flattenRequests(
 ): RequestOption[] {
   return nodes.flatMap((node) => {
     const path = parentPath ? `${parentPath} / ${node.name}` : node.name;
-    if (node.kind === "request" && node.requestId) {
+    if (node.kind === "request") {
       return [
-        {
-          id: node.requestId,
-          name: node.name,
-          method: node.method ?? "GET",
-          path,
-        },
+        { id: node.requestId, name: node.name, method: node.method, path },
       ];
     }
     return flattenRequests(node.children, path);
   });
-}
-
-function methodColor(method: string) {
-  const normalized = method.toUpperCase();
-  const map: Record<string, { color: string; backgroundColor: string }> = {
-    GET: { color: "var(--app-get)", backgroundColor: "var(--app-get-bg)" },
-    POST: { color: "var(--app-post)", backgroundColor: "var(--app-post-bg)" },
-    PUT: { color: "var(--app-put)", backgroundColor: "var(--app-put-bg)" },
-    DELETE: {
-      color: "var(--app-delete)",
-      backgroundColor: "var(--app-delete-bg)",
-    },
-    PATCH: {
-      color: "var(--app-patch)",
-      backgroundColor: "var(--app-patch-bg)",
-    },
-  };
-  return {
-    ...(map[normalized] ?? {
-      color: "var(--app-text)",
-      backgroundColor: "transparent",
-    }),
-    borderRadius: "var(--app-radius)",
-  };
 }

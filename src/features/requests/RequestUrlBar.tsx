@@ -14,8 +14,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { RequestDetail, UrlDisplayMode } from "@/features/types";
+import type {
+  RequestDetail,
+  ResolvedRequestPreview,
+  UrlDisplayMode,
+} from "@/features/types";
+import { parseVariableTokens } from "@/features/variables/variableTokens";
 import { useWorkspaceUiStore } from "@/features/workspace/workspaceUiStore";
+
+// `null` is a secret, whose value Rust does not send. A name that is not a
+// key has no value from the last resolve (it was typed since).
+type VariableValues = Partial<ResolvedRequestPreview["variableValues"]>;
 
 const methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 
@@ -30,12 +39,12 @@ export function RequestUrlBar({
   onSend,
   onSave,
 }: {
-  request: RequestDetail;
+  request: Pick<RequestDetail, "name" | "method" | "url">;
   sending: boolean;
   saving: boolean;
   dirty: boolean;
   unresolvedKeys: string[];
-  variableValues: Record<string, string>;
+  variableValues: VariableValues;
   onChange: (patch: Partial<RequestDetail>) => void;
   onSend: () => void;
   onSave: () => void;
@@ -56,12 +65,8 @@ export function RequestUrlBar({
         onValueChange={(method) => onChange({ method })}
       >
         <SelectTrigger
-          className="app-mono h-8 w-[104px] border text-xs font-bold"
-          style={{
-            borderColor: methodColor(request.method).border,
-            background: methodColor(request.method).background,
-            color: methodColor(request.method).foreground,
-          }}
+          className="method-field app-mono h-8 w-[104px] border text-xs font-bold"
+          data-method={request.method}
         >
           <SelectValue />
         </SelectTrigger>
@@ -118,12 +123,12 @@ function VariableUrlInput({
   value: string;
   mode: UrlDisplayMode;
   unresolvedKeys: string[];
-  variableValues: Record<string, string>;
+  variableValues: VariableValues;
   onChange: (value: string) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [editing, setEditing] = useState(mode === "flat");
-  const tokens = useMemo(() => parseUrlTokens(value), [value]);
+  const tokens = useMemo(() => parseVariableTokens(value), [value]);
   const unresolved = useMemo(() => new Set(unresolvedKeys), [unresolvedKeys]);
 
   useEffect(() => {
@@ -174,7 +179,7 @@ function VariableUrlInput({
               mode={mode}
               name={token.name}
               unresolved={unresolved.has(token.name)}
-              resolvedValue={variableValues[token.name]}
+              resolvedValue={valueOf(variableValues, token.name)}
             />
           ),
         )}
@@ -192,7 +197,7 @@ function VariableToken({
   name: string;
   mode: UrlDisplayMode;
   unresolved: boolean;
-  resolvedValue?: string;
+  resolvedValue?: string | null;
 }) {
   if (mode === "hybrid") {
     return (
@@ -254,7 +259,7 @@ function VariableChip({
 }: {
   name: string;
   unresolved: boolean;
-  resolvedValue?: string;
+  resolvedValue?: string | null;
 }) {
   return (
     <span
@@ -292,88 +297,26 @@ function VariableTooltip({
 }: {
   name: string;
   unresolved: boolean;
-  resolvedValue?: string;
+  resolvedValue?: string | null;
 }) {
   return (
     <span className="pointer-events-none absolute left-0 top-[calc(100%+6px)] z-50 hidden max-w-[520px] whitespace-nowrap border border-[var(--app-line)] bg-[var(--app-panel)] px-2 py-1 text-[11px] font-normal text-[var(--app-text)] shadow-lg group-hover/var:block">
       <span className="text-[var(--app-dim)]">{name}</span>
       <span className="px-1 text-[var(--app-dim)]">=</span>
-      <span>
-        {unresolved
-          ? "undefined"
-          : resolvedValue || "resolved value unavailable"}
-      </span>
+      <span>{unresolved ? "undefined" : describeValue(resolvedValue)}</span>
     </span>
   );
 }
 
-function parseUrlTokens(
-  url: string,
-): Array<
-  | { kind: "text"; value: string }
-  | { kind: "variable"; value: string; name: string }
-> {
-  const tokens: Array<
-    | { kind: "text"; value: string }
-    | { kind: "variable"; value: string; name: string }
-  > = [];
-  const pattern = /\{\{([^}]+)\}\}/g;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-
-  while ((match = pattern.exec(url))) {
-    if (match.index > lastIndex) {
-      tokens.push({ kind: "text", value: url.slice(lastIndex, match.index) });
-    }
-    tokens.push({ kind: "variable", value: match[0], name: match[1] });
-    lastIndex = match.index + match[0].length;
-  }
-  if (lastIndex < url.length) {
-    tokens.push({ kind: "text", value: url.slice(lastIndex) });
-  }
-  return tokens.length ? tokens : [{ kind: "text", value: "" }];
+function describeValue(value: string | null | undefined) {
+  if (value === undefined) return "resolved value unavailable";
+  if (value === null) return "secret";
+  return value === "" ? "(empty)" : value;
 }
 
-function methodColor(method: string) {
-  const normalized = method.toUpperCase();
-  if (normalized === "GET") {
-    return {
-      foreground: "var(--app-get)",
-      background: "var(--app-get-bg)",
-      border: "color-mix(in oklab, var(--app-get) 34%, transparent)",
-    };
-  }
-  if (normalized === "POST") {
-    return {
-      foreground: "var(--app-post)",
-      background: "var(--app-post-bg)",
-      border: "color-mix(in oklab, var(--app-post) 34%, transparent)",
-    };
-  }
-  if (normalized === "PUT") {
-    return {
-      foreground: "var(--app-put)",
-      background: "var(--app-put-bg)",
-      border: "color-mix(in oklab, var(--app-put) 34%, transparent)",
-    };
-  }
-  if (normalized === "DELETE") {
-    return {
-      foreground: "var(--app-delete)",
-      background: "var(--app-delete-bg)",
-      border: "color-mix(in oklab, var(--app-delete) 34%, transparent)",
-    };
-  }
-  if (normalized === "PATCH") {
-    return {
-      foreground: "var(--app-patch)",
-      background: "var(--app-patch-bg)",
-      border: "color-mix(in oklab, var(--app-patch) 34%, transparent)",
-    };
-  }
-  return {
-    foreground: "var(--app-text)",
-    background: "var(--app-panel-2)",
-    border: "var(--app-line)",
-  };
+// A plain object also answers for names like `toString`, so only a string or
+// null counts as a value.
+function valueOf(values: VariableValues, name: string) {
+  const value = values[name];
+  return typeof value === "string" || value === null ? value : undefined;
 }

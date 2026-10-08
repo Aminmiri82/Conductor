@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { EditorState } from "@codemirror/state";
 import {
   EditorView,
@@ -270,20 +270,18 @@ export function ResponseViewer({
   value,
   sending,
 }: {
-  value?: unknown;
+  value: string;
   sending: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
-
-  const text = useMemo(() => stringify(value), [value]);
 
   useEffect(() => {
     if (!containerRef.current) return;
     const view = new EditorView({
       parent: containerRef.current,
       state: EditorState.create({
-        doc: text,
+        doc: value,
         extensions: [
           EditorState.readOnly.of(true),
           EditorView.contentAttributes.of({ spellcheck: "false" }),
@@ -311,20 +309,16 @@ export function ResponseViewer({
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    if (view.state.doc.toString() === text) return;
+    if (view.state.doc.toString() === value) return;
     view.dispatch({
-      changes: { from: 0, to: view.state.doc.length, insert: text },
+      changes: { from: 0, to: view.state.doc.length, insert: value },
     });
-  }, [text]);
+  }, [value]);
 
   return (
     <div className="relative h-full min-h-0">
       <div ref={containerRef} className="h-full min-h-0" />
-      {sending ? (
-        <Overlay>Sending request</Overlay>
-      ) : value === undefined ? (
-        <Overlay>Send a request to see the response.</Overlay>
-      ) : null}
+      {sending ? <Overlay>Sending request</Overlay> : null}
     </div>
   );
 }
@@ -335,14 +329,4 @@ function Overlay({ children }: { children: React.ReactNode }) {
       {children}
     </div>
   );
-}
-
-function stringify(value: unknown): string {
-  if (value === undefined) return "";
-  if (typeof value === "string") return value;
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
 }

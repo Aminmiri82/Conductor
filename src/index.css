@@ -8,19 +8,6 @@
 @theme inline {
   --font-heading: var(--font-sans);
   --font-sans: "Geist Variable", sans-serif;
-  --color-sidebar-ring: var(--sidebar-ring);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar: var(--sidebar);
-  --color-chart-5: var(--chart-5);
-  --color-chart-4: var(--chart-4);
-  --color-chart-3: var(--chart-3);
-  --color-chart-2: var(--chart-2);
-  --color-chart-1: var(--chart-1);
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
@@ -49,11 +36,11 @@
 }
 
 :root,
-.dark {
+.dark,
+[data-theme="softpro"] {
   --app-bg: #121016;
   --app-panel: #16131c;
   --app-panel-2: #1c1822;
-  --app-panel-3: #100e14;
   --app-line: rgb(255 255 255 / 0.06);
   --app-text: #e8e8ea;
   --app-dim: #9b9ba2;
@@ -75,8 +62,7 @@
     ui-monospace, "SFMono-Regular", "SF Mono", Consolas, "Liberation Mono",
     monospace;
   --app-tab-transform: none;
-  --app-label-transform: uppercase;
-  --app-signal-glow: 0 0 6px;
+  --app-brand-tracking: normal;
 
   --background: var(--app-bg);
   --foreground: var(--app-text);
@@ -96,27 +82,13 @@
   --border: var(--app-line);
   --input: var(--app-line);
   --ring: var(--app-accent);
-  --chart-1: var(--app-accent);
-  --chart-2: var(--app-get);
-  --chart-3: var(--app-post);
-  --chart-4: var(--app-put);
-  --chart-5: var(--app-patch);
   --radius: var(--app-radius-lg);
-  --sidebar: var(--app-panel);
-  --sidebar-foreground: var(--app-text);
-  --sidebar-primary: var(--app-accent);
-  --sidebar-primary-foreground: var(--app-accent-fg);
-  --sidebar-accent: var(--app-panel-2);
-  --sidebar-accent-foreground: var(--app-text);
-  --sidebar-border: var(--app-line);
-  --sidebar-ring: var(--app-accent);
 }
 
-html[data-theme="conductor"] {
+[data-theme="conductor"] {
   --app-bg: #0b1018;
   --app-panel: #0a0e16;
   --app-panel-2: #0f1622;
-  --app-panel-3: #070b12;
   --app-line: rgb(255 255 255 / 0.07);
   --app-text: #dee3eb;
   --app-dim: #7e8595;
@@ -135,14 +107,13 @@ html[data-theme="conductor"] {
   --app-radius: 3px;
   --app-radius-lg: 4px;
   --app-tab-transform: uppercase;
-  --app-signal-glow: 0 0 8px;
+  --app-brand-tracking: 0.08em;
 }
 
-html[data-theme="brutalist"] {
+[data-theme="brutalist"] {
   --app-bg: #0a0a0a;
   --app-panel: #000;
   --app-panel-2: #101010;
-  --app-panel-3: #000;
   --app-line: rgb(255 255 255 / 0.14);
   --app-text: #fff;
   --app-dim: #9a9a9a;
@@ -161,7 +132,56 @@ html[data-theme="brutalist"] {
   --app-radius: 0;
   --app-radius-lg: 0;
   --app-tab-transform: uppercase;
-  --app-signal-glow: 0 0 0;
+  --app-brand-tracking: 0.08em;
+}
+
+/*
+ * Method colours. Put `data-method="GET"` (any case) on an element and style it
+ * with `.method-badge` (text on a tinted chip) or `.method-field` (a bordered
+ * control such as the method select). Other methods get no variables and fall
+ * back to the plain defaults below.
+ */
+[data-method="GET" i] {
+  --method-fg: var(--app-get);
+  --method-bg: var(--app-get-bg);
+  --method-border: color-mix(in oklab, var(--app-get) 34%, transparent);
+}
+
+[data-method="POST" i] {
+  --method-fg: var(--app-post);
+  --method-bg: var(--app-post-bg);
+  --method-border: color-mix(in oklab, var(--app-post) 34%, transparent);
+}
+
+[data-method="PUT" i] {
+  --method-fg: var(--app-put);
+  --method-bg: var(--app-put-bg);
+  --method-border: color-mix(in oklab, var(--app-put) 34%, transparent);
+}
+
+[data-method="DELETE" i] {
+  --method-fg: var(--app-delete);
+  --method-bg: var(--app-delete-bg);
+  --method-border: color-mix(in oklab, var(--app-delete) 34%, transparent);
+}
+
+[data-method="PATCH" i] {
+  --method-fg: var(--app-patch);
+  --method-bg: var(--app-patch-bg);
+  --method-border: color-mix(in oklab, var(--app-patch) 34%, transparent);
+}
+
+.method-badge {
+  color: var(--method-fg, var(--app-text));
+  background-color: var(--method-bg, transparent);
+  border-radius: var(--app-radius);
+}
+
+/* Unlayered on purpose: it must beat the select trigger's own utilities. */
+.method-field {
+  color: var(--method-fg, var(--app-text));
+  background: var(--method-bg, var(--app-panel-2));
+  border-color: var(--method-border, var(--app-line));
 }
 
 @layer base {

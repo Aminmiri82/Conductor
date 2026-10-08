@@ -1,18 +1,14 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{fs, path::Path};
 
 use rusqlite::Connection;
 
 use super::{migrations, StorageError};
 
 const DATABASE_FILE_NAME: &str = "conductor.sqlite3";
-const READ_CONNECTIONS: usize = 4;
+/// Each connection keeps its own page cache, so the pool stays small.
+const READ_CONNECTIONS: usize = 2;
 
-pub fn open(
-    app_data_dir: impl AsRef<Path>,
-) -> Result<(Connection, Vec<Connection>, PathBuf), StorageError> {
+pub fn open(app_data_dir: impl AsRef<Path>) -> Result<(Connection, Vec<Connection>), StorageError> {
     let app_data_dir = app_data_dir.as_ref();
     fs::create_dir_all(app_data_dir).map_err(|source| StorageError::CreateDirectory {
         path: app_data_dir.to_path_buf(),
@@ -32,7 +28,7 @@ pub fn open(
         read_connections.push(read_connection);
     }
 
-    Ok((connection, read_connections, path))
+    Ok((connection, read_connections))
 }
 
 fn open_connection(path: &Path) -> Result<Connection, StorageError> {

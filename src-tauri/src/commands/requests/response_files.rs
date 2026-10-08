@@ -5,7 +5,10 @@ use std::sync::Mutex;
 use bytes::Bytes;
 use tauri::State;
 
-use crate::commands::models::{ResponseBodyFormat, SaveResponseBodyInput};
+use crate::commands::{
+    error::CommandError,
+    models::{ResponseBodyFormat, SaveResponseBodyInput, SaveTextFileInput},
+};
 use crate::AppState;
 
 /// Binary bodies are kept only so they can be downloaded. Most recent first,
@@ -45,17 +48,23 @@ impl BinaryBodies {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn save_response_body(
     input: SaveResponseBodyInput,
     state: State<'_, AppState>,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let bytes = state
         .binary_bodies
         .get(&input.history_id)
         .ok_or("This response is no longer in memory. Send the request again to download it.")?;
-    fs::write(input.path, bytes).map_err(|error| error.to_string())
+    Ok(fs::write(input.path, bytes)?)
+}
+
+#[tauri::command(async)]
+#[specta::specta]
+pub fn save_text_file(input: SaveTextFileInput) -> Result<(), CommandError> {
+    Ok(fs::write(input.path, input.contents)?)
 }
 
 /// A body is binary when it is not UTF-8 and the server did not call it text,

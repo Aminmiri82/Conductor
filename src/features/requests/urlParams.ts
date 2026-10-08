@@ -18,51 +18,64 @@ export function parsePathParamKeys(url: string): string[] {
   return out;
 }
 
-export function parseQueryEntries(
-  url: string,
-): Array<{ key: string; value: string }> {
-  const query = extractQuery(url);
-  if (!query) return [];
-  const seen = new Set<string>();
-  const out: Array<{ key: string; value: string }> = [];
-  for (const part of query.split("&")) {
-    if (!part) continue;
-    const eq = part.indexOf("=");
-    const rawKey = eq === -1 ? part : part.slice(0, eq);
-    const rawValue = eq === -1 ? "" : part.slice(eq + 1);
-    const key = decodeParam(rawKey);
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    out.push({ key, value: decodeParam(rawValue) });
-  }
-  return out;
+function parseQueryEntries(url: string): Array<{ key: string; value: string }> {
+  return extractQuery(url)
+    .split("&")
+    .flatMap((part) => parseQueryPart(part) ?? []);
 }
 
+function parseQueryPart(part: string): { key: string; value: string } | null {
+  const eq = part.indexOf("=");
+  const rawKey = eq === -1 ? part : part.slice(0, eq);
+  const rawValue = eq === -1 ? "" : part.slice(eq + 1);
+  const key = decodeParam(rawKey);
+  return key ? { key, value: decodeParam(rawValue) } : null;
+}
+
+// The URL holds exactly the enabled rows, so its entries become the enabled
+// rows and disabled rows carry over. Repeated keys stay separate rows.
 export function deriveQueryRows(url: string, previous: KeyValue[]): KeyValue[] {
-  const fromUrl = parseQueryEntries(url);
-  const inUrl = new Set(fromUrl.map((entry) => entry.key));
+  return [
+    ...parseQueryEntries(url).map((entry) => ({ ...entry, enabled: true })),
+    ...previous.filter((row) => row.key && row.enabled === false),
+    ...previous.filter((row) => !row.key),
+  ];
+}
+
+// For a request loaded from storage, whose URL may still list disabled rows
+// (Postman exports keep them): each URL entry takes the enabled flag of the
+// stored row with the same key at the same occurrence, and disabled entries
+// are cut from the URL so it holds exactly the enabled rows, as
+// `deriveQueryRows` expects. Kept entries stay byte-for-byte as written.
+export function loadQuery(
+  url: string,
+  stored: KeyValue[],
+): { url: string; query: KeyValue[] } {
+  const unmatched = [...stored];
   const rows: KeyValue[] = [];
-
-  for (const entry of fromUrl) {
-    const prior = previous.find((row) => row.key === entry.key);
-    rows.push({
-      key: entry.key,
-      value: entry.value,
-      enabled: prior?.enabled ?? true,
-    });
-  }
-
-  for (const row of previous) {
-    if (row.key && !inUrl.has(row.key) && row.enabled === false) {
-      rows.push(row);
+  const keptParts: string[] = [];
+  let droppedAny = false;
+  for (const part of extractQuery(url).split("&")) {
+    const entry = parseQueryPart(part);
+    if (!entry) {
+      if (part) keptParts.push(part);
+      continue;
     }
+    const index = unmatched.findIndex((row) => row.key === entry.key);
+    const enabled = index === -1 ? true : unmatched[index].enabled;
+    if (index !== -1) unmatched.splice(index, 1);
+    rows.push({ ...entry, enabled });
+    if (enabled) keptParts.push(part);
+    else droppedAny = true;
   }
-
-  for (const row of previous) {
-    if (!row.key) rows.push(row);
-  }
-
-  return rows;
+  return {
+    url: droppedAny ? replaceQueryInUrl(url, keptParts.join("&")) : url,
+    query: [
+      ...rows,
+      ...unmatched.filter((row) => row.key && row.enabled === false),
+      ...unmatched.filter((row) => !row.key),
+    ],
+  };
 }
 
 export function derivePathParamRows(
@@ -102,7 +115,7 @@ export function replaceQueryInUrl(url: string, queryString: string): string {
   return `${head}?${queryString}${fragment}`;
 }
 
-export function renamePathParamInUrl(
+function renamePathParamInUrl(
   url: string,
   oldKey: string,
   newKey: string,
@@ -113,7 +126,7 @@ export function renamePathParamInUrl(
   return path.replace(re, `$1:${newKey}`) + tail;
 }
 
-export function removePathParamFromUrl(url: string, key: string): string {
+function removePathParamFromUrl(url: string, key: string): string {
   if (!key) return url;
   const { path, tail } = splitPath(url);
   const re = new RegExp(`(^|/):${escapeRegExp(key)}(?=/|$)`, "g");

@@ -1,5 +1,5 @@
-import { commands, type RequestDetail, type VariableEntry } from "@/bindings";
-import type { VariableScope, WorkspaceUiState } from "@/features/types";
+import { commands, type RequestDetail } from "@/bindings";
+import type { WorkspaceUiState } from "@/features/types";
 
 // Call-site conveniences over the generated `commands`. Command names, argument
 // names, and payload types come from Rust; add new commands in Rust and run
@@ -47,7 +47,6 @@ export const api = {
     }),
   duplicateRequest: (requestId: string) =>
     commands.duplicateRequest({ requestId }),
-  deleteRequest: commands.deleteRequest,
   deleteNode: commands.deleteNode,
   moveNode: (
     nodeId: string,
@@ -63,22 +62,6 @@ export const api = {
     commands.resolveRequest(request, environmentId ?? null),
   sendRequest: (request: RequestDetail, environmentId?: string | null) =>
     commands.sendRequest({ request, environmentId }),
-  listVariables: (
-    scope: VariableScope,
-    collectionId?: string | null,
-    environmentId?: string | null,
-  ) =>
-    commands.listVariables(scope, collectionId ?? null, environmentId ?? null),
-  saveVariables: (
-    scope: VariableScope,
-    collectionId: string | null | undefined,
-    environmentId: string | null | undefined,
-    variables: VariableEntry[],
-  ) =>
-    commands.saveVariables(
-      scope,
-      collectionId ?? null,
-      environmentId ?? null,
-      variables,
-    ),
+  listVariables: commands.listVariables,
+  applyVariableChanges: commands.applyVariableChanges,
 };

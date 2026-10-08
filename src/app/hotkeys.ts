@@ -1,37 +1,23 @@
 import { useEffect } from "react";
-import { listen } from "@tauri-apps/api/event";
-import type { CollectionNode } from "@/features/types";
+import { events, type AppMenuAction } from "@/bindings";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 
-type AppMenuAction =
-  | "open-request"
-  | "settings"
-  | "check-for-updates"
-  | "new-request"
-  | "duplicate-request"
-  | "save-request"
-  | "send-request"
-  | "close-request"
-  | "toggle-sidebar"
-  | "focus-url";
-
+// Reads the store when an action fires instead of subscribing, so the root
+// component does not re-render (and re-register the menu listener) on every
+// tab switch or tree change.
 export function useAppHotkeys() {
-  const toggleSidebar = useWorkspaceStore((state) => state.toggleSidebar);
-  const saveActiveRequest = useWorkspaceStore(
-    (state) => state.saveActiveRequest,
-  );
-  const sendActiveRequest = useWorkspaceStore(
-    (state) => state.sendActiveRequest,
-  );
-  const closeRequestTab = useWorkspaceStore((state) => state.closeRequestTab);
-  const createRequestIn = useWorkspaceStore((state) => state.createRequestIn);
-  const duplicateRequest = useWorkspaceStore((state) => state.duplicateRequest);
-  const selectRequest = useWorkspaceStore((state) => state.selectRequest);
-  const activeRequestId = useWorkspaceStore((state) => state.activeRequestId);
-  const tree = useWorkspaceStore((state) => state.tree);
-
   useEffect(() => {
     function performAction(action: AppMenuAction) {
+      const {
+        activeRequestId,
+        closeRequestTab,
+        createRequestNextToActive,
+        duplicateRequest,
+        saveActiveRequest,
+        selectRequest,
+        sendActiveRequest,
+        toggleSidebar,
+      } = useWorkspaceStore.getState();
       if (action === "toggle-sidebar") {
         toggleSidebar();
       }
@@ -56,13 +42,7 @@ export function useAppHotkeys() {
         void duplicateRequest(activeRequestId);
       }
       if (action === "new-request") {
-        const activeNode = activeRequestId
-          ? findRequestNode(tree, activeRequestId)
-          : undefined;
-        void createRequestIn(
-          activeNode?.parentId ?? null,
-          activeNode ? activeNode.position + 1 : tree.length,
-        );
+        void createRequestNextToActive();
       }
       if (action === "close-request" && activeRequestId) {
         void closeRequestTab(activeRequestId);
@@ -88,6 +68,7 @@ export function useAppHotkeys() {
         event.preventDefault();
         performAction("save-request");
       }
+      const { activeRequestId } = useWorkspaceStore.getState();
       if (key === "d" && activeRequestId) {
         event.preventDefault();
         performAction("duplicate-request");
@@ -120,7 +101,7 @@ export function useAppHotkeys() {
 
     window.addEventListener("keydown", onKeyDown);
     const unlisten = isTauriRuntime()
-      ? listen<AppMenuAction>("app-menu-action", (event) => {
+      ? events.appMenuAction.listen((event) => {
           performAction(event.payload);
         })
       : Promise.resolve(() => undefined);
@@ -129,17 +110,7 @@ export function useAppHotkeys() {
       window.removeEventListener("keydown", onKeyDown);
       void unlisten.then((dispose) => dispose());
     };
-  }, [
-    activeRequestId,
-    closeRequestTab,
-    createRequestIn,
-    duplicateRequest,
-    saveActiveRequest,
-    selectRequest,
-    sendActiveRequest,
-    toggleSidebar,
-    tree,
-  ]);
+  }, []);
 }
 
 function isTauriRuntime() {
@@ -151,16 +122,4 @@ function focusedSidebarRequestId() {
   if (!(active instanceof HTMLElement)) return undefined;
   return active.closest<HTMLElement>("[data-sidebar-request-id]")?.dataset
     .sidebarRequestId;
-}
-
-function findRequestNode(
-  nodes: CollectionNode[],
-  requestId: string,
-): CollectionNode | undefined {
-  for (const node of nodes) {
-    if (node.requestId === requestId) return node;
-    const child = findRequestNode(node.children, requestId);
-    if (child) return child;
-  }
-  return undefined;
 }

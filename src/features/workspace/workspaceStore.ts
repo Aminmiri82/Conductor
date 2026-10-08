@@ -5,8 +5,18 @@ import {
   buildQueryString,
   derivePathParamRows,
   deriveQueryRows,
+  loadQuery,
   replaceQueryInUrl,
 } from "@/features/requests/urlParams";
+import {
+  findRequestNode,
+  insertNodeAt,
+  moveNodeInTree,
+  placementAfterRequest,
+  removeNodeById,
+  requestIdsForNode,
+  updateRequestNode,
+} from "@/features/collections/tree";
 import { getDraft, useDraftStore } from "@/features/workspace/draftStore";
 import { useResponseStore } from "@/features/workspace/responseStore";
 import {
@@ -20,7 +30,7 @@ import type {
   RequestDetail,
 } from "@/features/types";
 
-export type RequestTab = {
+type RequestTab = {
   requestId: string;
   name: string;
   method: string;
@@ -39,10 +49,8 @@ type WorkspaceState = {
   // the first opened request. After that, or after any manual toggle, it stays
   // where the user puts it.
   sidebarAutoHidePending: boolean;
-  collectionLoading: boolean;
-  requestLoading: boolean;
   saving: boolean;
-  sending: boolean;
+  sendingRequestIds: ReadonlySet<string>;
   error?: string;
   loadCollections: () => Promise<void>;
   loadEnvironments: () => Promise<void>;
@@ -63,8 +71,8 @@ type WorkspaceState = {
     parentId: string | null | undefined,
     position: number,
   ) => Promise<void>;
+  createRequestNextToActive: () => Promise<void>;
   duplicateRequest: (requestId: string) => Promise<void>;
-  deleteRequest: (requestId: string) => Promise<void>;
   deleteNode: (node: CollectionNode) => Promise<void>;
   moveNode: (
     node: CollectionNode,
@@ -76,6 +84,7 @@ type WorkspaceState = {
   resolveActiveRequest: () => Promise<void>;
   sendActiveRequest: () => Promise<void>;
   toggleSidebar: () => void;
+  setError: (error: unknown) => void;
   clearError: () => void;
 };
 
@@ -86,24 +95,22 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   tabs: [],
   sidebarVisible: true,
   sidebarAutoHidePending: true,
-  collectionLoading: false,
-  requestLoading: false,
   saving: false,
-  sending: false,
+  sendingRequestIds: new Set(),
 
   loadCollections: async () => {
-    set({ collectionLoading: true, error: undefined });
+    set({ error: undefined });
     try {
-      const collections = await api.listCollections();
-      const environments = await api.listEnvironments();
-      const workspaceUi = await useWorkspaceUiStore
-        .getState()
-        .loadWorkspaceUiState(environments);
-      set({
-        collections,
-        environments,
-        collectionLoading: false,
-      });
+      // Independent round trips on the startup path, so they run together.
+      const environmentsPromise = api.listEnvironments();
+      const [collections, environments, workspaceUi] = await Promise.all([
+        api.listCollections(),
+        environmentsPromise,
+        useWorkspaceUiStore
+          .getState()
+          .loadWorkspaceUiState(environmentsPromise),
+      ]);
+      set({ collections, environments });
       const preferredCollectionId =
         get().activeCollectionId ?? workspaceUi.activeCollectionId;
       const current = collections.some(
@@ -115,7 +122,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         await get().selectCollection(current);
       }
     } catch (error) {
-      set({ error: String(error), collectionLoading: false });
+      set({ error: String(error) });
     }
   },
 
@@ -130,7 +137,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   importCollection: async (json) => {
-    set({ collectionLoading: true, error: undefined });
+    set({ error: undefined });
     try {
       const collectionId = await api.importPostmanCollection(json);
       const collections = await api.listCollections();
@@ -141,15 +148,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         activeCollectionId: collectionId,
         activeRequestId: undefined,
         tabs: [],
-        collectionLoading: false,
-        requestLoading: false,
       });
       useWorkspaceUiStore.getState().setActiveCollectionId(collectionId);
       useDraftStore.getState().clearAll();
       useResponseStore.getState().clearAll();
       await useWorkspaceUiStore.getState().flushWorkspaceUiState();
     } catch (error) {
-      set({ error: String(error), collectionLoading: false });
+      set({ error: String(error) });
     }
   },
 
@@ -168,7 +173,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   selectCollection: async (collectionId) => {
-    set({ collectionLoading: true, error: undefined });
+    set({ error: undefined });
     try {
       const tree = await api.getCollectionTree(collectionId);
       set({
@@ -176,15 +181,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         activeCollectionId: collectionId,
         activeRequestId: undefined,
         tabs: [],
-        collectionLoading: false,
-        requestLoading: false,
       });
       useWorkspaceUiStore.getState().setActiveCollectionId(collectionId);
       useDraftStore.getState().clearAll();
       useResponseStore.getState().clearAll();
       await useWorkspaceUiStore.getState().flushWorkspaceUiState();
     } catch (error) {
-      set({ error: String(error), collectionLoading: false });
+      set({ error: String(error) });
     }
   },
 
@@ -199,31 +202,22 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
     const existingDraft = getDraft(requestId);
     if (existingDraft) {
-      set({
-        activeRequestId: requestId,
-        requestLoading: false,
-      });
+      set({ activeRequestId: requestId });
       await get().resolveActiveRequest();
       return;
     }
 
-    set({
-      activeRequestId: requestId,
-      requestLoading: true,
-      error: undefined,
-    });
+    set({ activeRequestId: requestId, error: undefined });
     try {
       const request = normalizeRequestParams(await api.getRequest(requestId));
-      useDraftStore.getState().setDraft(request, false);
+      useDraftStore.getState().setDraft(request);
       set((state) => ({
         tabs: upsertTab(state.tabs, request, false, false),
-        requestLoading:
-          state.activeRequestId === requestId ? false : state.requestLoading,
       }));
       await get().resolveActiveRequest();
     } catch (error) {
       if (get().activeRequestId === requestId) {
-        set({ error: String(error), requestLoading: false });
+        set({ error: String(error) });
       }
     }
   },
@@ -242,11 +236,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
 
     const nextTab = tabs[Math.max(0, tabIndex - 1)] ?? tabs[0];
-    set({
-      tabs,
-      activeRequestId: undefined,
-      requestLoading: false,
-    });
+    set({ tabs, activeRequestId: undefined });
     if (nextTab) {
       await get().selectRequest(nextTab.requestId);
     }
@@ -266,14 +256,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       );
       const node: CollectionNode = {
         id: result.nodeId,
-        collectionId,
         parentId: parentId ?? null,
         position,
         kind: "request",
         name,
         requestId: result.requestId,
         method: "GET",
-        children: [],
       };
       set((state) => ({
         tree: insertNodeAt(state.tree, parentId ?? null, position, node),
@@ -298,13 +286,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       );
       const node: CollectionNode = {
         id: nodeId,
-        collectionId,
         parentId: parentId ?? null,
         position,
         kind: "folder",
         name,
-        requestId: null,
-        method: null,
         children: [],
       };
       set((state) => ({
@@ -315,11 +300,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
+  // New requests go right after the active one, or at the end of the root.
+  createRequestNextToActive: async () => {
+    const { tree, activeRequestId } = get();
+    const { parentId, position } = placementAfterRequest(tree, activeRequestId);
+    await get().createRequestIn(parentId, position);
+  },
+
   duplicateRequest: async (requestId) => {
     const collectionId = get().activeCollectionId;
     if (!collectionId) return;
     set({ error: undefined });
-    const sourceNode = findRequestNodeByRequestId(get().tree, requestId);
+    const sourceNode = findRequestNode(get().tree, requestId);
     try {
       const result = await api.duplicateRequest(requestId);
       if (sourceNode) {
@@ -329,7 +321,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           position: sourceNode.position + 1,
           name: `${sourceNode.name} Copy`,
           requestId: result.requestId,
-          children: [],
         };
         set((state) => ({
           tree: insertNodeAt(
@@ -349,31 +340,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
-  deleteRequest: async (requestId) => {
-    const collectionId = get().activeCollectionId;
-    if (!collectionId) return;
-    set({ error: undefined });
-    try {
-      await api.deleteRequest(requestId);
-      const current = get();
-      const tabs = current.tabs.filter((tab) => tab.requestId !== requestId);
-      const activeDeleted = current.activeRequestId === requestId;
-      useDraftStore.getState().removeMany([requestId]);
-      useResponseStore.getState().removeMany([requestId]);
-      set({
-        tree: removeRequestNode(current.tree, requestId),
-        tabs,
-        activeRequestId: activeDeleted ? undefined : current.activeRequestId,
-        requestLoading: activeDeleted ? false : current.requestLoading,
-      });
-    } catch (error) {
-      set({ error: String(error) });
-    }
-  },
-
   deleteNode: async (node) => {
-    const collectionId = get().activeCollectionId;
-    if (!collectionId) return;
     set({ error: undefined });
     try {
       await api.deleteNode(node.id);
@@ -390,7 +357,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           (tab) => !removedRequestIds.includes(tab.requestId),
         ),
         activeRequestId: activeDeleted ? undefined : current.activeRequestId,
-        requestLoading: activeDeleted ? false : current.requestLoading,
       });
     } catch (error) {
       set({ error: String(error) });
@@ -398,14 +364,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   moveNode: async (node, parentId, position) => {
-    const collectionId = get().activeCollectionId;
-    if (!collectionId) return;
     set({ error: undefined });
     try {
       await api.moveNode(node.id, parentId, position);
       set((state) => ({
         tree: moveNodeInTree(state.tree, node, parentId ?? null, position),
       }));
+      // The new parent may change the request's inherited auth.
+      await get().resolveActiveRequest();
     } catch (error) {
       set({ error: String(error) });
     }
@@ -442,7 +408,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       };
     }
 
-    useDraftStore.getState().setDraft(request, true);
+    useDraftStore.getState().setDraft(request);
     set((state) => ({
       tabs: upsertTab(state.tabs, request, true, true),
     }));
@@ -454,11 +420,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ error: undefined, saving: true });
     try {
       await api.saveRequest(request);
-      useDraftStore.getState().markSaved(request.id);
       set((state) => ({
         saving: false,
         tabs: upsertTab(state.tabs, request, false, true),
-        tree: renameRequestNode(state.tree, request.id, request.name),
+        tree: updateRequestNode(state.tree, request),
       }));
       await get().resolveActiveRequest();
     } catch (error) {
@@ -490,28 +455,29 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   sendActiveRequest: async () => {
     const request = getDraft(get().activeRequestId);
-    if (!request) return;
-    set({ sending: true, error: undefined });
+    if (!request || get().sendingRequestIds.has(request.id)) return;
+    set((state) => ({
+      sendingRequestIds: new Set(state.sendingRequestIds).add(request.id),
+      error: undefined,
+    }));
+    const finishSending = () =>
+      set((state) => {
+        const sendingRequestIds = new Set(state.sendingRequestIds);
+        sendingRequestIds.delete(request.id);
+        return { sendingRequestIds };
+      });
     try {
       const response = await api.sendRequest(
         request,
         getWorkspaceUiState().activeEnvironmentId ?? null,
       );
       useResponseStore.getState().setResponse(request.id, response);
-      if (get().activeRequestId === request.id) {
-        set({ sending: false });
-      } else {
-        set({ sending: false });
-      }
-      await get().resolveActiveRequest();
+      finishSending();
     } catch (error) {
-      set({
-        error:
-          get().activeRequestId === request.id ? String(error) : get().error,
-        sending: false,
-      });
-      await get().resolveActiveRequest();
+      finishSending();
+      if (get().activeRequestId === request.id) set({ error: String(error) });
     }
+    await get().resolveActiveRequest();
   },
 
   toggleSidebar: () =>
@@ -519,161 +485,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       sidebarVisible: !state.sidebarVisible,
       sidebarAutoHidePending: false,
     })),
+  setError: (error) => set({ error: String(error) }),
   clearError: () => set({ error: undefined }),
 }));
 
-function renameRequestNode(
-  nodes: CollectionNode[],
-  requestId: string,
-  name: string,
-): CollectionNode[] {
-  return nodes.map((node) => {
-    if (node.requestId === requestId) {
-      return { ...node, name };
-    }
-    if (node.children.length) {
-      return {
-        ...node,
-        children: renameRequestNode(node.children, requestId, name),
-      };
-    }
-    return node;
-  });
-}
-
-function insertNodeAt(
-  nodes: CollectionNode[],
-  parentId: string | null,
-  position: number,
-  node: CollectionNode,
-): CollectionNode[] {
-  if (parentId === null) {
-    return insertIntoSiblings(nodes, position, { ...node, parentId: null });
-  }
-
-  let changed = false;
-  const next = nodes.map((item) => {
-    if (item.id === parentId) {
-      changed = true;
-      return {
-        ...item,
-        children: insertIntoSiblings(item.children, position, {
-          ...node,
-          parentId,
-        }),
-      };
-    }
-    if (!item.children.length) return item;
-    const children = insertNodeAt(item.children, parentId, position, node);
-    return children === item.children ? item : { ...item, children };
-  });
-  return changed || next.some((item, index) => item !== nodes[index])
-    ? next
-    : nodes;
-}
-
-function insertIntoSiblings(
-  siblings: CollectionNode[],
-  position: number,
-  node: CollectionNode,
-): CollectionNode[] {
-  const index = Math.max(0, Math.min(position, siblings.length));
-  const next = [...siblings.slice(0, index), node, ...siblings.slice(index)];
-  return reindexSiblings(next);
-}
-
-function removeNodeById(
-  nodes: CollectionNode[],
-  nodeId: string,
-): CollectionNode[] {
-  let changed = false;
-  const next: CollectionNode[] = [];
-  for (const node of nodes) {
-    if (node.id === nodeId) {
-      changed = true;
-      continue;
-    }
-    if (node.children.length) {
-      const children = removeNodeById(node.children, nodeId);
-      if (children !== node.children) {
-        changed = true;
-        next.push({ ...node, children });
-        continue;
-      }
-    }
-    next.push(node);
-  }
-  return changed ? reindexSiblings(next) : nodes;
-}
-
-function removeRequestNode(
-  nodes: CollectionNode[],
-  requestId: string,
-): CollectionNode[] {
-  let changed = false;
-  const next: CollectionNode[] = [];
-  for (const node of nodes) {
-    if (node.requestId === requestId) {
-      changed = true;
-      continue;
-    }
-    if (node.children.length) {
-      const children = removeRequestNode(node.children, requestId);
-      if (children !== node.children) {
-        changed = true;
-        next.push({ ...node, children });
-        continue;
-      }
-    }
-    next.push(node);
-  }
-  return changed ? reindexSiblings(next) : nodes;
-}
-
-function moveNodeInTree(
-  nodes: CollectionNode[],
-  node: CollectionNode,
-  parentId: string | null,
-  position: number,
-): CollectionNode[] {
-  const withoutNode = removeNodeById(nodes, node.id);
-  return insertNodeAt(withoutNode, parentId, position, {
-    ...node,
-    parentId,
-    position,
-  });
-}
-
-function findRequestNodeByRequestId(
-  nodes: CollectionNode[],
-  requestId: string,
-): CollectionNode | undefined {
-  for (const node of nodes) {
-    if (node.requestId === requestId) return node;
-    const child = findRequestNodeByRequestId(node.children, requestId);
-    if (child) return child;
-  }
-  return undefined;
-}
-
-function reindexSiblings(nodes: CollectionNode[]): CollectionNode[] {
-  return nodes.map((node, position) =>
-    node.position === position ? node : { ...node, position },
-  );
-}
-
-function requestIdsForNode(node: CollectionNode): string[] {
-  return [
-    ...(node.requestId ? [node.requestId] : []),
-    ...node.children.flatMap(requestIdsForNode),
-  ];
-}
-
 function normalizeRequestParams(request: RequestDetail): RequestDetail {
+  const { url, query } = loadQuery(request.url, request.query);
   return {
     ...request,
-    query: deriveQueryRows(request.url, request.query ?? []),
-    pathParams: derivePathParamRows(request.url, request.pathParams ?? []),
+    url,
+    query,
+    pathParams: derivePathParamRows(url, request.pathParams),
   };
 }
 
@@ -689,11 +511,18 @@ function upsertTab(
     method: request.method,
     dirty,
   };
-  const exists = tabs.some((item) => item.requestId === request.id);
-  if (!exists) return [...tabs, tab];
-  return tabs.map((item) =>
-    item.requestId === request.id
-      ? { ...item, ...tab, dirty: replaceDirty ? dirty : item.dirty }
-      : item,
-  );
+  const index = tabs.findIndex((item) => item.requestId === request.id);
+  if (index === -1) return [...tabs, tab];
+  const current = tabs[index];
+  const next = { ...tab, dirty: replaceDirty ? dirty : current.dirty };
+  // Same array when nothing shown changed, so typing does not re-render the
+  // tab bar on every keystroke.
+  if (
+    current.name === next.name &&
+    current.method === next.method &&
+    current.dirty === next.dirty
+  ) {
+    return tabs;
+  }
+  return tabs.map((item, i) => (i === index ? next : item));
 }

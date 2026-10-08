@@ -4,8 +4,7 @@ description: Where Conductor keeps its data, how the schema changes before 1.0, 
 ---
 
 Conductor keeps everything in one SQLite database, `conductor.sqlite3`, in the
-app data directory. Imported Postman files are kept next to it in
-`raw-imports/`.
+app data directory.
 
 ## Where The Data Lives
 
@@ -38,7 +37,6 @@ including the database. To change the schema:
 
 Do not add new migration steps to
 [`migrations.rs`](../../src-tauri/src/storage/migrations.rs) unless Yara asks.
-The one step already there predates this rule.
 
 When a schema change breaks Yara's existing database, say so in the change
 description so she knows to reset it.

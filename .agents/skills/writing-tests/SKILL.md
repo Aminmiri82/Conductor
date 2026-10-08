@@ -18,7 +18,7 @@ existing tests at that level.
 
 - **Pure Rust rule** (variable resolution, body/auth building, Postman
   parsing, tree ordering): `#[cfg(test)] mod tests` in the same file, as in
-  `commands/requests/variables.rs`. If the logic is tangled with
+  `commands/variables.rs`. If the logic is tangled with
   `State<AppState>` or HTTP, extract a pure function and test that.
 - **Depends on the database** (moves, deletes, duplicates, variable scoping):
   real SQLite in a temp directory via `Database::open(dir)`. None exists yet;

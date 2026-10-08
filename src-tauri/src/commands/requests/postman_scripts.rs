@@ -1,12 +1,12 @@
 use serde_json::Value;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub(super) enum ScriptVariableScope {
     Collection,
     Environment,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(super) struct ScriptVariableWrite {
     pub scope: ScriptVariableScope,
     pub key: String,

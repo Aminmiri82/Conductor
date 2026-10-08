@@ -21,8 +21,14 @@ frontend disagree, `pnpm check` fails instead of the app failing at runtime.
 - [`src/features/types.ts`](../../src/features/types.ts) re-exports the
   generated types and defines frontend-only ones.
 
-Commands reject with their error string (`ErrorHandlingMode::Throw`), exactly
-like a plain `invoke`, so callers use `try`/`catch`.
+Rust-to-webview events are typed the same way: `AppMenuAction` in `lib.rs`
+derives `tauri_specta::Event`, and the frontend listens through
+`events.appMenuAction` instead of an event-name string.
+
+Commands return `Result<T, CommandError>` (`commands/error.rs`), which
+serializes as its message string. They reject with that string
+(`ErrorHandlingMode::Throw`), exactly like a plain `invoke`, so callers use
+`try`/`catch`.
 
 ## Adding Or Changing A Command
 
@@ -41,8 +47,14 @@ like a plain `invoke`, so callers use `try`/`catch`.
   defaults are needed: Postman import stores partial JSON that is read back
   through them. Handle these with `?? []` at the read site rather than removing
   the default.
+- **Stored string enums use `stored_enum!`, not `#[serde(other)]`.** Specta
+  cannot export an enum with `#[serde(other)]`, and `deserialize_with` on a
+  field splits every type containing it into separate send and receive types.
+  `stored_enum!` (`commands/stored_enum.rs`) keeps the exported enum plain and
+  reads any unknown stored string as a named fallback, so an old or imported
+  `body_json` / `auth_json` still loads.
 - **`serde_json::Value` cannot be exported.** This specta release overflows
-  the stack on it. Wrap it (see `FrontendJson` in `commands/storage.rs`) or
+  the stack on it. Wrap it (see `FrontendJson` in `commands/workspace_state.rs`) or
   override the field with `#[specta(type = specta_typescript::Unknown)]`.
 - **Integers are exported as `number`.** `i64`/`u128`/`usize` would be
   `bigint`; we opt out because positions, byte counts, and durations never

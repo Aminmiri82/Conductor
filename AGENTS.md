@@ -17,8 +17,12 @@ Use [the docs index](docs/index.md) to find the page for your task; unrelated pa
 
 ## Where Code Lives
 
-- `src-tauri/src/commands/`: Tauri commands. `models.rs` holds the IPC types; `requests/` holds request storage, variables, body/auth building, and sending; `collections.rs` holds Postman import and the tree.
-- `src-tauri/src/storage/`: the SQLite `Database` (one writer, pooled readers) and `schema/001_initial.sql`.
+- `src-tauri/src/commands/`: Tauri commands. `models.rs` holds the IPC types and `error.rs` the one `CommandError` they return (a message string over IPC).
+  - `collections/`: the collection list, the tree (read, create folder, move, delete), and Postman collection import (`import.rs`).
+  - `requests/`: request storage (`store.rs`), sending (`sender.rs`, `auth.rs`, `body.rs`), variable substitution (`resolver.rs`), scripts, and response files.
+  - `variables.rs`: environments, variables, and the `VariableContext` a send resolves against. `workspace_state.rs`: frontend UI state.
+  - `postman.rs`: lenient `serde` helpers for reading Postman files.
+- `src-tauri/src/storage/`: the SQLite `Database` (one writer, pooled readers), the shared row inserts (`rows.rs`), and `schema/001_initial.sql`.
 - `src-tauri/src/lib.rs`: app setup, the menu, and `specta_builder()`, which registers every command.
 - `src/bindings.ts`: **generated** from Rust by `pnpm bindings`. Never edit it by hand.
 - `src/lib/tauri.ts`: `api`, thin conveniences over the generated `commands`. Never call `invoke` with a string.

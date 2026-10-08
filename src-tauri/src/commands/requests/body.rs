@@ -2,17 +2,20 @@ use reqwest::header::{HeaderValue, CONTENT_TYPE};
 use serde_json::{json, Value};
 use tokio_util::io::ReaderStream;
 
-use crate::commands::models::{GraphqlBody, RequestBody, RequestBodyMode, RequestDetail};
+use crate::commands::{
+    error::CommandError,
+    models::{BodyFieldType, BodyMode, GraphqlBody, RequestBody},
+};
 
 pub(super) async fn apply_body(
     mut builder: reqwest::RequestBuilder,
     body: &RequestBody,
-) -> Result<reqwest::RequestBuilder, String> {
-    match body.body_mode() {
-        RequestBodyMode::Raw => {
+) -> Result<reqwest::RequestBuilder, CommandError> {
+    match body.mode {
+        BodyMode::Raw => {
             builder = builder.body(body.raw.clone());
         }
-        RequestBodyMode::UrlEncoded => {
+        BodyMode::UrlEncoded => {
             let pairs = body
                 .urlencoded
                 .iter()
@@ -21,14 +24,14 @@ pub(super) async fn apply_body(
                 .collect::<Vec<_>>();
             builder = builder.form(&pairs);
         }
-        RequestBodyMode::FormData => {
+        BodyMode::FormData => {
             let mut form = reqwest::multipart::Form::new();
             for field in body
                 .form_data
                 .iter()
                 .filter(|field| field.enabled && !field.key.is_empty())
             {
-                if field.field_type == "file" {
+                if field.field_type == BodyFieldType::File {
                     if let Some(path) = field.file_path.as_ref().filter(|path| !path.is_empty()) {
                         let file_name = std::path::Path::new(path)
                             .file_name()
@@ -36,16 +39,14 @@ pub(super) async fn apply_body(
                             .unwrap_or("upload")
                             .to_string();
                         let part = reqwest::multipart::Part::file(path)
-                            .await
-                            .map_err(|error| error.to_string())?
+                            .await?
                             .file_name(file_name);
                         let part = if let Some(content_type) = field
                             .content_type
                             .as_ref()
                             .filter(|value| !value.is_empty())
                         {
-                            part.mime_str(content_type)
-                                .map_err(|error| error.to_string())?
+                            part.mime_str(content_type)?
                         } else {
                             part
                         };
@@ -57,21 +58,17 @@ pub(super) async fn apply_body(
             }
             builder = builder.multipart(form);
         }
-        RequestBodyMode::Graphql => {
+        BodyMode::Graphql => {
             builder = builder.json(&graphql_payload(body.graphql.as_ref())?);
         }
-        RequestBodyMode::File => {
+        BodyMode::File => {
             let file = body.file.as_ref().ok_or("no binary file selected")?;
             let path = file
                 .path
                 .as_ref()
                 .filter(|path| !path.is_empty())
                 .ok_or("no binary file selected")?;
-            let stream = ReaderStream::new(
-                tokio::fs::File::open(path)
-                    .await
-                    .map_err(|error| error.to_string())?,
-            );
+            let stream = ReaderStream::new(tokio::fs::File::open(path).await?);
             builder = builder.body(reqwest::Body::wrap_stream(stream));
         }
         _ => {}
@@ -79,12 +76,12 @@ pub(super) async fn apply_body(
     Ok(builder)
 }
 pub(super) fn default_content_type(body: &RequestBody) -> Option<HeaderValue> {
-    match body.body_mode() {
-        RequestBodyMode::Raw if body.raw_language.as_deref() == Some("json") => {
+    match body.mode {
+        BodyMode::Raw if body.raw_language.as_deref() == Some("json") => {
             Some(HeaderValue::from_static("application/json"))
         }
-        RequestBodyMode::Graphql => Some(HeaderValue::from_static("application/json")),
-        RequestBodyMode::File => body
+        BodyMode::Graphql => Some(HeaderValue::from_static("application/json")),
+        BodyMode::File => body
             .file
             .as_ref()
             .and_then(|file| file.content_type.as_ref())
@@ -114,16 +111,16 @@ pub(super) fn graphql_payload(graphql: Option<&GraphqlBody>) -> Result<Value, St
         "variables": variables
     }))
 }
-pub(super) fn normalize_body_files(request: &mut RequestDetail) {
-    if let Some(body) = &mut request.body {
-        for field in &mut body.form_data {
-            if field.field_type == "file" {
-                field.file_path = None;
-            }
+/// Chosen file paths belong to this machine and this session, so they are
+/// never stored; the user picks the file again after a restart.
+pub(super) fn strip_file_paths(body: &mut RequestBody) {
+    for field in &mut body.form_data {
+        if field.field_type == BodyFieldType::File {
+            field.file_path = None;
         }
-        if let Some(file) = &mut body.file {
-            file.path = None;
-        }
+    }
+    if let Some(file) = &mut body.file {
+        file.path = None;
     }
 }
 

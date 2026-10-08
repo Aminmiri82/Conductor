@@ -1,24 +1,31 @@
 // IPC types are generated from Rust into `src/bindings.ts` (`pnpm bindings`).
 // Only frontend-owned types are defined here.
+import type { CollectionNode, VariableTarget } from "@/bindings";
+
 export type {
+  ApiKeyLocation,
   AuthConfig,
+  AuthType,
   BodyField,
+  BodyFieldType,
+  BodyMode,
   CollectionNode,
   CollectionSummary,
-  CreateRequestResult,
-  DuplicateRequestResult,
   EnvironmentSummary,
   KeyValue,
   RequestBody,
   RequestDetail,
   ResolvedRequestPreview,
-  ResponseHeader,
   SendRequestResult,
-  UnresolvedVariable,
+  VariableChange,
   VariableEntry,
+  VariableTarget,
 } from "@/bindings";
 
-export type VariableScope = "global" | "collection" | "environment";
+export type FolderNode = Extract<CollectionNode, { kind: "folder" }>;
+export type RequestNode = Extract<CollectionNode, { kind: "request" }>;
+
+export type VariableScope = VariableTarget["scope"];
 
 export type RequestEditorTab =
   "params" | "headers" | "auth" | "body" | "variables";

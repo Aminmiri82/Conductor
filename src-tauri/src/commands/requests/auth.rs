@@ -1,10 +1,11 @@
 use reqwest::header::{HeaderName, HeaderValue};
 use rusqlite::{params, OptionalExtension};
 
-use crate::commands::models::{AuthConfig, RequestDetail};
+use crate::commands::models::{ApiKeyLocation, AuthConfig, AuthType, RequestDetail};
 use crate::storage::StorageError;
 
-use super::{variable_resolver::resolve_text, variables::VariableContext};
+use super::{parse_json_optional, resolver::resolve_text};
+use crate::commands::{error::CommandError, variables::VariableContext};
 
 pub(super) fn inherited_auth_for_request(
     connection: &rusqlite::Connection,
@@ -56,28 +57,24 @@ pub(super) fn effective_auth(
     request_auth: Option<&AuthConfig>,
     inherited_auth: Option<&AuthConfig>,
 ) -> Option<AuthConfig> {
-    match request_auth {
-        Some(auth) if auth.auth_type == "noauth" => Some(auth.clone()),
-        Some(auth) => Some(auth.clone()),
-        None => inherited_auth.cloned(),
-    }
+    request_auth.or(inherited_auth).cloned()
 }
 pub(super) fn apply_auth(
     mut builder: reqwest::RequestBuilder,
     auth: Option<&AuthConfig>,
     variables: &VariableContext,
-) -> Result<reqwest::RequestBuilder, String> {
+) -> Result<reqwest::RequestBuilder, CommandError> {
     let Some(auth) = auth else {
         return Ok(builder);
     };
 
-    match auth.auth_type.as_str() {
-        "bearer" => {
+    match auth.auth_type {
+        AuthType::Bearer => {
             if let Some(token) = auth.token.as_ref() {
                 builder = builder.bearer_auth(resolve_text(token, variables).0);
             }
         }
-        "basic" => {
+        AuthType::Basic => {
             let username = auth
                 .username
                 .as_deref()
@@ -89,7 +86,7 @@ pub(super) fn apply_auth(
                 .map(|value| resolve_text(value, variables).0);
             builder = builder.basic_auth(username, password);
         }
-        "apikey" => {
+        AuthType::ApiKey => {
             let key = auth
                 .key
                 .clone()
@@ -99,19 +96,16 @@ pub(super) fn apply_auth(
                 .as_deref()
                 .map(|value| resolve_text(value, variables).0)
                 .unwrap_or_default();
-            if auth.add_to.as_deref() == Some("query") {
+            if auth.add_to == Some(ApiKeyLocation::Query) {
                 builder = builder.query(&[(key, value)]);
             } else if !key.is_empty() {
-                let name = HeaderName::from_bytes(key.as_bytes()).map_err(|e| e.to_string())?;
-                let value = HeaderValue::from_str(&value).map_err(|e| e.to_string())?;
+                let name = HeaderName::from_bytes(key.as_bytes())?;
+                let value = HeaderValue::from_str(&value)?;
                 builder = builder.header(name, value);
             }
         }
-        _ => {}
+        AuthType::NoAuth | AuthType::Unsupported => {}
     }
 
     Ok(builder)
-}
-fn parse_json_optional<T: serde::de::DeserializeOwned>(value: &str) -> Option<T> {
-    serde_json::from_str(value).ok()
 }

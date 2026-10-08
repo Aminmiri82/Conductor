@@ -1,5 +1,14 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { FileUp, Plus, Trash2, X } from "lucide-react";
+import { FileUp, X } from "lucide-react";
+import {
+  AddRowButton,
+  CellInput,
+  CheckboxCell,
+  HeaderRow,
+  RemoveButton,
+  Row,
+  TableFrame,
+} from "@/components/EditableTable";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -11,8 +20,31 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
-import type { BodyField, RequestBody } from "@/features/types";
+import type {
+  BodyField,
+  BodyFieldType,
+  BodyMode,
+  RequestBody,
+} from "@/features/types";
 import { KeyValueTable } from "@/features/requests/KeyValueTable";
+import { pickOption } from "@/lib/options";
+
+const bodyModes = [
+  ["none", "No body"],
+  ["raw", "Raw"],
+  ["formdata", "Form data"],
+  ["urlencoded", "URL encoded"],
+  ["graphql", "GraphQL"],
+  ["file", "Binary file"],
+] as const satisfies readonly (readonly [BodyMode, string])[];
+
+const fieldTypes = [
+  ["text", "Text"],
+  ["file", "File"],
+] as const satisfies readonly (readonly [BodyFieldType, string])[];
+
+const formDataColumns =
+  "grid-cols-[34px_minmax(110px,0.7fr)_96px_minmax(180px,1.3fr)_34px]";
 
 export function BodyEditor({
   body,
@@ -26,18 +58,20 @@ export function BodyEditor({
       <div className="flex h-11 items-center gap-2 border-b border-border/50 px-3">
         <Select
           value={body.mode}
-          onValueChange={(mode) => onChange({ ...body, mode })}
+          onValueChange={(value) => {
+            const mode = pickOption(bodyModes, value);
+            if (mode) onChange({ ...body, mode });
+          }}
         >
           <SelectTrigger className="h-8 w-44 border-border/70 bg-background/40 text-xs">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="none">No body</SelectItem>
-            <SelectItem value="raw">Raw</SelectItem>
-            <SelectItem value="formdata">Form data</SelectItem>
-            <SelectItem value="urlencoded">URL encoded</SelectItem>
-            <SelectItem value="graphql">GraphQL</SelectItem>
-            <SelectItem value="file">Binary file</SelectItem>
+            {bodyModes.map(([id, label]) => (
+              <SelectItem key={id} value={id}>
+                {label}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
         {body.mode === "raw" ? (
@@ -226,49 +260,46 @@ function FormDataEditor({
   }
 
   return (
-    <div className="overflow-hidden rounded-md border border-border/70">
-      <div className="grid h-8 grid-cols-[34px_minmax(110px,0.7fr)_96px_minmax(180px,1.3fr)_34px] items-center border-b border-border/70 bg-muted/20 px-1 text-xs text-muted-foreground">
+    <TableFrame>
+      <HeaderRow columns={formDataColumns} className="app-mono h-8">
         <div />
         <div>Key</div>
         <div>Type</div>
         <div>Value</div>
         <div />
-      </div>
+      </HeaderRow>
       {rows.map((row, index) => (
-        <div
-          key={index}
-          className="grid grid-cols-[34px_minmax(110px,0.7fr)_96px_minmax(180px,1.3fr)_34px] items-center border-b border-border/40 px-1 last:border-b-0"
-        >
-          <input
-            type="checkbox"
-            className="mx-auto size-3 accent-violet-400"
-            checked={row.enabled}
-            onChange={(event) =>
-              update(index, { enabled: event.target.checked })
-            }
+        <Row key={index} columns={formDataColumns}>
+          <CheckboxCell
+            checked={row.enabled ?? true}
+            onChange={(enabled) => update(index, { enabled })}
           />
-          <Input
-            className="h-8 rounded-none border-0 bg-transparent font-mono text-xs shadow-none focus-visible:ring-0"
+          <CellInput
             value={row.key}
             onChange={(event) => update(index, { key: event.target.value })}
           />
           <Select
-            value={row.fieldType || "text"}
-            onValueChange={(fieldType) =>
+            value={row.fieldType ?? "text"}
+            onValueChange={(value) => {
+              const fieldType = pickOption(fieldTypes, value);
+              if (!fieldType) return;
               update(index, {
                 fieldType,
                 value: fieldType === "file" ? "" : row.value,
                 filePath: null,
                 contentType: null,
-              })
-            }
+              });
+            }}
           >
             <SelectTrigger className="h-7 border-border/50 bg-background/30 text-xs">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="text">Text</SelectItem>
-              <SelectItem value="file">File</SelectItem>
+              {fieldTypes.map(([id, label]) => (
+                <SelectItem key={id} value={id}>
+                  {label}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
           {row.fieldType === "file" ? (
@@ -283,8 +314,8 @@ function FormDataEditor({
                   {row.filePath || "Choose file"}
                 </span>
               </Button>
-              <Input
-                className="h-8 w-32 rounded-none border-0 bg-transparent font-mono text-xs shadow-none focus-visible:ring-0"
+              <CellInput
+                className="w-32"
                 value={row.contentType ?? ""}
                 placeholder="Content-Type"
                 onChange={(event) =>
@@ -293,45 +324,33 @@ function FormDataEditor({
               />
             </div>
           ) : (
-            <Input
-              className="h-8 rounded-none border-0 bg-transparent font-mono text-xs shadow-none focus-visible:ring-0"
+            <CellInput
               value={row.value}
               onChange={(event) => update(index, { value: event.target.value })}
             />
           )}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-7 text-muted-foreground"
+          <RemoveButton
             onClick={() => onChange(rows.filter((_, i) => i !== index))}
-          >
-            <Trash2 className="size-3.5" />
-          </Button>
-        </div>
+          />
+        </Row>
       ))}
-      <div className="p-1">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 gap-1.5 text-xs text-muted-foreground"
-          onClick={() =>
-            onChange([
-              ...rows,
-              {
-                key: "",
-                value: "",
-                enabled: true,
-                fieldType: "text",
-                filePath: null,
-                contentType: null,
-              },
-            ])
-          }
-        >
-          <Plus className="size-3.5" />
-          Add field
-        </Button>
-      </div>
-    </div>
+      <AddRowButton
+        onClick={() =>
+          onChange([
+            ...rows,
+            {
+              key: "",
+              value: "",
+              enabled: true,
+              fieldType: "text",
+              filePath: null,
+              contentType: null,
+            },
+          ])
+        }
+      >
+        Add field
+      </AddRowButton>
+    </TableFrame>
   );
 }

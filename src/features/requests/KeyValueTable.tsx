@@ -1,7 +1,15 @@
-import { Plus, Trash2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import {
+  AddRowButton,
+  CellInput,
+  CheckboxCell,
+  HeaderRow,
+  RemoveButton,
+  Row,
+  TableFrame,
+} from "@/components/EditableTable";
 import type { KeyValue } from "@/features/types";
+
+const columns = "grid-cols-[34px_minmax(120px,0.8fr)_minmax(160px,1.2fr)_34px]";
 
 export function KeyValueTable({
   rows,
@@ -21,67 +29,39 @@ export function KeyValueTable({
   }
 
   return (
-    <div
-      className="overflow-hidden border bg-[var(--app-panel-2)]"
-      style={{
-        borderColor: "var(--app-line)",
-        borderRadius: "var(--app-radius-lg)",
-      }}
-    >
-      <div className="app-mono grid h-8 grid-cols-[34px_minmax(120px,0.8fr)_minmax(160px,1.2fr)_34px] items-center border-b border-[var(--app-line)] bg-[rgb(255_255_255/.02)] px-1 text-[11px] uppercase tracking-[0.06em] text-[var(--app-dim)]">
+    <TableFrame className="bg-[var(--app-panel-2)]">
+      <HeaderRow columns={columns} className="app-mono h-8">
         <div />
         <div>Key</div>
         <div>Value</div>
         <div />
-      </div>
+      </HeaderRow>
       {rows.map((row, index) => (
-        <div
-          key={index}
-          className="grid grid-cols-[34px_minmax(120px,0.8fr)_minmax(160px,1.2fr)_34px] items-center border-b border-[var(--app-line)] px-1 last:border-b-0"
-        >
-          <input
-            type="checkbox"
-            className="mx-auto size-3 accent-[var(--app-accent)]"
-            checked={row.enabled}
-            onChange={(event) =>
-              update(index, { enabled: event.target.checked })
-            }
+        <Row key={index} columns={columns}>
+          <CheckboxCell
+            checked={row.enabled ?? true}
+            onChange={(enabled) => update(index, { enabled })}
           />
-          <Input
-            className="app-mono h-8 rounded-none border-0 bg-transparent text-xs shadow-none focus-visible:ring-0"
+          <CellInput
             value={row.key}
             placeholder={placeholder}
             onChange={(event) => update(index, { key: event.target.value })}
           />
-          <Input
-            className="app-mono h-8 rounded-none border-0 bg-transparent text-xs shadow-none focus-visible:ring-0"
+          <CellInput
             value={row.value}
             placeholder="Value"
             onChange={(event) => update(index, { value: event.target.value })}
           />
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-7 text-[var(--app-dim)]"
-            onClick={() => remove(index)}
-          >
-            <Trash2 className="size-3.5" />
-          </Button>
-        </div>
+          <RemoveButton onClick={() => remove(index)} />
+        </Row>
       ))}
-      <div className="p-1">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 gap-1.5 text-xs text-[var(--app-dim)]"
-          onClick={() =>
-            onChange([...rows, { key: "", value: "", enabled: true }])
-          }
-        >
-          <Plus className="size-3.5" />
-          Add row
-        </Button>
-      </div>
-    </div>
+      <AddRowButton
+        onClick={() =>
+          onChange([...rows, { key: "", value: "", enabled: true }])
+        }
+      >
+        Add row
+      </AddRowButton>
+    </TableFrame>
   );
 }

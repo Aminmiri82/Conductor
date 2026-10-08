@@ -13,7 +13,6 @@ import { useWorkspaceUiStore } from "@/features/workspace/workspaceUiStore";
 export function AppTopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const sidebarVisible = useWorkspaceStore((state) => state.sidebarVisible);
   const toggleSidebar = useWorkspaceStore((state) => state.toggleSidebar);
-  const appTheme = useWorkspaceUiStore((state) => state.workspaceUi.appTheme);
   const environments = useWorkspaceStore((state) => state.environments);
   const activeEnvironmentId = useWorkspaceUiStore(
     (state) => state.workspaceUi.activeEnvironmentId,
@@ -21,10 +20,9 @@ export function AppTopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const selectEnvironment = useWorkspaceStore(
     (state) => state.selectEnvironment,
   );
-  const isGraphicTheme = appTheme !== "softpro";
 
   return (
-    <div className="flex h-11 items-center gap-3 border-b border-[var(--app-line)] bg-[var(--app-panel)] px-3">
+    <div className="flex h-11 shrink-0 items-center gap-3 border-b border-[var(--app-line)] bg-[var(--app-panel)] px-3">
       <div className="flex min-w-0 items-center gap-2">
         <Button
           variant="ghost"
@@ -35,11 +33,8 @@ export function AppTopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
         >
           {sidebarVisible ? <PanelLeftClose /> : <PanelLeftOpen />}
         </Button>
-        <div
-          className={`truncate text-sm font-semibold ${
-            isGraphicTheme ? "app-mono uppercase tracking-[0.08em]" : ""
-          }`}
-        >
+        {/* The theme's CSS sets the font; these two variables set the casing. */}
+        <div className="truncate text-sm font-semibold tracking-[var(--app-brand-tracking)] [text-transform:var(--app-tab-transform)]">
           Conductor
         </div>
       </div>

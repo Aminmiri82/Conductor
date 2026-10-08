@@ -13,11 +13,9 @@ type WorkspaceUiStoreState = {
   workspaceUi: WorkspaceUiState;
   workspaceUiDirty: boolean;
   loadWorkspaceUiState: (
-    environments: EnvironmentSummary[],
+    environments: Promise<EnvironmentSummary[]>,
   ) => Promise<WorkspaceUiState>;
-  reconcileActiveEnvironment: (
-    environments: EnvironmentSummary[],
-  ) => string | null;
+  reconcileActiveEnvironment: (environments: EnvironmentSummary[]) => void;
   setActiveCollectionId: (collectionId: string) => void;
   setActiveEnvironmentId: (environmentId: string | null) => void;
   setRequestEditorTab: (requestId: string, tab: RequestEditorTab) => void;
@@ -48,10 +46,14 @@ export const useWorkspaceUiStore = create<WorkspaceUiStoreState>(
     workspaceUi: DEFAULT_WORKSPACE_UI_STATE,
     workspaceUiDirty: false,
 
-    loadWorkspaceUiState: async (environments) => {
-      const workspaceUi = normalizeWorkspaceUiState(
-        await api.getWorkspaceState(WORKSPACE_UI_STATE_KEY),
-      );
+    // Takes the environments as a promise so startup can fetch them and the
+    // stored state at the same time.
+    loadWorkspaceUiState: async (environmentsPromise) => {
+      const [stored, environments] = await Promise.all([
+        api.getWorkspaceState(WORKSPACE_UI_STATE_KEY),
+        environmentsPromise,
+      ]);
+      const workspaceUi = normalizeWorkspaceUiState(stored);
       const activeEnvironmentId = validEnvironmentId(
         environments,
         workspaceUi.activeEnvironmentId,
@@ -74,7 +76,6 @@ export const useWorkspaceUiStore = create<WorkspaceUiStoreState>(
         }));
         get().scheduleWorkspaceUiStateFlush();
       }
-      return activeEnvironmentId;
     },
 
     setActiveCollectionId: (collectionId) => {
