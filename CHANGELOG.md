@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.7](https://github.com/Aminmiri82/Conductor/compare/app-v0.1.6...app-v0.1.7) (2026-10-08)
+
+
+### Fixes
+
+* **responses:** keep server key order and download raw response bodies ([#11](https://github.com/Aminmiri82/Conductor/issues/11)) ([46437c6](https://github.com/Aminmiri82/Conductor/commit/46437c6b32233ee633ac242afa5913db4c1794a6))
+
 ## [0.1.6](https://github.com/Aminmiri82/Conductor/compare/app-v0.1.5...app-v0.1.6) (2026-09-30)
 
 
