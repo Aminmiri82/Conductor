@@ -8,14 +8,23 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
-import { useWorkspaceUiStore } from "@/features/workspace/workspaceUiStore";
+import {
+  activeEnvironmentIdFor,
+  useWorkspaceUiStore,
+} from "@/features/workspace/workspaceUiStore";
 
 export function AppTopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const sidebarVisible = useWorkspaceStore((state) => state.sidebarVisible);
   const toggleSidebar = useWorkspaceStore((state) => state.toggleSidebar);
-  const environments = useWorkspaceStore((state) => state.environments);
-  const activeEnvironmentId = useWorkspaceUiStore(
-    (state) => state.workspaceUi.activeEnvironmentId,
+  const activeCollectionId = useWorkspaceStore(
+    (state) => state.activeCollectionId,
+  );
+  const allEnvironments = useWorkspaceStore((state) => state.environments);
+  const environments = allEnvironments.filter(
+    (environment) => environment.collectionId === activeCollectionId,
+  );
+  const activeEnvironmentId = useWorkspaceUiStore((state) =>
+    activeEnvironmentIdFor(state.workspaceUi, activeCollectionId),
   );
   const selectEnvironment = useWorkspaceStore(
     (state) => state.selectEnvironment,
@@ -41,9 +50,14 @@ export function AppTopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
       <div className="flex-1" />
       <Select
         value={activeEnvironmentId ?? "__none__"}
-        onValueChange={(value) =>
-          void selectEnvironment(value === "__none__" ? null : value)
-        }
+        onValueChange={(value) => {
+          if (!activeCollectionId) return;
+          void selectEnvironment(
+            activeCollectionId,
+            value === "__none__" ? null : value,
+          );
+        }}
+        disabled={!activeCollectionId}
       >
         <SelectTrigger className="h-8 w-48 border-[var(--app-line)] bg-[var(--app-panel-2)] text-xs">
           <SelectValue />

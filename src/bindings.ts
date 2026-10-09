@@ -19,11 +19,16 @@ export const commands = {
 	createFolder: (input: CreateFolderInput) => __TAURI_INVOKE<string>("create_folder", { input }),
 	createRequest: (input: CreateRequestInput) => __TAURI_INVOKE<CreateRequestResult>("create_request", { input }),
 	deleteEnvironment: (environmentId: string) => __TAURI_INVOKE<null>("delete_environment", { environmentId }),
+	/**
+	 *  Copies an environment and all its variables into the same collection,
+	 *  named "<name> copy". Returns the new environment's id.
+	 */
+	duplicateEnvironment: (input: DuplicateEnvironmentInput) => __TAURI_INVOKE<string>("duplicate_environment", { input }),
 	deleteNode: (nodeId: string) => __TAURI_INVOKE<null>("delete_node", { nodeId }),
 	duplicateRequest: (input: DuplicateRequestInput) => __TAURI_INVOKE<DuplicateRequestResult>("duplicate_request", { input }),
 	getCollectionTree: (collectionId: string) => __TAURI_INVOKE<CollectionNode[]>("get_collection_tree", { collectionId }),
 	getRequest: (requestId: string) => __TAURI_INVOKE<RequestDetail>("get_request", { requestId }),
-	importPostmanEnvironment: (postmanJson: string, fileName: string | null) => __TAURI_INVOKE<string>("import_postman_environment", { postmanJson, fileName }),
+	importPostmanEnvironment: (collectionId: string, postmanJson: string, fileName: string | null) => __TAURI_INVOKE<string>("import_postman_environment", { collectionId, postmanJson, fileName }),
 	importPostmanCollection: (postmanJson: string) => __TAURI_INVOKE<string>("import_postman_collection", { postmanJson }),
 	listCollections: () => __TAURI_INVOKE<CollectionSummary[]>("list_collections"),
 	listEnvironments: () => __TAURI_INVOKE<EnvironmentSummary[]>("list_environments"),
@@ -113,6 +118,7 @@ export type CollectionSummary = {
 };
 
 export type CreateEnvironmentInput = {
+	collectionId: string,
 	name: string,
 };
 
@@ -135,6 +141,10 @@ export type CreateRequestResult = {
 	nodeId: string,
 };
 
+export type DuplicateEnvironmentInput = {
+	environmentId: string,
+};
+
 export type DuplicateRequestInput = {
 	requestId: string,
 };
@@ -146,6 +156,8 @@ export type DuplicateRequestResult = {
 
 export type EnvironmentSummary = {
 	id: string,
+	/**  The collection that owns this environment. */
+	collectionId: string,
 	name: string,
 };
 

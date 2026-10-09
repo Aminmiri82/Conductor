@@ -49,6 +49,16 @@ export function AppSettings({
         showCloseButton={false}
         aria-describedby={undefined}
         overlayClassName="bg-black/45 supports-backdrop-filter:backdrop-blur-sm"
+        // An inline edit (renaming an environment) uses Escape to cancel
+        // itself rather than close the dialog.
+        onEscapeKeyDown={(event) => {
+          if (
+            event.target instanceof HTMLElement &&
+            event.target.closest("[data-cancel-on-escape]")
+          ) {
+            event.preventDefault();
+          }
+        }}
         // Land focus on the dialog itself rather than ringing the close button.
         onOpenAutoFocus={(event) => {
           event.preventDefault();

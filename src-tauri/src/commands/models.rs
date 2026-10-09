@@ -16,6 +16,8 @@ pub struct CollectionSummary {
 #[serde(rename_all = "camelCase")]
 pub struct EnvironmentSummary {
     pub id: String,
+    /// The collection that owns this environment.
+    pub collection_id: String,
     pub name: String,
 }
 
@@ -263,7 +265,14 @@ pub struct SendRequestInput {
 #[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateEnvironmentInput {
+    pub collection_id: String,
     pub name: String,
+}
+
+#[derive(Debug, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateEnvironmentInput {
+    pub environment_id: String,
 }
 
 #[derive(Debug, Deserialize, specta::Type)]

@@ -7,12 +7,19 @@ import type { WorkspaceUiState } from "@/features/types";
 export const api = {
   listCollections: commands.listCollections,
   listEnvironments: commands.listEnvironments,
-  createEnvironment: (name: string) => commands.createEnvironment({ name }),
+  createEnvironment: (collectionId: string, name: string) =>
+    commands.createEnvironment({ collectionId, name }),
+  duplicateEnvironment: (environmentId: string) =>
+    commands.duplicateEnvironment({ environmentId }),
   renameEnvironment: (environmentId: string, name: string) =>
     commands.renameEnvironment({ environmentId, name }),
   deleteEnvironment: commands.deleteEnvironment,
-  importEnvironment: (contents: string, fileName?: string | null) =>
-    commands.importPostmanEnvironment(contents, fileName ?? null),
+  importEnvironment: (
+    collectionId: string,
+    contents: string,
+    fileName?: string | null,
+  ) =>
+    commands.importPostmanEnvironment(collectionId, contents, fileName ?? null),
   // Workspace UI state is opaque JSON to Rust; the store normalizes it on load.
   getWorkspaceState: (key: string) =>
     commands.getWorkspaceState(key) as Promise<WorkspaceUiState | null>,

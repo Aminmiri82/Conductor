@@ -38,7 +38,8 @@ export type SettingsTab = "appearance" | "variables" | "shortcuts" | "about";
 
 export type WorkspaceUiState = {
   activeCollectionId?: string;
-  activeEnvironmentId?: string | null;
+  // Each collection remembers its own active environment, by collection id.
+  activeEnvironmentIds: Record<string, string>;
   appTheme: AppTheme;
   accentColor: string;
   urlDisplayMode: UrlDisplayMode;

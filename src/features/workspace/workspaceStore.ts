@@ -20,6 +20,7 @@ import {
 import { getDraft, useDraftStore } from "@/features/workspace/draftStore";
 import { useResponseStore } from "@/features/workspace/responseStore";
 import {
+  activeEnvironmentIdFor,
   getWorkspaceUiState,
   useWorkspaceUiStore,
 } from "@/features/workspace/workspaceUiStore";
@@ -56,11 +57,15 @@ type WorkspaceState = {
   loadEnvironments: () => Promise<void>;
   importCollection: (json: string) => Promise<void>;
   importEnvironment: (
+    collectionId: string,
     contents: string,
     fileName?: string | null,
   ) => Promise<void>;
   selectCollection: (collectionId: string) => Promise<void>;
-  selectEnvironment: (environmentId: string | null) => Promise<void>;
+  selectEnvironment: (
+    collectionId: string,
+    environmentId: string | null,
+  ) => Promise<void>;
   selectRequest: (requestId: string) => Promise<void>;
   closeRequestTab: (requestId: string) => Promise<void>;
   createRequestIn: (
@@ -129,7 +134,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   loadEnvironments: async () => {
     try {
       const environments = await api.listEnvironments();
-      useWorkspaceUiStore.getState().reconcileActiveEnvironment(environments);
+      useWorkspaceUiStore.getState().reconcileActiveEnvironments(environments);
       set({ environments });
     } catch (error) {
       set({ error: String(error) });
@@ -158,13 +163,19 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
-  importEnvironment: async (contents, fileName) => {
+  importEnvironment: async (collectionId, contents, fileName) => {
     set({ error: undefined });
     try {
-      const environmentId = await api.importEnvironment(contents, fileName);
+      const environmentId = await api.importEnvironment(
+        collectionId,
+        contents,
+        fileName,
+      );
       const environments = await api.listEnvironments();
       set({ environments });
-      useWorkspaceUiStore.getState().setActiveEnvironmentId(environmentId);
+      useWorkspaceUiStore
+        .getState()
+        .setActiveEnvironmentId(collectionId, environmentId);
       await useWorkspaceUiStore.getState().flushWorkspaceUiState();
       await get().resolveActiveRequest();
     } catch (error) {
@@ -191,8 +202,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
-  selectEnvironment: async (environmentId) => {
-    useWorkspaceUiStore.getState().setActiveEnvironmentId(environmentId);
+  selectEnvironment: async (collectionId, environmentId) => {
+    useWorkspaceUiStore
+      .getState()
+      .setActiveEnvironmentId(collectionId, environmentId);
     await get().resolveActiveRequest();
   },
 
@@ -441,7 +454,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     try {
       const resolvedPreview = await api.resolveRequest(
         request,
-        getWorkspaceUiState().activeEnvironmentId ?? null,
+        activeEnvironmentIdFor(getWorkspaceUiState(), request.collectionId),
       );
       if (get().activeRequestId === request.id) {
         useDraftStore.getState().setPreview(request.id, resolvedPreview);
@@ -469,7 +482,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     try {
       const response = await api.sendRequest(
         request,
-        getWorkspaceUiState().activeEnvironmentId ?? null,
+        activeEnvironmentIdFor(getWorkspaceUiState(), request.collectionId),
       );
       useResponseStore.getState().setResponse(request.id, response);
       finishSending();

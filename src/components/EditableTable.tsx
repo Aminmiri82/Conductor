@@ -53,9 +53,11 @@ export function HeaderRow({
 
 export function Row({
   columns,
+  className,
   children,
 }: {
   columns: string;
+  className?: string;
   children: ReactNode;
 }) {
   return (
@@ -63,6 +65,7 @@ export function Row({
       className={cn(
         "grid items-center border-b border-[var(--app-line)] px-1 last:border-b-0",
         columns,
+        className,
       )}
     >
       {children}

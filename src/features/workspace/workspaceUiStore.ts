@@ -15,9 +15,12 @@ type WorkspaceUiStoreState = {
   loadWorkspaceUiState: (
     environments: Promise<EnvironmentSummary[]>,
   ) => Promise<WorkspaceUiState>;
-  reconcileActiveEnvironment: (environments: EnvironmentSummary[]) => void;
+  reconcileActiveEnvironments: (environments: EnvironmentSummary[]) => void;
   setActiveCollectionId: (collectionId: string) => void;
-  setActiveEnvironmentId: (environmentId: string | null) => void;
+  setActiveEnvironmentId: (
+    collectionId: string,
+    environmentId: string | null,
+  ) => void;
   setRequestEditorTab: (requestId: string, tab: RequestEditorTab) => void;
   setWorkspacePreference: <K extends keyof WorkspaceUiState>(
     key: K,
@@ -30,7 +33,7 @@ type WorkspaceUiStoreState = {
 const WORKSPACE_UI_STATE_KEY = "workspace.ui";
 const WORKSPACE_UI_STATE_FLUSH_DELAY_MS = 300;
 const DEFAULT_WORKSPACE_UI_STATE: WorkspaceUiState = {
-  activeEnvironmentId: null,
+  activeEnvironmentIds: {},
   appTheme: "softpro",
   accentColor: "#a78bfa",
   urlDisplayMode: "chip",
@@ -54,24 +57,26 @@ export const useWorkspaceUiStore = create<WorkspaceUiStoreState>(
         environmentsPromise,
       ]);
       const workspaceUi = normalizeWorkspaceUiState(stored);
-      const activeEnvironmentId = validEnvironmentId(
-        environments,
-        workspaceUi.activeEnvironmentId,
-      );
-      const nextWorkspaceUi = { ...workspaceUi, activeEnvironmentId };
+      const nextWorkspaceUi = {
+        ...workspaceUi,
+        activeEnvironmentIds: validEnvironmentIds(
+          environments,
+          workspaceUi.activeEnvironmentIds,
+        ),
+      };
       set({ workspaceUi: nextWorkspaceUi, workspaceUiDirty: false });
       return nextWorkspaceUi;
     },
 
-    reconcileActiveEnvironment: (environments) => {
-      const previousActiveEnvironmentId = get().workspaceUi.activeEnvironmentId;
-      const activeEnvironmentId = validEnvironmentId(
-        environments,
-        previousActiveEnvironmentId,
-      );
-      if (activeEnvironmentId !== previousActiveEnvironmentId) {
+    reconcileActiveEnvironments: (environments) => {
+      const previous = get().workspaceUi.activeEnvironmentIds;
+      const activeEnvironmentIds = validEnvironmentIds(environments, previous);
+      if (
+        Object.keys(activeEnvironmentIds).length !==
+        Object.keys(previous).length
+      ) {
         set((state) => ({
-          workspaceUi: { ...state.workspaceUi, activeEnvironmentId },
+          workspaceUi: { ...state.workspaceUi, activeEnvironmentIds },
           workspaceUiDirty: true,
         }));
         get().scheduleWorkspaceUiStateFlush();
@@ -85,14 +90,20 @@ export const useWorkspaceUiStore = create<WorkspaceUiStoreState>(
       }));
     },
 
-    setActiveEnvironmentId: (environmentId) => {
-      set((state) => ({
-        workspaceUi: {
-          ...state.workspaceUi,
-          activeEnvironmentId: environmentId,
-        },
-        workspaceUiDirty: true,
-      }));
+    setActiveEnvironmentId: (collectionId, environmentId) => {
+      set((state) => {
+        const { [collectionId]: _previous, ...others } =
+          state.workspaceUi.activeEnvironmentIds;
+        return {
+          workspaceUi: {
+            ...state.workspaceUi,
+            activeEnvironmentIds: environmentId
+              ? { ...others, [collectionId]: environmentId }
+              : others,
+          },
+          workspaceUiDirty: true,
+        };
+      });
       get().scheduleWorkspaceUiStateFlush();
     },
 
@@ -173,10 +184,15 @@ function normalizeWorkspaceUiState(
       typeof value.activeCollectionId === "string"
         ? value.activeCollectionId
         : undefined,
-    activeEnvironmentId:
-      typeof value.activeEnvironmentId === "string"
-        ? value.activeEnvironmentId
-        : null,
+    activeEnvironmentIds:
+      value.activeEnvironmentIds &&
+      typeof value.activeEnvironmentIds === "object"
+        ? Object.fromEntries(
+            Object.entries(value.activeEnvironmentIds).filter(
+              (entry) => typeof entry[1] === "string",
+            ),
+          )
+        : {},
     appTheme: isAppTheme(value.appTheme)
       ? value.appTheme
       : DEFAULT_WORKSPACE_UI_STATE.appTheme,
@@ -207,12 +223,28 @@ function normalizeRequestEditorTabs(
   );
 }
 
-function validEnvironmentId(
+/** Drops choices whose environment is gone or not owned by that collection. */
+function validEnvironmentIds(
   environments: EnvironmentSummary[],
-  environmentId: string | null | undefined,
+  activeEnvironmentIds: Record<string, string>,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(activeEnvironmentIds).filter(([collectionId, id]) =>
+      environments.some(
+        (environment) =>
+          environment.id === id && environment.collectionId === collectionId,
+      ),
+    ),
+  );
+}
+
+/** The active environment of a collection, or null for none. */
+export function activeEnvironmentIdFor(
+  workspaceUi: WorkspaceUiState,
+  collectionId: string | undefined,
 ): string | null {
-  return environments.some((environment) => environment.id === environmentId)
-    ? (environmentId ?? null)
+  return collectionId
+    ? (workspaceUi.activeEnvironmentIds[collectionId] ?? null)
     : null;
 }
 

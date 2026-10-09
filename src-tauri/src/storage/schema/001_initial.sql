@@ -60,12 +60,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_collection_nodes_request_id
     ON collection_nodes(request_id)
     WHERE request_id IS NOT NULL;
 
+-- An environment belongs to exactly one collection; there are no shared ones.
 CREATE TABLE IF NOT EXISTS environments (
     id TEXT PRIMARY KEY,
+    collection_id TEXT NOT NULL,
     name TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE
 );
+
+CREATE INDEX IF NOT EXISTS idx_environments_collection
+    ON environments(collection_id);
 
 CREATE TABLE IF NOT EXISTS variables (
     scope TEXT NOT NULL CHECK (scope IN ('global', 'collection', 'environment')),

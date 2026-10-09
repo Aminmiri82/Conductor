@@ -18,8 +18,8 @@ use commands::requests::{
     save_response_body, save_text_file, send_request, BinaryBodies,
 };
 use commands::variables::{
-    apply_variable_changes, create_environment, delete_environment, import_postman_environment,
-    list_environments, list_variables, rename_environment,
+    apply_variable_changes, create_environment, delete_environment, duplicate_environment,
+    import_postman_environment, list_environments, list_variables, rename_environment,
 };
 use commands::workspace_state::{get_workspace_state, set_workspace_state};
 use storage::Database;
@@ -90,6 +90,7 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             create_folder,
             create_request,
             delete_environment,
+            duplicate_environment,
             delete_node,
             duplicate_request,
             get_collection_tree,

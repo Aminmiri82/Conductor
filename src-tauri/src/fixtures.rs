@@ -29,13 +29,13 @@ pub fn collection(connection: &Connection) -> String {
     id
 }
 
-pub fn environment(connection: &Connection) -> String {
+pub fn environment(connection: &Connection, collection_id: &str) -> String {
     let id = Uuid::new_v4().to_string();
     connection
         .execute(
-            "INSERT INTO environments (id, name, created_at, updated_at)
-             VALUES (?, 'Environment', '', '')",
-            params![id],
+            "INSERT INTO environments (id, collection_id, name, created_at, updated_at)
+             VALUES (?, ?, 'Environment', '', '')",
+            params![id, collection_id],
         )
         .unwrap();
     id

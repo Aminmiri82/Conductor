@@ -32,7 +32,10 @@ import type {
   VariableScope,
 } from "@/features/types";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
-import { useWorkspaceUiStore } from "@/features/workspace/workspaceUiStore";
+import {
+  activeEnvironmentIdFor,
+  useWorkspaceUiStore,
+} from "@/features/workspace/workspaceUiStore";
 
 const scopeOptions = [
   ["environment", "Environment"],
@@ -118,8 +121,8 @@ export function VariableEditor({ request }: { request: RequestDetail }) {
   >(new Map());
   const [savedAt, setSavedAt] = useState<number>();
   const { saving, save: saveVariables } = useSaveVariables();
-  const activeEnvironmentId = useWorkspaceUiStore(
-    (state) => state.workspaceUi.activeEnvironmentId,
+  const activeEnvironmentId = useWorkspaceUiStore((state) =>
+    activeEnvironmentIdFor(state.workspaceUi, request.collectionId),
   );
   const environments = useWorkspaceStore((state) => state.environments);
   const activeEnvironmentName = environments.find(

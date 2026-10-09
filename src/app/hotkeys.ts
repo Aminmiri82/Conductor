@@ -42,7 +42,12 @@ export function useAppHotkeys() {
         void duplicateRequest(activeRequestId);
       }
       if (action === "new-request") {
-        void createRequestNextToActive();
+        // An open editor that adds its own rows (the Variables settings
+        // pane) claims ⌘N by cancelling this event.
+        const unclaimed = window.dispatchEvent(
+          new Event("conductor:new", { cancelable: true }),
+        );
+        if (unclaimed) void createRequestNextToActive();
       }
       if (action === "close-request" && activeRequestId) {
         void closeRequestTab(activeRequestId);

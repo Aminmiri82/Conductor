@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use chrono::Utc;
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use serde::Deserialize;
 use tauri::State;
 use uuid::Uuid;
@@ -9,8 +9,8 @@ use uuid::Uuid;
 use super::{
     error::CommandError,
     models::{
-        CreateEnvironmentInput, EnvironmentSummary, RenameEnvironmentInput, RequestDetail,
-        VariableChange, VariableEntry, VariableTarget,
+        CreateEnvironmentInput, DuplicateEnvironmentInput, EnvironmentSummary,
+        RenameEnvironmentInput, RequestDetail, VariableChange, VariableEntry, VariableTarget,
     },
     postman::{flag, flag_or_false, lenient_list, stringified, text},
 };
@@ -68,11 +68,12 @@ pub fn list_environments(
 ) -> Result<Vec<EnvironmentSummary>, CommandError> {
     Ok(state.database.with_read_connection(|connection| {
         let mut statement =
-            connection.prepare("SELECT id, name FROM environments ORDER BY name")?;
+            connection.prepare("SELECT id, collection_id, name FROM environments ORDER BY name")?;
         let rows = statement.query_map([], |row| {
             Ok(EnvironmentSummary {
                 id: row.get(0)?,
-                name: row.get(1)?,
+                collection_id: row.get(1)?,
+                name: row.get(2)?,
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>()
@@ -91,7 +92,13 @@ pub fn create_environment(
     let now = Utc::now().to_rfc3339();
 
     Ok(state.database.with_connection(|connection| {
-        insert_environment(connection, &environment_id, &name, &now)?;
+        insert_environment(
+            connection,
+            &environment_id,
+            &input.collection_id,
+            &name,
+            &now,
+        )?;
         Ok(environment_id)
     })?)
 }
@@ -99,14 +106,60 @@ pub fn create_environment(
 fn insert_environment(
     connection: &rusqlite::Connection,
     id: &str,
+    collection_id: &str,
     name: &str,
     now: &str,
 ) -> Result<(), StorageError> {
     connection.execute(
-        "INSERT INTO environments (id, name, created_at, updated_at)
-         VALUES (?, ?, ?, ?)",
-        params![id, name, now, now],
+        "INSERT INTO environments (id, collection_id, name, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?)",
+        params![id, collection_id, name, now, now],
     )?;
+    Ok(())
+}
+
+/// Copies an environment and all its variables into the same collection,
+/// named "<name> copy". Returns the new environment's id.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn duplicate_environment(
+    input: DuplicateEnvironmentInput,
+    state: State<'_, AppState>,
+) -> Result<String, CommandError> {
+    let environment_id = Uuid::new_v4().to_string();
+    let now = Utc::now().to_rfc3339();
+    state.database.with_connection(|connection| {
+        copy_environment(connection, &input.environment_id, &environment_id, &now)
+    })?;
+    Ok(environment_id)
+}
+
+fn copy_environment(
+    connection: &mut rusqlite::Connection,
+    source_id: &str,
+    new_id: &str,
+    now: &str,
+) -> Result<(), StorageError> {
+    let tx = connection.transaction()?;
+    let copied = tx.execute(
+        "INSERT INTO environments (id, collection_id, name, created_at, updated_at)
+         SELECT ?, collection_id, name || ' copy', ?, ?
+         FROM environments WHERE id = ?",
+        params![new_id, now, now, source_id],
+    )?;
+    if copied == 0 {
+        return Err(StorageError::InvalidInput(
+            "environment not found".to_string(),
+        ));
+    }
+    tx.execute(
+        "INSERT INTO variables
+         (scope, environment_id, key, current_value, enabled, sensitive, created_at, updated_at)
+         SELECT 'environment', ?, key, current_value, enabled, sensitive, ?, ?
+         FROM variables WHERE scope = 'environment' AND environment_id = ?",
+        params![new_id, now, now, source_id],
+    )?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -150,6 +203,7 @@ pub fn delete_environment(
 #[tauri::command(async)]
 #[specta::specta]
 pub fn import_postman_environment(
+    collection_id: String,
     postman_json: String,
     file_name: Option<String>,
     state: State<'_, AppState>,
@@ -159,7 +213,7 @@ pub fn import_postman_environment(
     let now = Utc::now().to_rfc3339();
 
     state.database.with_connection(|connection| {
-        store_imported_environment(connection, &environment_id, &imported, &now)
+        store_imported_environment(connection, &environment_id, &collection_id, &imported, &now)
     })?;
     Ok(environment_id)
 }
@@ -167,11 +221,12 @@ pub fn import_postman_environment(
 fn store_imported_environment(
     connection: &mut rusqlite::Connection,
     environment_id: &str,
+    collection_id: &str,
     imported: &ImportedEnvironment,
     now: &str,
 ) -> Result<(), StorageError> {
     let tx = connection.transaction()?;
-    insert_environment(&tx, environment_id, &imported.name, now)?;
+    insert_environment(&tx, environment_id, collection_id, &imported.name, now)?;
     let target = VariableTarget::Environment {
         environment_id: environment_id.to_string(),
     };
@@ -299,11 +354,16 @@ fn apply_changes(
     Ok(())
 }
 
+/// Every send and preview goes through here, so this is where an environment
+/// from another collection is refused rather than silently mixed in.
 pub(crate) fn load_variable_context(
     connection: &rusqlite::Connection,
     request: &RequestDetail,
     environment_id: Option<&str>,
 ) -> Result<VariableContext, StorageError> {
+    if let Some(environment_id) = environment_id {
+        ensure_environment_in_collection(connection, environment_id, &request.collection_id)?;
+    }
     let mut values = HashMap::new();
     let mut statement = connection.prepare(
         "SELECT key, current_value, sensitive
@@ -335,6 +395,29 @@ pub(crate) fn load_variable_context(
         values.insert(key, stored);
     }
     Ok(VariableContext { values })
+}
+
+fn ensure_environment_in_collection(
+    connection: &rusqlite::Connection,
+    environment_id: &str,
+    collection_id: &str,
+) -> Result<(), StorageError> {
+    let owner = connection
+        .query_row(
+            "SELECT collection_id FROM environments WHERE id = ?",
+            params![environment_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    match owner {
+        Some(owner) if owner == collection_id => Ok(()),
+        Some(_) => Err(StorageError::InvalidInput(
+            "the environment belongs to a different collection".to_string(),
+        )),
+        None => Err(StorageError::InvalidInput(
+            "environment not found".to_string(),
+        )),
+    }
 }
 
 pub(crate) fn save_script_variable(
@@ -514,13 +597,14 @@ mod tests {
     #[test]
     fn env_file_with_a_repeated_key_imports_with_the_last_value() {
         let mut connection = crate::storage::test_connection();
+        let collection = fixtures::collection(&connection);
         let imported = parse_imported_environment(
             "API_URL=http://old\nTOKEN=abc\nAPI_URL=http://new\n",
             Some("local.env"),
         )
         .unwrap();
 
-        store_imported_environment(&mut connection, "env", &imported, "now").unwrap();
+        store_imported_environment(&mut connection, "env", &collection, &imported, "now").unwrap();
 
         let values = connection
             .prepare(
@@ -606,7 +690,8 @@ mod tests {
         connection
             .execute_batch(
                 "INSERT INTO collections (id, name, created_at, updated_at) VALUES ('col', 'C', '', '');
-                 INSERT INTO environments (id, name, created_at, updated_at) VALUES ('env', 'E', '', '');",
+                 INSERT INTO environments (id, collection_id, name, created_at, updated_at)
+                 VALUES ('env', 'col', 'E', '', '');",
             )
             .unwrap();
         connection
@@ -776,7 +861,7 @@ mod tests {
     fn variable_context_applies_environment_over_collection_over_global() {
         let connection = crate::storage::test_connection();
         let collection = fixtures::collection(&connection);
-        let environment = fixtures::environment(&connection);
+        let environment = fixtures::environment(&connection, &collection);
         let request = RequestDetail {
             collection_id: collection.clone(),
             url: "{{host}}".to_string(),
@@ -795,5 +880,52 @@ mod tests {
         let context = load_variable_context(&connection, &request, Some(&environment)).unwrap();
 
         assert_eq!(context.get("host").as_deref(), Some("environment"));
+    }
+
+    #[test]
+    fn a_request_cannot_use_another_collections_environment() {
+        let connection = crate::storage::test_connection();
+        let billing = fixtures::collection(&connection);
+        let storefront = fixtures::collection(&connection);
+        let storefront_environment = fixtures::environment(&connection, &storefront);
+        let request = RequestDetail {
+            collection_id: billing,
+            url: "{{host}}".to_string(),
+            ..RequestDetail::default()
+        };
+
+        let result = load_variable_context(&connection, &request, Some(&storefront_environment));
+
+        assert!(
+            matches!(result, Err(StorageError::InvalidInput(ref message)) if message.contains("different collection")),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn duplicating_an_environment_copies_its_variables_into_the_same_collection() {
+        let mut connection = crate::storage::test_connection();
+        let collection = fixtures::collection(&connection);
+        let original = fixtures::environment(&connection, &collection);
+        let original_target = VariableTarget::Environment {
+            environment_id: original.clone(),
+        };
+        fixtures::variable(&connection, &original_target, "host", "staging");
+
+        copy_environment(&mut connection, &original, "copy", "now").unwrap();
+        fixtures::variable(&connection, &original_target, "host", "changed later");
+
+        let (owner, name): (String, String) = connection
+            .query_row(
+                "SELECT collection_id, name FROM environments WHERE id = 'copy'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((owner, name), (collection, "Environment copy".to_string()));
+        let copy_target = VariableTarget::Environment {
+            environment_id: "copy".to_string(),
+        };
+        assert_eq!(listed(&connection, &copy_target), [pair("host", "staging")]);
     }
 }

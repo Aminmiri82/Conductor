@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { VariableEntry, VariableTarget } from "@/features/types";
 import {
   diffVariables,
+  duplicateKeys,
   requestVariableChanges,
   type RequestVariableRow,
 } from "./variableChanges";
@@ -14,6 +15,12 @@ const entry = (key: string, value: string): VariableEntry => ({
 });
 
 describe("settings table changes", () => {
+  it("flags keys that only differ by surrounding spaces as duplicates", () => {
+    const rows = [entry("host", "1"), entry(" host ", "2"), entry("", "x")];
+
+    expect([...duplicateKeys(rows)]).toEqual(["host"]);
+  });
+
   it("sends only edited rows and the keys that disappeared", () => {
     const loaded = [entry("a", "1"), entry("b", "2"), entry("c", "3")];
     const current = [

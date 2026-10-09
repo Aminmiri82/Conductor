@@ -298,7 +298,7 @@ mod tests {
     fn seed_request(app: &TestApp, folder_auth: Value) -> (String, String, String) {
         app.seed(|connection| {
             let collection = fixtures::collection(connection);
-            let environment = fixtures::environment(connection);
+            let environment = fixtures::environment(connection, &collection);
             let folder = fixtures::folder(connection, &collection, None);
             fixtures::folder_auth(connection, &folder, folder_auth);
             let request = fixtures::request(connection, &collection, Some(&folder));

@@ -27,6 +27,17 @@ export function normalizeVariables(rows: readonly VariableEntry[]) {
     .filter((row) => row.key);
 }
 
+/** Keys (trimmed) used by more than one row, which Rust would reject. */
+export function duplicateKeys(rows: readonly VariableEntry[]) {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const { key } of normalizeVariables(rows)) {
+    if (seen.has(key)) duplicates.add(key);
+    seen.add(key);
+  }
+  return duplicates;
+}
+
 /**
  * The change that turns a loaded table into the edited one. A key in the
  * table more than once is always sent, so Rust rejects the ambiguity rather

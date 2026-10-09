@@ -37,6 +37,15 @@ including the database. To change the schema:
 
 Do not add new migration steps to
 [`migrations.rs`](../../src-tauri/src/storage/migrations.rs) unless Yara asks.
+When she does, `001_initial.sql` stays the full current schema for new
+databases, and the step only upgrades older ones. For example,
+`002_environment_collections.sql` moved environments under collections.
+Steps check the schema's shape (does a column exist?) rather than
+`user_version`, because earlier builds left version numbers up to 3 that no
+longer mean anything. A
+step that rebuilds a table other tables reference runs with foreign keys off
+(see `rebuild_without_foreign_keys`), because dropping that table with them
+on would cascade-delete its dependants.
 
 When a schema change breaks Yara's existing database, say so in the change
 description so she knows to reset it.
