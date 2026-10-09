@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.1.8](https://github.com/Aminmiri82/Conductor/compare/app-v0.1.7...app-v0.1.8) (2026-10-09)
+
+
+### Features
+
+* expand request workspace and collection management ([32db374](https://github.com/Aminmiri82/Conductor/commit/32db3740c6121a56b6acad0a1e578ff09b1b63c1))
+
+
+### Maintenance
+
+* **deps:** upgrade TypeScript to 7 ([d7694d0](https://github.com/Aminmiri82/Conductor/commit/d7694d015b8df3ed3066be0fd77de99d4d150132))
+* **releasing:** add release workflow guidance ([c97065d](https://github.com/Aminmiri82/Conductor/commit/c97065df2a3f2a4de41cfb5a3c6a7556480e29d1))
+
+
+### Testing
+
+* add isolated coverage for database and request sends ([c436213](https://github.com/Aminmiri82/Conductor/commit/c436213ac7a64d515e2c88e1d10826184ca956a6))
+
 ## [0.1.7](https://github.com/Aminmiri82/Conductor/compare/app-v0.1.6...app-v0.1.7) (2026-10-08)
 
 
