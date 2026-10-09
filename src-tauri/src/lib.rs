@@ -3,7 +3,11 @@ mod agent_data_dir;
 #[cfg(test)]
 mod bindings;
 mod commands;
+#[cfg(test)]
+mod fixtures;
 mod storage;
+#[cfg(test)]
+mod test_server;
 
 use commands::collections::{
     create_folder, delete_node, get_collection_tree, import_postman_collection, list_collections,

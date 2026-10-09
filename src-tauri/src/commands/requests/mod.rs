@@ -8,6 +8,8 @@ mod store;
 
 pub use response_files::{save_response_body, save_text_file, BinaryBodies};
 pub use sender::{resolve_request, send_request};
+#[cfg(test)]
+pub(crate) use store::add_request;
 pub use store::{create_request, duplicate_request, get_request, save_request};
 
 /// Stored JSON columns are read leniently: one that no longer parses reads as

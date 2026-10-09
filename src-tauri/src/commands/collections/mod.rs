@@ -2,6 +2,8 @@ mod import;
 mod tree;
 
 pub use import::import_postman_collection;
+#[cfg(test)]
+pub(crate) use tree::{add_folder, read_tree};
 pub use tree::{create_folder, delete_node, get_collection_tree, move_node};
 pub(crate) use tree::{sort_order_after, sort_order_for_position};
 

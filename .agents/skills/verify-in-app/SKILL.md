@@ -62,8 +62,26 @@ Seed collections through IPC when the scenario needs them:
 Commands and arguments are in `src/bindings.ts`. Empty data is sufficient for
 checks such as menu placement or settings that do not depend on collections.
 
-Point requests at a local server you started. The agent updater already uses
-`http://127.0.0.1:18765/latest.json`; use a local fixture for update checks.
+For anything that sends, start the echo server and import its collection:
+
+```bash
+node scripts/echo-server.mjs            # http://127.0.0.1:18766; note the PID it prints
+```
+
+`scripts/echo-collection.json` has one request per send path (query rows,
+folder-inherited bearer auth, JSON, urlencoded and multipart bodies, a test
+script that saves a variable, a 500, a slow reply, a binary download), all
+using `{{baseUrl}}`. The echo reply shows exactly what Conductor sent. The
+server's header comment lists its `_status`, `_delay` and `_bytes` knobs.
+
+When a scenario needs an endpoint the echo cannot fake, write one: pass
+`--routes .agent-app/<name>.mjs` (format in the server's header comment), or
+start another loopback server. Never send to a real environment. If the
+endpoint would help later runs too, propose adding it to the echo server and
+collection rather than keeping it to yourself.
+
+The agent updater already uses `http://127.0.0.1:18765/latest.json`; use a
+local fixture for update checks.
 
 ## 3. Drive And Observe
 

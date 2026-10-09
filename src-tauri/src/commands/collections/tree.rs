@@ -44,7 +44,7 @@ pub fn get_collection_tree(
         .with_read_connection(|connection| read_tree(connection, &collection_id))?)
 }
 
-pub(super) fn read_tree(
+pub(crate) fn read_tree(
     connection: &Connection,
     collection_id: &str,
 ) -> Result<Vec<CollectionNode>, StorageError> {
@@ -123,90 +123,118 @@ pub fn create_folder(
     input: CreateFolderInput,
     state: State<'_, AppState>,
 ) -> Result<String, CommandError> {
+    Ok(state
+        .database
+        .with_connection(|connection| add_folder(connection, &input))?)
+}
+
+pub(crate) fn add_folder(
+    connection: &mut Connection,
+    input: &CreateFolderInput,
+) -> Result<String, StorageError> {
     let now = Utc::now().to_rfc3339();
     let node_id = Uuid::new_v4().to_string();
-
-    Ok(state.database.with_connection(|connection| {
-        let tx = connection.transaction()?;
-        let sort_order = sort_order_for_position(
-            &tx,
-            &input.collection_id,
-            input.parent_id.as_deref(),
-            input.position,
-            None,
-        )?;
-        insert_node(
-            &tx,
-            &NewNode {
-                id: &node_id,
-                collection_id: &input.collection_id,
-                parent_id: input.parent_id.as_deref(),
-                sort_order,
-                kind: NodeKind::Folder,
-                name: &input.name,
-                auth_json: None,
-            },
-            &now,
-        )?;
-        tx.commit()?;
-        Ok(node_id.clone())
-    })?)
+    let tx = connection.transaction()?;
+    let sort_order = sort_order_for_position(
+        &tx,
+        &input.collection_id,
+        input.parent_id.as_deref(),
+        input.position,
+        None,
+    )?;
+    insert_node(
+        &tx,
+        &NewNode {
+            id: &node_id,
+            collection_id: &input.collection_id,
+            parent_id: input.parent_id.as_deref(),
+            sort_order,
+            kind: NodeKind::Folder,
+            name: &input.name,
+            auth_json: None,
+        },
+        &now,
+    )?;
+    tx.commit()?;
+    Ok(node_id)
 }
+
 #[tauri::command(async)]
 #[specta::specta]
 pub fn delete_node(node_id: String, state: State<'_, AppState>) -> Result<(), CommandError> {
-    Ok(state.database.with_connection(|connection| {
-        let tx = connection.transaction()?;
-        let request_ids = collect_request_ids_for_subtree(&tx, &node_id)?;
-        tx.execute(
-            "DELETE FROM collection_nodes WHERE id = ?",
-            params![node_id],
-        )?;
-        for request_id in request_ids {
-            tx.execute("DELETE FROM requests WHERE id = ?", params![request_id])?;
-        }
-        tx.commit()?;
-        Ok(())
-    })?)
+    Ok(state
+        .database
+        .with_connection(|connection| delete_subtree(connection, &node_id))?)
 }
+
+/// Deletes the node, every node under it, and the requests they point at.
+pub(crate) fn delete_subtree(
+    connection: &mut Connection,
+    node_id: &str,
+) -> Result<(), StorageError> {
+    let tx = connection.transaction()?;
+    let request_ids = collect_request_ids_for_subtree(&tx, node_id)?;
+    tx.execute(
+        "DELETE FROM collection_nodes WHERE id = ?",
+        params![node_id],
+    )?;
+    for request_id in request_ids {
+        tx.execute("DELETE FROM requests WHERE id = ?", params![request_id])?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 #[tauri::command(async)]
 #[specta::specta]
 pub fn move_node(input: MoveNodeInput, state: State<'_, AppState>) -> Result<(), CommandError> {
-    Ok(state.database.with_connection(|connection| {
-            let tx = connection.transaction()?;
-            let (collection_id, kind): (String, String) = tx.query_row(
-                "SELECT collection_id, kind FROM collection_nodes WHERE id = ?",
-                params![input.node_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )?;
+    Ok(state
+        .database
+        .with_connection(|connection| reparent_node(connection, &input))?)
+}
 
-            if kind == "folder" {
-                let invalid_target = input.parent_id.as_deref() == Some(input.node_id.as_str())
-                    || input
-                        .parent_id
-                        .as_deref()
-                        .map(|parent_id| is_descendant(&tx, parent_id, &input.node_id))
-                        .transpose()?
-                        .unwrap_or(false);
-                if invalid_target {
-                    return Err(StorageError::InvalidTreeMove);
-                }
-            }
+pub(crate) fn reparent_node(
+    connection: &mut Connection,
+    input: &MoveNodeInput,
+) -> Result<(), StorageError> {
+    let tx = connection.transaction()?;
+    let (collection_id, kind): (String, String) = tx.query_row(
+        "SELECT collection_id, kind FROM collection_nodes WHERE id = ?",
+        params![input.node_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
 
-            let sort_order = sort_order_for_position(
-                &tx,
-                &collection_id,
-                input.parent_id.as_deref(),
-                input.position,
-                Some(input.node_id.as_str()),
-            )?;
-            tx.execute(
-                "UPDATE collection_nodes SET parent_id = ?, sort_order = ?, updated_at = ? WHERE id = ?",
-                params![input.parent_id, sort_order, Utc::now().to_rfc3339(), input.node_id],
-            )?;
-            tx.commit()?;
-            Ok(())
-        })?)
+    if kind == "folder" {
+        let invalid_target = input.parent_id.as_deref() == Some(input.node_id.as_str())
+            || input
+                .parent_id
+                .as_deref()
+                .map(|parent_id| is_descendant(&tx, parent_id, &input.node_id))
+                .transpose()?
+                .unwrap_or(false);
+        if invalid_target {
+            return Err(StorageError::InvalidTreeMove);
+        }
+    }
+
+    let sort_order = sort_order_for_position(
+        &tx,
+        &collection_id,
+        input.parent_id.as_deref(),
+        input.position,
+        Some(input.node_id.as_str()),
+    )?;
+    tx.execute(
+        "UPDATE collection_nodes SET parent_id = ?, sort_order = ?, updated_at = ? WHERE id = ?",
+        params![
+            input.parent_id,
+            sort_order,
+            Utc::now().to_rfc3339(),
+            input.node_id
+        ],
+    )?;
+    tx.commit()?;
+    Ok(())
 }
 pub(crate) fn sort_order_for_position(
     tx: &rusqlite::Transaction<'_>,
@@ -368,4 +396,89 @@ fn is_descendant(
             .flatten();
     }
     Ok(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{fixtures, storage::test_connection};
+
+    fn ids(nodes: &[CollectionNode]) -> Vec<&str> {
+        nodes.iter().map(|node| node.id.as_str()).collect()
+    }
+
+    fn children(nodes: &[CollectionNode]) -> &[CollectionNode] {
+        match &nodes[0].kind {
+            CollectionNodeKind::Folder { children } => children,
+            CollectionNodeKind::Request { .. } => panic!("first node is not a folder"),
+        }
+    }
+
+    #[test]
+    fn deleting_a_folder_deletes_every_request_under_it_and_nothing_else() {
+        let mut connection = test_connection();
+        let collection = fixtures::collection(&connection);
+        let folder = fixtures::folder(&mut connection, &collection, None);
+        let nested = fixtures::folder(&mut connection, &collection, Some(&folder));
+        fixtures::request(&mut connection, &collection, Some(&folder));
+        fixtures::request(&mut connection, &collection, Some(&nested));
+        let outside = fixtures::request(&mut connection, &collection, None);
+
+        delete_subtree(&mut connection, &folder).unwrap();
+
+        let tree = read_tree(&connection, &collection).unwrap();
+        assert_eq!(ids(&tree), [outside.node_id.as_str()]);
+        let requests: i64 = connection
+            .query_row("SELECT COUNT(*) FROM requests", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(requests, 1, "requests under the folder were left behind");
+    }
+
+    #[test]
+    fn a_folder_cannot_be_moved_into_its_own_descendant() {
+        let mut connection = test_connection();
+        let collection = fixtures::collection(&connection);
+        let folder = fixtures::folder(&mut connection, &collection, None);
+        let nested = fixtures::folder(&mut connection, &collection, Some(&folder));
+
+        let moved = reparent_node(
+            &mut connection,
+            &MoveNodeInput {
+                node_id: folder.clone(),
+                parent_id: Some(nested.clone()),
+                position: 0,
+            },
+        );
+
+        assert!(matches!(moved, Err(StorageError::InvalidTreeMove)));
+        let tree = read_tree(&connection, &collection).unwrap();
+        assert_eq!(ids(&tree), [folder.as_str()]);
+        assert_eq!(ids(children(&tree)), [nested.as_str()]);
+    }
+
+    #[test]
+    fn a_moved_node_lands_at_the_position_it_was_dropped() {
+        let mut connection = test_connection();
+        let collection = fixtures::collection(&connection);
+        let folder = fixtures::folder(&mut connection, &collection, None);
+        let first = fixtures::request(&mut connection, &collection, Some(&folder)).node_id;
+        let second = fixtures::request(&mut connection, &collection, Some(&folder)).node_id;
+        let moved = fixtures::request(&mut connection, &collection, None).node_id;
+
+        reparent_node(
+            &mut connection,
+            &MoveNodeInput {
+                node_id: moved.clone(),
+                parent_id: Some(folder),
+                position: 1,
+            },
+        )
+        .unwrap();
+
+        let tree = read_tree(&connection, &collection).unwrap();
+        assert_eq!(
+            ids(children(&tree)),
+            [first.as_str(), moved.as_str(), second.as_str()]
+        );
+    }
 }

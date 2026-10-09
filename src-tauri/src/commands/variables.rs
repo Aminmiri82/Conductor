@@ -508,6 +508,7 @@ fn dynamic_variable(key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fixtures;
     use rusqlite::Connection;
 
     #[test]
@@ -773,77 +774,26 @@ mod tests {
 
     #[test]
     fn variable_context_applies_environment_over_collection_over_global() {
-        let connection = test_connection();
+        let connection = crate::storage::test_connection();
+        let collection = fixtures::collection(&connection);
+        let environment = fixtures::environment(&connection);
         let request = RequestDetail {
-            id: "request".to_string(),
-            collection_id: "collection".to_string(),
-            name: "Request".to_string(),
-            method: "GET".to_string(),
+            collection_id: collection.clone(),
             url: "{{host}}".to_string(),
-            headers: Vec::new(),
-            query: Vec::new(),
-            path_params: Vec::new(),
             ..RequestDetail::default()
         };
+        fixtures::variable(&connection, &VariableTarget::Global, "host", "global");
+        let collection_target = VariableTarget::Collection {
+            collection_id: collection,
+        };
+        fixtures::variable(&connection, &collection_target, "host", "collection");
+        let environment_target = VariableTarget::Environment {
+            environment_id: environment.clone(),
+        };
+        fixtures::variable(&connection, &environment_target, "host", "environment");
 
-        insert_test_variable(&connection, "global", None, None, "host", "global");
-        insert_test_variable(
-            &connection,
-            "collection",
-            Some("collection"),
-            None,
-            "host",
-            "collection",
-        );
-        insert_test_variable(
-            &connection,
-            "environment",
-            None,
-            Some("env"),
-            "host",
-            "environment",
-        );
-
-        let context = load_variable_context(&connection, &request, Some("env")).unwrap();
+        let context = load_variable_context(&connection, &request, Some(&environment)).unwrap();
 
         assert_eq!(context.get("host").as_deref(), Some("environment"));
-    }
-
-    fn test_connection() -> Connection {
-        let connection = Connection::open_in_memory().unwrap();
-        connection
-            .execute_batch(
-                "CREATE TABLE variables (
-                    scope TEXT NOT NULL,
-                    collection_id TEXT,
-                    environment_id TEXT,
-                    key TEXT NOT NULL,
-                    current_value TEXT NOT NULL,
-                    enabled INTEGER NOT NULL DEFAULT 1,
-                    sensitive INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );",
-            )
-            .unwrap();
-        connection
-    }
-
-    fn insert_test_variable(
-        connection: &Connection,
-        scope: &str,
-        collection_id: Option<&str>,
-        environment_id: Option<&str>,
-        key: &str,
-        value: &str,
-    ) {
-        connection
-            .execute(
-                "INSERT INTO variables
-                 (scope, collection_id, environment_id, key, current_value, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, '', '')",
-                params![scope, collection_id, environment_id, key, value],
-            )
-            .unwrap();
     }
 }

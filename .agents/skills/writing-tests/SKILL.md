@@ -21,20 +21,30 @@ existing tests at that level.
   `commands/variables.rs`. If the logic is tangled with
   `State<AppState>` or HTTP, extract a pure function and test that.
 - **Depends on the database** (moves, deletes, duplicates, variable scoping):
-  real SQLite in a temp directory via `Database::open(dir)`. None exists yet;
-  the first one should move the logic out of the `#[tauri::command]` into a
-  function taking `&Database` and add a small temp-dir helper.
+  `storage::test_connection()`, an in-memory database with the real schema,
+  plus the row builders in `src-tauri/src/fixtures.rs`, as in
+  `commands/collections/tree.rs`. Commands are thin wrappers over a function
+  taking a connection (`reparent_node`, `copy_request`); test that function.
+  If a command still does its work inside the `#[tauri::command]`, split it
+  the same way. Never hand-write tables a test needs.
+- **Sends** (what goes on the wire, what a response changes): seed a
+  `fixtures::TestApp`, start a `test_server::TestServer`, and call
+  `sender::send`, as in `commands/requests/sender.rs`. Assert on what the
+  server received or what was stored, not on intermediate values.
 - **Pure frontend logic**: a colocated `*.test.ts` run by Vitest, as in
   `src/features/requests/urlParams.test.ts`. No jsdom; extract the logic.
 - **Only visible in the running app**: not a test. Use the
-  [verify-in-app skill](../verify-in-app/SKILL.md).
+  [verify-in-app skill](../verify-in-app/SKILL.md). If what you checked there
+  can be stated as "this send puts X on the wire" or "this change stores Y",
+  also add it as a send or database test so it outlives your run.
 
 ## Do Not
 
 - Assert that a function was called, or test private helpers through their
   internals.
 - Mock our own code or the database. Only true external boundaries may be
-  faked, such as the HTTP target of a send.
+  faked, such as the HTTP target of a send. Lint rejects `vi.mock` of our
+  modules and of `@tauri-apps/api` (`tools/oxlint/conductor.mjs`).
 - Touch the network. Tests that send start a local server inside the test.
 - Write snapshot tests, component render tests, or tests of framework
   behavior (serde renames, Zustand storing values).

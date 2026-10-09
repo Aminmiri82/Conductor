@@ -45,6 +45,13 @@ pub async fn send_request(
     input: SendRequestInput,
     state: State<'_, AppState>,
 ) -> Result<SendRequestResult, CommandError> {
+    send(&state, input).await
+}
+
+pub(crate) async fn send(
+    state: &AppState,
+    input: SendRequestInput,
+) -> Result<SendRequestResult, CommandError> {
     let (variables, inherited_auth) = state.database.with_read_connection(|connection| {
         load_send_context(connection, &input.request, input.environment_id.as_deref())
     })?;
@@ -244,6 +251,9 @@ fn url_without_query(url: &str) -> Result<String, CommandError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fixtures::{self, TestApp};
+    use crate::test_server::TestServer;
+    use serde_json::json;
 
     #[test]
     fn repeated_header_rows_are_all_sent() {
@@ -281,5 +291,112 @@ mod tests {
         ];
         let positions = keys.map(|key| body.find(&format!("\"{key}\"")).expect("key present"));
         assert!(positions.is_sorted(), "keys out of server order:\n{body}");
+    }
+
+    /// What every send test needs: a collection, an environment, and a saved
+    /// request inside a folder with the given auth.
+    fn seed_request(app: &TestApp, folder_auth: Value) -> (String, String, String) {
+        app.seed(|connection| {
+            let collection = fixtures::collection(connection);
+            let environment = fixtures::environment(connection);
+            let folder = fixtures::folder(connection, &collection, None);
+            fixtures::folder_auth(connection, &folder, folder_auth);
+            let request = fixtures::request(connection, &collection, Some(&folder));
+            (collection, environment, request.request_id)
+        })
+    }
+
+    fn send_now(app: &TestApp, request: Value, environment_id: &str) -> SendRequestResult {
+        let input = SendRequestInput {
+            request: serde_json::from_value(request).unwrap(),
+            environment_id: Some(environment_id.to_string()),
+        };
+        tauri::async_runtime::block_on(send(&app.state, input)).unwrap()
+    }
+
+    #[test]
+    fn a_send_puts_variables_inherited_auth_query_rows_and_body_on_the_wire() {
+        let server = TestServer::replying(201, "application/json", r#"{"id":7}"#);
+        let app = TestApp::new();
+        let (collection, environment, request_id) =
+            seed_request(&app, json!({ "authType": "bearer", "token": "{{token}}" }));
+        app.seed(|connection| {
+            let target = VariableTarget::Environment {
+                environment_id: environment.clone(),
+            };
+            fixtures::variable(connection, &target, "baseUrl", &server.url);
+            fixtures::variable(connection, &target, "token", "secret-token");
+        });
+
+        let result = send_now(
+            &app,
+            json!({
+                "id": request_id,
+                "collectionId": collection,
+                "name": "Create item",
+                "method": "POST",
+                "url": "{{baseUrl}}/items",
+                "headers": [],
+                "query": [
+                    { "key": "page", "value": "2" },
+                    { "key": "draft", "value": "true", "enabled": false }
+                ],
+                "pathParams": [],
+                "body": { "mode": "raw", "raw": "{\"owner\":\"{{token}}\"}", "rawLanguage": "json" }
+            }),
+            &environment,
+        );
+
+        assert_eq!(result.status_code, 201);
+        let received = server.only_request();
+        assert_eq!(received.method, "POST");
+        assert_eq!(received.target, "/items?page=2");
+        assert_eq!(
+            received.header("authorization"),
+            Some("Bearer secret-token")
+        );
+        assert_eq!(received.header("content-type"), Some("application/json"));
+        assert_eq!(&received.body[..], br#"{"owner":"secret-token"}"#);
+    }
+
+    #[test]
+    fn a_test_script_saves_a_response_value_for_the_next_request() {
+        let server = TestServer::replying(200, "application/json", r#"{"access_token":"fresh"}"#);
+        let app = TestApp::new();
+        let (collection, environment, request_id) =
+            seed_request(&app, json!({ "authType": "noauth" }));
+
+        let result = send_now(
+            &app,
+            json!({
+                "id": request_id,
+                "collectionId": collection,
+                "name": "Log in",
+                "method": "POST",
+                "url": format!("{}/login", server.url),
+                "headers": [],
+                "query": [],
+                "pathParams": [],
+                "testScript": { "exec": [
+                    "var jsonData = pm.response.json();",
+                    "pm.collectionVariables.set(\"token\", jsonData.access_token);"
+                ] }
+            }),
+            &environment,
+        );
+
+        assert_eq!(result.updated_variables.len(), 1);
+        let next_request = RequestDetail {
+            collection_id: collection,
+            ..RequestDetail::default()
+        };
+        let variables = app
+            .state
+            .database
+            .with_read_connection(|connection| {
+                load_variable_context(connection, &next_request, Some(&environment))
+            })
+            .unwrap();
+        assert_eq!(variables.get("token").as_deref(), Some("fresh"));
     }
 }

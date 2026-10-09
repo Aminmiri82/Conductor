@@ -45,6 +45,14 @@ tauri-plugin-mcp-bridge = { version = "=0.13.0", optional = true }
 tauri-plugin-updater = "=2.12.0"
 tauri-plugin-process = "=2.3.1"
 
+# The local server tests send to. reqwest already compiles these crates; the
+# server feature adds only `httpdate`, and none of it reaches the shipped binary.
+[dev-dependencies]
+http-body-util = "0.1"
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+tokio = { version = "1.52.2", features = ["net"] }
+
 # Roughly halves the shipped binary (19 MB to 11 MB) at the cost of slower
 # release compiles. Panics still unwind so a failing command doesn't take the
 # whole app down.

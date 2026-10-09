@@ -1,0 +1,108 @@
+{
+  "info": {
+    "name": "Echo (agent fixture)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://127.0.0.1:18766" },
+    { "key": "token", "value": "agent-token" }
+  ],
+  "item": [
+    {
+      "name": "GET with query",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/items?page=2&draft=true",
+          "host": ["{{baseUrl}}"],
+          "path": ["items"],
+          "query": [
+            { "key": "page", "value": "2" },
+            { "key": "draft", "value": "true", "disabled": true }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Bearer from folder",
+      "auth": {
+        "type": "bearer",
+        "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+      },
+      "item": [
+        {
+          "name": "POST JSON",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/items",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"widget\",\n  \"owner\": \"{{token}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "POST urlencoded",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/form",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                { "key": "name", "value": "widget" },
+                { "key": "count", "value": "3" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "POST multipart",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/upload",
+            "body": {
+              "mode": "formdata",
+              "formdata": [{ "key": "note", "value": "hello", "type": "text" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Script saves a variable",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "var jsonData = pm.response.json();",
+              "pm.collectionVariables.set(\"token\", jsonData.json.next);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/login",
+        "body": {
+          "mode": "raw",
+          "raw": "{ \"next\": \"rotated-token\" }",
+          "options": { "raw": { "language": "json" } }
+        }
+      }
+    },
+    {
+      "name": "Server error",
+      "request": { "method": "GET", "url": "{{baseUrl}}/fail?_status=500" }
+    },
+    {
+      "name": "Slow (3s)",
+      "request": { "method": "GET", "url": "{{baseUrl}}/slow?_delay=3000" }
+    },
+    {
+      "name": "Binary download",
+      "request": { "method": "GET", "url": "{{baseUrl}}/file?_bytes=4096" }
+    }
+  ]
+}

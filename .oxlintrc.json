@@ -1,6 +1,7 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["typescript", "react"],
+  "jsPlugins": ["./tools/oxlint/conductor.mjs"],
   "categories": {
     "correctness": "off"
   },
@@ -98,7 +99,8 @@
     "typescript/triple-slash-reference": "error",
     "no-useless-assignment": "error",
     "react/rules-of-hooks": "error",
-    "react/exhaustive-deps": "error"
+    "react/exhaustive-deps": "error",
+    "conductor/no-internal-mocking": "error"
   },
   "overrides": [
     {
