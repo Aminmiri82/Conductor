@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Save } from "lucide-react";
 import {
   CellInput,
@@ -25,12 +25,8 @@ import {
   type RemovedVariable,
   type RequestVariableRow,
 } from "@/features/variables/variableChanges";
-import type {
-  KeyValue,
-  RequestDetail,
-  VariableEntry,
-  VariableScope,
-} from "@/features/types";
+import type { KeyValue, VariableEntry, VariableScope } from "@/features/types";
+import { useDraftValue } from "@/features/workspace/draftStore";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import {
   activeEnvironmentIdFor,
@@ -77,34 +73,15 @@ async function loadScopedVariables(
   };
 }
 
-export function VariableEditor({ request }: { request: RequestDetail }) {
-  const { name, url, headers, query, pathParams, auth, body } = request;
-  const { preRequestScript, testScript } = request;
-  const variableNames = useMemo(
-    () =>
-      extractRequestVariableNames({
-        name,
-        url,
-        headers,
-        query,
-        pathParams,
-        auth,
-        body,
-        preRequestScript,
-        testScript,
-      }),
-    [
-      name,
-      url,
-      headers,
-      query,
-      pathParams,
-      auth,
-      body,
-      preRequestScript,
-      testScript,
-    ],
-  );
+// Memoized so typing in the URL re-renders this table only when the set of
+// referenced names actually changes.
+export const VariableEditor = memo(function VariableEditor({
+  collectionId,
+  variableNames,
+}: {
+  collectionId: string;
+  variableNames: string[];
+}) {
   const [stored, setStored] = useState<ScopedVariables>({
     source: "",
     global: [],
@@ -122,13 +99,13 @@ export function VariableEditor({ request }: { request: RequestDetail }) {
   const [savedAt, setSavedAt] = useState<number>();
   const { saving, save: saveVariables } = useSaveVariables();
   const activeEnvironmentId = useWorkspaceUiStore((state) =>
-    activeEnvironmentIdFor(state.workspaceUi, request.collectionId),
+    activeEnvironmentIdFor(state.workspaceUi, collectionId),
   );
   const environments = useWorkspaceStore((state) => state.environments);
   const activeEnvironmentName = environments.find(
     (environment) => environment.id === activeEnvironmentId,
   )?.name;
-  const source = sourceKey(request.collectionId, activeEnvironmentId);
+  const source = sourceKey(collectionId, activeEnvironmentId);
   const currentSource = useRef(source);
   currentSource.current = source;
   // Until the current environment's variables load, the rows are the previous
@@ -138,7 +115,7 @@ export function VariableEditor({ request }: { request: RequestDetail }) {
   useEffect(() => {
     let mounted = true;
 
-    loadScopedVariables(request.collectionId, activeEnvironmentId).then(
+    loadScopedVariables(collectionId, activeEnvironmentId).then(
       (loaded) => {
         if (!mounted) return;
         setStored(loaded);
@@ -154,7 +131,7 @@ export function VariableEditor({ request }: { request: RequestDetail }) {
     return () => {
       mounted = false;
     };
-  }, [activeEnvironmentId, request.collectionId]);
+  }, [activeEnvironmentId, collectionId]);
 
   const rows = useMemo(
     () =>
@@ -186,7 +163,7 @@ export function VariableEditor({ request }: { request: RequestDetail }) {
       targetFor: (scope) => {
         if (scope === "global") return { scope };
         if (scope === "collection") {
-          return { scope, collectionId: request.collectionId };
+          return { scope, collectionId: collectionId };
         }
         return activeEnvironmentId
           ? { scope, environmentId: activeEnvironmentId }
@@ -196,7 +173,7 @@ export function VariableEditor({ request }: { request: RequestDetail }) {
     if (!(await saveVariables(changes))) return;
     try {
       const reloaded = await loadScopedVariables(
-        request.collectionId,
+        collectionId,
         activeEnvironmentId,
       );
       if (reloaded.source !== currentSource.current) return;
@@ -329,7 +306,7 @@ export function VariableEditor({ request }: { request: RequestDetail }) {
     );
     setSavedAt(undefined);
   }
-}
+});
 
 function buildRows(
   keys: string[],
@@ -375,58 +352,89 @@ function scopedVariableId(scope: VariableScope, key: string) {
   return `${scope}:${key}`;
 }
 
-function extractRequestVariableNames(
-  request: Pick<
-    RequestDetail,
-    | "name"
-    | "url"
-    | "headers"
-    | "query"
-    | "pathParams"
-    | "auth"
-    | "body"
-    | "preRequestScript"
-    | "testScript"
-  >,
-): string[] {
+// The variable names a request references, sorted. Each part is scanned only
+// when it changes, so a URL keystroke never rescans a large raw body, and the
+// same array comes back while the set of names is unchanged.
+export function useRequestVariableNames(requestId: string): string[] {
+  const name = useDraftValue(requestId, (request) => request.name);
+  const url = useDraftValue(requestId, (request) => request.url);
+  const headers = useDraftValue(requestId, (request) => request.headers);
+  const query = useDraftValue(requestId, (request) => request.query);
+  const pathParams = useDraftValue(requestId, (request) => request.pathParams);
+  const auth = useDraftValue(requestId, (request) => request.auth);
+  const body = useDraftValue(requestId, (request) => request.body);
+  const preRequestScript = useDraftValue(
+    requestId,
+    (request) => request.preRequestScript,
+  );
+  const testScript = useDraftValue(requestId, (request) => request.testScript);
+
+  const lineNames = useMemo(
+    () =>
+      collectNames((collect) => {
+        collect(name);
+        collect(url);
+        collectKeyValues(headers ?? [], collect);
+        collectKeyValues(query ?? [], collect);
+        collectKeyValues(pathParams ?? [], collect);
+        collect(auth?.token);
+        collect(auth?.username);
+        collect(auth?.password);
+        collect(auth?.key);
+        collect(auth?.value);
+      }),
+    [name, url, headers, query, pathParams, auth],
+  );
+  const bodyNames = useMemo(
+    () =>
+      collectNames((collect) => {
+        if (!body) return;
+        collect(body.raw);
+        collectKeyValues(body.formData ?? [], collect);
+        for (const field of body.formData ?? []) {
+          collect(field.filePath);
+          collect(field.contentType);
+        }
+        collectKeyValues(body.urlencoded ?? [], collect);
+        collect(body.graphql?.query);
+        collect(body.graphql?.variables);
+        collect(body.file?.path);
+        collect(body.file?.contentType);
+      }),
+    [body],
+  );
+  const scriptNames = useMemo(
+    () =>
+      collectNames((collect) => {
+        collect(JSON.stringify(preRequestScript ?? null));
+        collect(JSON.stringify(testScript ?? null));
+      }),
+    [preRequestScript, testScript],
+  );
+
+  // Joined into one string so an unchanged set keeps the same array.
+  const joined = useMemo(
+    () =>
+      [...new Set([...lineNames, ...bodyNames, ...scriptNames])]
+        .sort((a, b) => a.localeCompare(b))
+        .join("\0"),
+    [lineNames, bodyNames, scriptNames],
+  );
+  return useMemo(() => (joined ? joined.split("\0") : []), [joined]);
+}
+
+function collectNames(
+  scan: (collect: (value?: string | null) => void) => void,
+): Set<string> {
   const names = new Set<string>();
-  const collect = (value?: string | null) => {
+  scan((value) => {
     if (!value) return;
     // `{{}}` has no name to edit; Rust lists it as unresolved.
     for (const name of variableNames(value)) {
       if (name) names.add(name);
     }
-  };
-
-  collect(request.name);
-  collect(request.url);
-  collectKeyValues(request.headers, collect);
-  collectKeyValues(request.query, collect);
-  collectKeyValues(request.pathParams, collect);
-  collect(request.auth?.token);
-  collect(request.auth?.username);
-  collect(request.auth?.password);
-  collect(request.auth?.key);
-  collect(request.auth?.value);
-
-  if (request.body) {
-    collect(request.body.raw);
-    collectKeyValues(request.body.formData ?? [], collect);
-    for (const field of request.body.formData ?? []) {
-      collect(field.filePath);
-      collect(field.contentType);
-    }
-    collectKeyValues(request.body.urlencoded ?? [], collect);
-    collect(request.body.graphql?.query);
-    collect(request.body.graphql?.variables);
-    collect(request.body.file?.path);
-    collect(request.body.file?.contentType);
-  }
-
-  collect(JSON.stringify(request.preRequestScript ?? null));
-  collect(JSON.stringify(request.testScript ?? null));
-
-  return [...names].sort((a, b) => a.localeCompare(b));
+  });
+  return names;
 }
 
 function collectKeyValues(

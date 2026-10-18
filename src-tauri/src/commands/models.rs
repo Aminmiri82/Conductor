@@ -12,6 +12,16 @@ pub struct CollectionSummary {
     pub name: String,
 }
 
+/// Everything the sidebar shows after an import, so it needs no follow-up
+/// calls: the new collection, the updated collection list, and its tree.
+#[derive(Debug, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportedCollection {
+    pub collection_id: String,
+    pub collections: Vec<CollectionSummary>,
+    pub tree: Vec<CollectionNode>,
+}
+
 #[derive(Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvironmentSummary {

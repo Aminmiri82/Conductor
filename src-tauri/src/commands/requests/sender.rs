@@ -5,7 +5,6 @@ use reqwest::{
     header::{HeaderMap, HeaderName, HeaderValue},
     Method, Url,
 };
-use serde_json::Value;
 use tauri::State;
 use uuid::Uuid;
 
@@ -20,7 +19,7 @@ use crate::commands::{
 use crate::{storage::StorageError, AppState};
 
 use super::postman_scripts::ScriptVariableScope;
-use super::{auth, body, postman_scripts, resolver, response_files};
+use super::{auth, body, postman_scripts, pretty_json, resolver, response_files};
 
 #[tauri::command(async)]
 #[specta::specta]
@@ -117,18 +116,25 @@ pub(crate) async fn send(
     let raw_body = response.bytes().await?;
     let body_bytes = raw_body.len();
     let history_id = Uuid::new_v4().to_string();
-    let (body, body_format, body_json) =
+    let (body, body_format, script_writes) =
         if response_files::is_binary_body(&raw_body, content_type.as_deref()) {
-            let body_format = ResponseBodyFormat::Binary;
             state
                 .binary_bodies
                 .insert(&input.request.id, &history_id, raw_body);
-            (String::new(), body_format, None)
+            let script_writes = postman_scripts::collect_postman_script_variables(
+                input.request.test_script.as_ref(),
+                None,
+            );
+            (String::new(), ResponseBodyFormat::Binary, script_writes)
         } else {
-            let body_text = String::from_utf8_lossy(&raw_body);
-            let body_json = serde_json::from_str::<Value>(&body_text).ok();
-            let (body, body_format) = format_response_body(&body_text, body_json.as_ref());
-            (body, body_format, body_json)
+            let body_text = response_text(raw_body);
+            // Scripts read the raw text, before it is replaced by the pretty copy.
+            let script_writes = postman_scripts::collect_postman_script_variables(
+                input.request.test_script.as_ref(),
+                Some(&body_text),
+            );
+            let (body, body_format) = format_response_body(body_text);
+            (body, body_format, script_writes)
         };
     let download_file_name = response_files::download_file_name(
         content_disposition,
@@ -136,40 +142,21 @@ pub(crate) async fn send(
         body_format,
     );
     let now = Utc::now().to_rfc3339();
-    let script_writes = postman_scripts::collect_postman_script_variables(
-        input.request.test_script.as_ref(),
-        body_json.as_ref(),
-    );
     let mut updated_variables = Vec::new();
     let mut variable_warnings = Vec::new();
 
-    state.database.with_connection(|connection| {
-        for variable in &script_writes {
-            match variable.scope {
-                ScriptVariableScope::Collection => {
-                    let target = VariableTarget::Collection {
-                        collection_id: input.request.collection_id.clone(),
-                    };
-                    save_script_variable(
-                        connection,
-                        &target,
-                        &variable.key,
-                        &variable.value,
-                        &now,
-                    )?;
-                    updated_variables.push(KeyValue {
-                        key: variable.key.clone(),
-                        value: variable.value.clone(),
-                        enabled: true,
-                    });
-                }
-                ScriptVariableScope::Environment => {
-                    if let Some(environment_id) = input.environment_id.as_deref() {
-                        let target = VariableTarget::Environment {
-                            environment_id: environment_id.to_string(),
+    // Most sends have no script writes; they must not wait on the write lock.
+    if !script_writes.is_empty() {
+        state.database.with_connection(|connection| {
+            let tx = connection.transaction()?;
+            for variable in &script_writes {
+                match variable.scope {
+                    ScriptVariableScope::Collection => {
+                        let target = VariableTarget::Collection {
+                            collection_id: input.request.collection_id.clone(),
                         };
                         save_script_variable(
-                            connection,
+                            &tx,
                             &target,
                             &variable.key,
                             &variable.value,
@@ -180,18 +167,38 @@ pub(crate) async fn send(
                             value: variable.value.clone(),
                             enabled: true,
                         });
-                    } else {
-                        variable_warnings.push(format!(
-                            "Skipped environment variable '{}' because no environment is active",
-                            variable.key
-                        ));
+                    }
+                    ScriptVariableScope::Environment => {
+                        if let Some(environment_id) = input.environment_id.as_deref() {
+                            let target = VariableTarget::Environment {
+                                environment_id: environment_id.to_string(),
+                            };
+                            save_script_variable(
+                                &tx,
+                                &target,
+                                &variable.key,
+                                &variable.value,
+                                &now,
+                            )?;
+                            updated_variables.push(KeyValue {
+                                key: variable.key.clone(),
+                                value: variable.value.clone(),
+                                enabled: true,
+                            });
+                        } else {
+                            variable_warnings.push(format!(
+                                "Skipped environment variable '{}' because no environment is active",
+                                variable.key
+                            ));
+                        }
                     }
                 }
             }
-        }
 
-        Ok(())
-    })?;
+            tx.commit()?;
+            Ok(())
+        })?;
+    }
 
     Ok(SendRequestResult {
         history_id,
@@ -219,15 +226,17 @@ fn load_send_context(
         auth::inherited_auth_for_request(connection, request)?,
     ))
 }
-fn format_response_body(
-    body_text: &str,
-    body_json: Option<&Value>,
-) -> (String, ResponseBodyFormat) {
-    if let Some(json) = body_json {
-        let pretty = serde_json::to_string_pretty(json).unwrap_or_else(|_| body_text.to_string());
-        return (pretty, ResponseBodyFormat::Json);
+/// Takes the bytes without copying them when they are valid UTF-8, which is
+/// almost every text response.
+fn response_text(raw_body: bytes::Bytes) -> String {
+    String::from_utf8(raw_body.into())
+        .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned())
+}
+fn format_response_body(body_text: String) -> (String, ResponseBodyFormat) {
+    match pretty_json::pretty_print(&body_text) {
+        Some(pretty) => (pretty, ResponseBodyFormat::Json),
+        None => (body_text, ResponseBodyFormat::Text),
     }
-    (body_text.to_string(), ResponseBodyFormat::Text)
 }
 /// Repeated names are all sent (two `Cookie` rows send two headers).
 fn build_headers(rows: &[KeyValue]) -> Result<HeaderMap, CommandError> {
@@ -253,7 +262,7 @@ mod tests {
     use super::*;
     use crate::fixtures::{self, TestApp};
     use crate::test_server::TestServer;
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     #[test]
     fn repeated_header_rows_are_all_sent() {
@@ -276,9 +285,8 @@ mod tests {
     #[test]
     fn pretty_json_body_keeps_the_key_order_the_server_sent() {
         let raw = r#"{"schemaVersion":1,"generatedAt":"now","products":[{"productId":"a","manufacturer":"ST","breakPrice1":2.9}]}"#;
-        let json = serde_json::from_str::<Value>(raw).ok();
 
-        let (body, format) = format_response_body(raw, json.as_ref());
+        let (body, format) = format_response_body(raw.to_string());
 
         assert_eq!(format, ResponseBodyFormat::Json);
         let keys = [
@@ -357,6 +365,33 @@ mod tests {
         );
         assert_eq!(received.header("content-type"), Some("application/json"));
         assert_eq!(&received.body[..], br#"{"owner":"secret-token"}"#);
+    }
+
+    #[test]
+    fn a_response_that_is_not_json_comes_back_exactly_as_sent() {
+        let raw = "{\"almost\": json,\n  but not}";
+        let server = TestServer::replying(200, "application/json", raw);
+        let app = TestApp::new();
+        let (collection, environment, request_id) =
+            seed_request(&app, json!({ "authType": "noauth" }));
+
+        let result = send_now(
+            &app,
+            json!({
+                "id": request_id,
+                "collectionId": collection,
+                "name": "Broken JSON",
+                "method": "GET",
+                "url": server.url,
+                "headers": [],
+                "query": [],
+                "pathParams": []
+            }),
+            &environment,
+        );
+
+        assert_eq!(result.body_format, ResponseBodyFormat::Text);
+        assert_eq!(result.body, raw);
     }
 
     #[test]

@@ -55,3 +55,15 @@ export function getDraft(
 ): RequestDetail | undefined {
   return requestId ? useDraftStore.getState().drafts.get(requestId) : undefined;
 }
+
+// Subscribes to one field of a draft, so a component re-renders only when
+// that field changes.
+export function useDraftValue<T>(
+  requestId: string,
+  select: (request: RequestDetail) => T,
+): T | undefined {
+  return useDraftStore((state) => {
+    const draft = state.drafts.get(requestId);
+    return draft && select(draft);
+  });
+}

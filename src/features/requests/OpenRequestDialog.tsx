@@ -1,5 +1,5 @@
 import { FileJson } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   Command,
   CommandDialog,
@@ -9,15 +9,15 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import type { CollectionNode } from "@/features/types";
+import {
+  flattenRequests,
+  searchRequests,
+} from "@/features/requests/requestSearch";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 
-type RequestOption = {
-  id: string;
-  name: string;
-  method: string;
-  path: string;
-};
+// Rendering every request of a large collection on each keystroke is what made
+// this dialog slow; nobody scrolls past the first screenful of results.
+const RESULT_LIMIT = 50;
 
 export function OpenRequestDialog({
   open,
@@ -29,25 +29,38 @@ export function OpenRequestDialog({
   const tree = useWorkspaceStore((state) => state.tree);
   const selectRequest = useWorkspaceStore((state) => state.selectRequest);
   const requests = useMemo(() => flattenRequests(tree), [tree]);
+  const [search, setSearch] = useState("");
+  const { results, total } = useMemo(
+    () => searchRequests(requests, search, RESULT_LIMIT),
+    [requests, search],
+  );
 
   return (
     <CommandDialog
       open={open}
-      onOpenChange={onOpenChange}
+      onOpenChange={(open) => {
+        if (!open) setSearch("");
+        onOpenChange(open);
+      }}
       title="Open Request"
       description="Search requests in the active collection."
       className="border border-[var(--app-line)] bg-[var(--app-panel)] text-[var(--app-text)] sm:max-w-2xl"
     >
-      <Command className="bg-[var(--app-panel)]">
-        <CommandInput placeholder="Open request..." />
+      <Command className="bg-[var(--app-panel)]" shouldFilter={false}>
+        <CommandInput
+          placeholder="Open request..."
+          value={search}
+          onValueChange={setSearch}
+        />
         <CommandList className="max-h-[420px]">
           <CommandEmpty>No requests found.</CommandEmpty>
           <CommandGroup heading="Requests">
-            {requests.map((request) => (
+            {results.map((request) => (
               <CommandItem
                 key={request.id}
-                value={`${request.method} ${request.path} ${request.name}`}
+                value={request.id}
                 onSelect={() => {
+                  setSearch("");
                   onOpenChange(false);
                   void selectRequest(request.id);
                 }}
@@ -66,23 +79,13 @@ export function OpenRequestDialog({
               </CommandItem>
             ))}
           </CommandGroup>
+          {total > results.length ? (
+            <div className="px-3 py-2 text-xs text-[var(--app-dim)]">
+              Showing {results.length} of {total}. Keep typing to narrow.
+            </div>
+          ) : null}
         </CommandList>
       </Command>
     </CommandDialog>
   );
-}
-
-function flattenRequests(
-  nodes: CollectionNode[],
-  parentPath = "",
-): RequestOption[] {
-  return nodes.flatMap((node) => {
-    const path = parentPath ? `${parentPath} / ${node.name}` : node.name;
-    if (node.kind === "request") {
-      return [
-        { id: node.requestId, name: node.name, method: node.method, path },
-      ];
-    }
-    return flattenRequests(node.children, path);
-  });
 }

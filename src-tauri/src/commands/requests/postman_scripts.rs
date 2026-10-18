@@ -1,3 +1,5 @@
+use std::cell::OnceCell;
+
 use serde_json::Value;
 
 #[derive(Debug)]
@@ -13,9 +15,11 @@ pub(super) struct ScriptVariableWrite {
     pub value: String,
 }
 
+/// `body_text` is parsed as JSON only if a line reads `jsonData`, so a send
+/// without such a script never builds a tree of the response.
 pub(super) fn collect_postman_script_variables(
     script: Option<&Value>,
-    body_json: Option<&Value>,
+    body_text: Option<&str>,
 ) -> Vec<ScriptVariableWrite> {
     let Some(lines) = script
         .and_then(|script| script.get("exec"))
@@ -24,15 +28,21 @@ pub(super) fn collect_postman_script_variables(
         return Vec::new();
     };
 
+    let body_json = OnceCell::new();
+    let body_json = || {
+        body_json
+            .get_or_init(|| body_text.and_then(|text| serde_json::from_str::<Value>(text).ok()))
+            .as_ref()
+    };
     lines
         .iter()
         .filter_map(Value::as_str)
-        .filter_map(|line| parse_postman_variable_set(line, body_json))
+        .filter_map(|line| parse_postman_variable_set(line, &body_json))
         .collect()
 }
-fn parse_postman_variable_set(
+fn parse_postman_variable_set<'a>(
     line: &str,
-    body_json: Option<&Value>,
+    body_json: &impl Fn() -> Option<&'a Value>,
 ) -> Option<ScriptVariableWrite> {
     let (marker, scope) = if line.contains("postman.setEnvironmentVariable") {
         (
@@ -61,13 +71,16 @@ fn parse_postman_variable_set(
 
     Some(ScriptVariableWrite { scope, key, value })
 }
-fn resolve_script_expression(expression: &str, body_json: Option<&Value>) -> Option<String> {
+fn resolve_script_expression<'a>(
+    expression: &str,
+    body_json: &impl Fn() -> Option<&'a Value>,
+) -> Option<String> {
     if let Some(value) = unquote(expression) {
         return Some(value);
     }
 
     let path = expression.strip_prefix("jsonData.")?;
-    let mut current = body_json?;
+    let mut current = body_json()?;
     for segment in path.split('.') {
         current = current.get(segment.trim())?;
     }

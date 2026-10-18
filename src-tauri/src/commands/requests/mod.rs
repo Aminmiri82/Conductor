@@ -1,6 +1,7 @@
 mod auth;
 mod body;
 mod postman_scripts;
+mod pretty_json;
 mod resolver;
 mod response_files;
 mod sender;

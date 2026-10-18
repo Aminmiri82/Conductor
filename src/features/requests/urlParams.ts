@@ -34,12 +34,14 @@ function parseQueryPart(part: string): { key: string; value: string } | null {
 
 // The URL holds exactly the enabled rows, so its entries become the enabled
 // rows and disabled rows carry over. Repeated keys stay separate rows.
+// Returns `previous` itself when nothing changed, so a keystroke in the URL
+// path does not re-render the params table.
 export function deriveQueryRows(url: string, previous: KeyValue[]): KeyValue[] {
-  return [
+  return sameRowsOr(previous, [
     ...parseQueryEntries(url).map((entry) => ({ ...entry, enabled: true })),
     ...previous.filter((row) => row.key && row.enabled === false),
     ...previous.filter((row) => !row.key),
-  ];
+  ]);
 }
 
 // For a request loaded from storage, whose URL may still list disabled rows
@@ -83,14 +85,29 @@ export function derivePathParamRows(
   previous: KeyValue[],
 ): KeyValue[] {
   const keys = parsePathParamKeys(url);
-  return keys.map((key) => {
-    const prior = previous.find((row) => row.key === key);
-    return {
-      key,
-      value: prior?.value ?? "",
-      enabled: prior?.enabled ?? true,
-    };
-  });
+  return sameRowsOr(
+    previous,
+    keys.map((key) => {
+      const prior = previous.find((row) => row.key === key);
+      return {
+        key,
+        value: prior?.value ?? "",
+        enabled: prior?.enabled ?? true,
+      };
+    }),
+  );
+}
+
+function sameRowsOr(previous: KeyValue[], next: KeyValue[]): KeyValue[] {
+  const same =
+    previous.length === next.length &&
+    previous.every(
+      (row, index) =>
+        row.key === next[index].key &&
+        row.value === next[index].value &&
+        row.enabled === next[index].enabled,
+    );
+  return same ? previous : next;
 }
 
 export function buildQueryString(rows: KeyValue[]): string {

@@ -58,7 +58,7 @@ This is a second guard; it does not make targeting the installed app safe.
 
 Seed collections through IPC when the scenario needs them:
 `ipc_execute_command` with `import_postman_collection` and
-`{"postmanJson": "<collection JSON string>"}`, then reload the webview.
+`{"path": "<absolute path to the collection JSON>"}`, then reload the webview.
 Commands and arguments are in `src/bindings.ts`. Empty data is sufficient for
 checks such as menu placement or settings that do not depend on collections.
 
