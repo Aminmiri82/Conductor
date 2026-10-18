@@ -4,62 +4,33 @@ A lightweight, fast, performance-focused alternative to Postman.
 
 Conductor is a desktop API client built with Tauri, React, and Rust. It aims to stay snappy on large collections, keep memory usage low, and feel native, without the bloat of an Electron-based app.
 
-
-
-> Conductor is in **active development**. Expect rough edges and breaking changes
-
 ## Current Features
 
-- Native desktop app 
 - Workspaces, collections, and requests
 - Environment and variable management
 - Keyboard-first UX with hotkeys
 - UI Themes
 - Postman collection import
 
+## Install
+
+To install Conductor, download the `.dmg` from the
+[latest release](https://github.com/Aminmiri82/Conductor/releases/latest)
+(Apple Silicon only), open it, and drag Conductor into Applications. The app
+is not notarized, so macOS blocks the first launch. Try to open it once, then
+choose **Open Anyway** in System Settings → Privacy & Security. After that,
+updates install from the app menu or Settings → About.
+
 ## Getting started (development)
 
-Prerequisites:
-
-- [Node.js](https://nodejs.org/) 22.12+ on the 22.x line, 24.x, or 26+ (required by the development tools)
-- [pnpm](https://pnpm.io/)
-- [Rust toolchain](https://www.rust-lang.org/tools/install) and the [Tauri prerequisites](https://tauri.app/start/prerequisites/) for your platform
-
-Then:
+You need Node.js 22.12+, [pnpm](https://pnpm.io/), and the [Rust toolchain and Tauri prerequisites](https://tauri.app/start/prerequisites/).
 
 ```bash
 pnpm install
 pnpm tauri dev
 ```
 
-Development runs keep their data in `~/Library/Application Support/com.yaramiri.conductor.dev/` on macOS. The installed release app uses `~/Library/Application Support/com.yaramiri.conductor/`.
-
-## Checks
-
-```bash
-pnpm check
-```
-
-Runs Oxlint, Prettier's formatting check, the TypeScript typecheck, frontend tests, `cargo fmt --check`, `cargo clippy`, and the Rust tests. See [docs/](./docs/index.md) for architecture notes.
-
-Use `pnpm lint` to check JavaScript and TypeScript throughout the repo, or `pnpm lint:fix` to apply safe fixes. Oxlint checks the migrated JavaScript/TypeScript rules and React hook ordering and dependencies, with warnings and unused suppression comments treated as failures. Rules, environments, and generated-file exclusions live in `.oxlintrc.json`.
-
-Use `pnpm format` to format frontend source and root JavaScript, TypeScript, JSON, and HTML files, or `pnpm format:check` to check them without writing. Prettier handles formatting separately from Oxlint. Generated bindings and build output are excluded; Rust formatting stays with `pnpm format:rust`.
-
-## Releases and updates
-
-To install Conductor, download the `.dmg` from the
-[latest release](https://github.com/Aminmiri82/Conductor/releases/latest)
-(Apple Silicon only), open it, and drag Conductor into Applications. The app
-is not notarized, so macOS blocks the first launch. Try to open it once, then
-choose **Open Anyway** in System Settings → Privacy & Security. Alternatively,
-run `xattr -dr com.apple.quarantine /Applications/Conductor.app`. After that,
-updates install from the app menu or Settings → About.
-
-Release PRs automatically maintain versions and release notes. Merging one
-builds a draft on GitHub Actions; publishing it makes the DMG downloadable and
-the update available in the app. See [Mac Releases](./docs/02-workflows/01-mac-releases.md)
-for the release steps and Apple notarization requirements.
+See [docs/](./docs/index.md) for architecture notes.
 
 ## Contributing
 

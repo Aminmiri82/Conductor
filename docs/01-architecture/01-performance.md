@@ -41,25 +41,19 @@ Every command call serializes JSON across the webview boundary.
 
 ### SQLite
 
-- The database runs in WAL mode with one write connection and a small pool of
-  read-only connections ([`connection.rs`](../../src-tauri/src/storage/connection.rs)).
-  Reads go through `with_read_connection` so they never queue behind writes;
-  writes go through `with_connection`.
-- Every query path needs an index; check `schema/001_initial.sql` when adding
-  a query.
+- Reads use the pooled read-only connections so they never queue behind the
+  single writer ([`connection.rs`](../../src-tauri/src/storage/connection.rs)).
+- Every query path needs an index.
 - Multi-row writes happen in one transaction.
 
 ### Frontend State And Rendering
 
-- State is split across small Zustand stores (`workspaceStore`, `draftStore`,
-  `responseStore`, `workspaceUiStore`) so a keystroke only re-renders what it
-  touches. Components select narrow slices, never a whole store.
-- Large values are not copied through state. `responseStore` keeps responses
-  in a `Map` and bumps a revision counter instead of cloning bodies.
-- Heavy editors load lazily. The CodeMirror-based `ResponseViewer` is a
-  `React.lazy` chunk; keep new heavy UI behind the same pattern.
-- Persistence is debounced. Workspace UI state flushes after a short delay,
-  not on every change.
+- State is split across small Zustand stores so a keystroke only re-renders
+  what it touches. Components select narrow slices, never a whole store.
+- Large values such as response bodies are not copied through state.
+- Heavy UI, such as code editors, loads lazily so it stays out of the main
+  chunk.
+- Persistence is debounced, never written on every change.
 
 ### Dependencies
 
@@ -72,9 +66,8 @@ dependency needs a reason that is stated in the change description.
 Dev builds are unoptimized, so measure release builds for memory and startup:
 
 - Build with `pnpm tauri build --bundles app --config '{"bundle":{"macOS":{"signingIdentity":"-"}}}'`,
-  launch the resulting app with a throwaway `CONDUCTOR_DATA_DIR`, and read its
-  memory in Activity Monitor (or `ps -o rss= -p <pid>`) at idle and after
-  opening a large collection.
+  launch it with a throwaway `CONDUCTOR_DATA_DIR`, and read its memory
+  (`ps -o rss= -p <pid>`) at idle and after opening a large collection.
 - `pnpm build` prints frontend chunk sizes; a jump in the main chunk means
   something is no longer lazy.
 - For Rust hot paths (import, resolution, sending), time the operation before

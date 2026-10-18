@@ -5,7 +5,7 @@ It's a Tauri 2 desktop app with a Rust + SQLite backend and a React + Zustand fr
 
 **Performance is the product.** Speed and low memory outrank features. A change that makes startup, typing, or memory worse is wrong until Yara signs off, even if every test passes. Read [Performance](docs/01-architecture/01-performance.md) before touching hot paths, IPC, stores, or dependencies.
 
-**Pre-production.** No backwards compatibility, including the database schema: edit `001_initial.sql` in place instead of writing migrations. See [Storage](docs/01-architecture/03-storage.md).
+**Users have real data.** A schema change must upgrade existing databases without losing rows. See [Storage](docs/01-architecture/03-storage.md).
 
 **Git.** Do not commit, push, or stage without Yara's explicit approval.
 
@@ -17,16 +17,12 @@ Use [the docs index](docs/index.md) to find the page for your task; unrelated pa
 
 ## Where Code Lives
 
-- `src-tauri/src/commands/`: Tauri commands. `models.rs` holds the IPC types and `error.rs` the one `CommandError` they return (a message string over IPC).
-  - `collections/`: the collection list, the tree (read, create folder, move, delete), and Postman collection import (`import.rs`).
-  - `requests/`: request storage (`store.rs`), sending (`sender.rs`, `auth.rs`, `body.rs`), variable substitution (`resolver.rs`), scripts, and response files.
-  - `variables.rs`: environments, variables, and the `VariableContext` a send resolves against. `workspace_state.rs`: frontend UI state.
-  - `postman.rs`: lenient `serde` helpers for reading Postman files.
-- `src-tauri/src/storage/`: the SQLite `Database` (one writer, pooled readers), the shared row inserts (`rows.rs`), and `schema/001_initial.sql`.
+- `src-tauri/src/commands/`: Tauri commands, grouped by area (collections and Postman import, requests and sending, variables, workspace UI state). `models.rs` holds the IPC types and `error.rs` the one `CommandError` they return.
+- `src-tauri/src/storage/`: the SQLite `Database`, the schema, and its upgrades.
 - `src-tauri/src/lib.rs`: app setup, the menu, and `specta_builder()`, which registers every command.
 - `src/bindings.ts`: **generated** from Rust by `pnpm bindings`. Never edit it by hand.
 - `src/lib/tauri.ts`: `api`, thin conveniences over the generated `commands`. Never call `invoke` with a string.
-- `src/features/`: UI by area (`collections`, `requests`, `variables`, `settings`, `shell`) and the Zustand stores in `workspace/`.
+- `src/features/`: UI by area, and the Zustand stores in `workspace/`.
 - `src/components/ui/`: shadcn primitives. `src/app/`: app root and hotkeys.
 
 ## Verifying

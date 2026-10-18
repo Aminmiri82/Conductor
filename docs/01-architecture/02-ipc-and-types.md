@@ -41,6 +41,9 @@ serializes as its message string. They reject with that string
 
 ## Known Quirks
 
+Some of these come from the pinned specta release, not from specta in
+general. Recheck them after an upgrade.
+
 - **`#[serde(default)]` fields are optional in TypeScript**, even on types
   Rust always fills in (for example `RequestBody.formData`). Specta uses one
   shape for both directions, and the default only applies when reading. The
@@ -53,13 +56,13 @@ serializes as its message string. They reject with that string
   `stored_enum!` (`commands/stored_enum.rs`) keeps the exported enum plain and
   reads any unknown stored string as a named fallback, so an old or imported
   `body_json` / `auth_json` still loads.
-- **`serde_json::Value` cannot be exported.** This specta release overflows
-  the stack on it. Wrap it (see `FrontendJson` in `commands/workspace_state.rs`) or
+- **`serde_json::Value` cannot be exported.** The pinned specta release
+  overflows the stack on it. Wrap it (see `FrontendJson` in `commands/workspace_state.rs`) or
   override the field with `#[specta(type = specta_typescript::Unknown)]`.
 - **Integers are exported as `number`.** `i64`/`u128`/`usize` would be
   `bigint`; we opt out because positions, byte counts, and durations never
   approach 2^53. Do not send IDs or values that can exceed that as integers.
-- **tauri-specta is a release candidate**, pinned to an exact version in
-  `Cargo.toml`. When upgrading, bump `specta`, `specta-typescript`, and
+- **specta is pinned to an exact version** in `Cargo.toml` because it is
+  pre-release. When upgrading, bump `specta`, `specta-typescript`, and
   `tauri-specta` together, run `pnpm bindings`, and review the diff of
   `src/bindings.ts`.
