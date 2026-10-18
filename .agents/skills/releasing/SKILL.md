@@ -15,8 +15,8 @@ on any failure; never force-push, skip checks, or edit a published release.
    Its checks run as a dispatched `checks.yml` run on the bot's branch, not
    as PR checks; wait for that run, then squash-merge the release PR.
 4. That merge runs the `Release PR` workflow, which builds a **draft**. Wait
-   for it to succeed and confirm the draft has the `.app.tar.gz`, its `.sig`,
-   and a `latest.json` with the new version.
+   for it to succeed and confirm the draft has the `.dmg`, the `.app.tar.gz`,
+   its `.sig`, and a `latest.json` with the new version.
 5. Publish: `gh release edit app-vX.Y.Z --draft=false --latest`. The updater
    reads `releases/latest/download/latest.json`, so nothing is OTA-able until
    this step. Confirm that URL now reports the new version.

@@ -46,8 +46,11 @@ with generated notes. The same workflow calls the
 [Mac release workflow](../../.github/workflows/mac-release.yml), avoiding the
 restriction on chaining bot-created tag events. It verifies that the tag
 belongs to `main`, checks out that exact commit, runs the checks, and builds
-for Apple Silicon. It attaches the signed updater archive, its signature,
-and `latest.json`, preserving the generated notes.
+for Apple Silicon. It attaches the `.dmg` for new installs, plus the signed
+updater archive, its signature, and `latest.json` for updates, preserving the
+generated notes. The DMG is ad-hoc signed and not notarized, so macOS blocks
+its first launch until the user chooses Open Anyway in System Settings →
+Privacy & Security. Updates installed by the app do not hit that prompt.
 
 Wait for **Mac release** to succeed, inspect the draft and its assets, then
 publish it as the latest release. Do not publish an empty or failed draft.

@@ -48,9 +48,17 @@ Use `pnpm format` to format frontend source and root JavaScript, TypeScript, JSO
 
 ## Releases and updates
 
+To install Conductor, download the `.dmg` from the
+[latest release](https://github.com/Aminmiri82/Conductor/releases/latest)
+(Apple Silicon only), open it, and drag Conductor into Applications. The app
+is not notarized, so macOS blocks the first launch. Try to open it once, then
+choose **Open Anyway** in System Settings → Privacy & Security. Alternatively,
+run `xattr -dr com.apple.quarantine /Applications/Conductor.app`. After that,
+updates install from the app menu or Settings → About.
+
 Release PRs automatically maintain versions and release notes. Merging one
-builds a draft on GitHub Actions; publishing it makes the update available
-from the app menu or Settings → About. See [Mac Releases](./docs/02-workflows/01-mac-releases.md)
+builds a draft on GitHub Actions; publishing it makes the DMG downloadable and
+the update available in the app. See [Mac Releases](./docs/02-workflows/01-mac-releases.md)
 for the release steps and Apple notarization requirements.
 
 ## Contributing
