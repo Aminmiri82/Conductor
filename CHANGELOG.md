@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.9](https://github.com/Aminmiri82/Conductor/compare/app-v0.1.8...app-v0.1.9) (2026-10-18)
+
+
+### Features
+
+* **mac:** attach a DMG installer to each release ([#15](https://github.com/Aminmiri82/Conductor/issues/15)) ([abc6cfe](https://github.com/Aminmiri82/Conductor/commit/abc6cfe302bcb139972ad38bc63885fd958ac370))
+* **variables:** scope environments to collections ([eca8e5a](https://github.com/Aminmiri82/Conductor/commit/eca8e5a57eb7bef4bd7cbf611a65acefcc6f33bf))
+
 ## [0.1.8](https://github.com/Aminmiri82/Conductor/compare/app-v0.1.7...app-v0.1.8) (2026-10-09)
 
 
