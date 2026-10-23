@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.10](https://github.com/Aminmiri82/Conductor/compare/app-v0.1.9...app-v0.1.10) (2026-10-23)
+
+
+### Features
+
+* ship Windows and Linux installers with each release ([#17](https://github.com/Aminmiri82/Conductor/issues/17)) ([702f1b9](https://github.com/Aminmiri82/Conductor/commit/702f1b993570999840ec1c83b3ae663d09c584a8))
+
+
+### Performance
+
+* speed up response rendering and enforce size budgets in CI ([#16](https://github.com/Aminmiri82/Conductor/issues/16)) ([39e9c87](https://github.com/Aminmiri82/Conductor/commit/39e9c87a2a73212418d92f8e92a3a2ffb2170d9f))
+
 ## [0.1.9](https://github.com/Aminmiri82/Conductor/compare/app-v0.1.8...app-v0.1.9) (2026-10-18)
 
 
