@@ -122,6 +122,9 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         .error_handling(tauri_specta::ErrorHandlingMode::Throw)
         // Positions, byte counts, and durations never approach 2^53.
         .dangerously_cast_bigints_to_number()
+        // One type per Rust type, as before rc.26, instead of separate
+        // `_Serialize` and `_Deserialize` shapes for every `#[serde(default)]`.
+        .disable_serde_phases()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

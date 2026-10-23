@@ -37,9 +37,9 @@ rusqlite = { version = "0.40.2", features = ["bundled"] }
 # reqwest and one rustls (with ring, not aws-lc-rs) are compiled.
 reqwest = { version = "0.13", default-features = false, features = ["form", "json", "multipart", "query", "rustls-no-provider", "stream"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
-specta = { version = "=2.0.0-rc.25", features = ["derive", "serde_json"] }
-tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
-specta-typescript = "=0.0.12"
+specta = { version = "=2.0.0-rc.26", features = ["derive", "serde_json"] }
+tauri-specta = { version = "=2.0.0-rc.26", features = ["derive", "typescript"] }
+specta-typescript = "=0.0.13"
 # Keep in lockstep with @hypothesi/tauri-mcp-server in .mcp.json.
 tauri-plugin-mcp-bridge = { version = "=0.13.2", optional = true }
 tauri-plugin-updater = "=2.14.0"
