@@ -32,12 +32,14 @@ the draft's `latest.json`; run in parallel, one would overwrite another. A
 draft missing a platform's `latest.json` entry would leave those users without
 updates, so a failed job means the draft is not ready to publish.
 
-On Linux, only the AppImage updates in place. A `.deb` install is updated by
-installing the next release's `.deb`. The Linux build runs on the oldest
-supported Ubuntu (22.04), because a binary built against a newer glibc does not
-start on older systems. Inspect the draft and its assets before publishing it as the
-latest release; never publish an empty or failed draft. The app only sees an
-update once the release is published, and it checks only when the user asks.
+Inspect the draft and its assets before publishing it as the latest release;
+never publish an empty or failed draft. The app only sees an update once the
+release is published, and it checks only when the user asks.
+
+On Linux, both the AppImage and the `.deb` update in place; the updater
+installs a `.deb` with `dpkg` through `pkexec`, so it asks for the user's
+password. The Linux build runs on the oldest supported Ubuntu (22.04), because
+a binary built against a newer glibc does not start on older systems.
 
 If a build fails, run the **Release** workflow manually with the existing
 draft tag (for example `app-v0.1.3`). It rebuilds that tag's commit and refuses
@@ -45,12 +47,13 @@ to overwrite a published release.
 
 ## Signing
 
-Tauri's update-signing key is separate from Apple and Windows code signing. Its private key
-lives outside the repository and in the `TAURI_SIGNING_PRIVATE_KEY` Actions
-secret; never print or commit it. Apple signing is ad hoc, not notarized, so
-macOS blocks a downloaded DMG's first launch, while in-app updates are not
-blocked. The Windows installer is not code signed either, so SmartScreen
-warns on its first run. See [Tauri's updater documentation](https://v2.tauri.app/plugin/updater/#signing-updates).
+Tauri's update-signing key is separate from Apple and Windows code signing.
+Its private key lives outside the repository and in the
+`TAURI_SIGNING_PRIVATE_KEY` Actions secret; never print or commit it. Apple
+signing is ad hoc, not notarized, so macOS blocks a downloaded DMG's first
+launch, while in-app updates are not blocked. The Windows installer is not code
+signed either, so SmartScreen warns on its first run. See
+[Tauri's updater documentation](https://v2.tauri.app/plugin/updater/#signing-updates).
 
 Updates keep the release data directory, and the app upgrades its database on
 launch (see [Storage](../01-architecture/03-storage.md)).

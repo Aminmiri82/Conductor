@@ -29,10 +29,10 @@ SmartScreen may warn on first run; choose **More info** → **Run anyway**. Afte
 that, updates install from Settings → About (Ctrl+,).
 
 **Linux** (x64, Ubuntu 22.04 or newer): on Ubuntu or Debian, download the
-`.deb` and install it with `sudo apt install ./Conductor_*.deb`; update by
-installing the next release's `.deb`. On other distros, download the
-`.AppImage`, make it executable (`chmod +x`), and run it; it updates from
-Settings → About (Ctrl+,).
+`.deb` and install it with `sudo apt install ./Conductor_*.deb`. On other
+distros, download the `.AppImage`, make it executable (`chmod +x`), and run it.
+Either way, updates install from Settings → About (Ctrl+,); a `.deb` update
+asks for your password.
 
 ## Getting started (development)
 

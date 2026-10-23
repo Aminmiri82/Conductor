@@ -183,8 +183,8 @@ jobs:
           workspaces: src-tauri
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
-      # The AppImage runs on most distros and is the updater artifact; the .deb
-      # is the native Ubuntu install, updated by reinstalling.
+      # The .deb is the native Ubuntu install and the AppImage runs on most
+      # distros; the updater installs either.
       - name: Build release draft
         uses: tauri-apps/tauri-action@v1
         env:
