@@ -10,7 +10,7 @@
       "force-tag-creation": true,
       "bump-minor-pre-major": true,
       "bump-patch-for-minor-pre-major": true,
-      "pull-request-header": "This bot maintains the version bump and release notes automatically. Merge this PR to build a draft release; publish it only after the Release workflow's Mac and Windows builds succeed.",
+      "pull-request-header": "This bot maintains the version bump and release notes automatically. Merge this PR to build a draft release; publish it only after the Release workflow's Mac, Windows, and Linux builds succeed.",
       "changelog-sections": [
         { "type": "feat", "section": "Features" },
         { "type": "fix", "section": "Fixes" },

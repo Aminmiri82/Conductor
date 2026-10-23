@@ -22,5 +22,5 @@ Testing rules live in the
 
 ## Workflows
 
-- [Releases](./02-workflows/01-releases.md): Bot-maintained release PRs, Mac
-  and Windows draft builds, and signed updates.
+- [Releases](./02-workflows/01-releases.md): Bot-maintained release PRs, Mac,
+  Windows, and Linux draft builds, and signed updates.

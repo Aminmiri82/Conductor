@@ -1,6 +1,6 @@
 ---
 title: Releases
-description: Bot-maintained release PRs, Mac and Windows draft builds, and signed updates.
+description: Bot-maintained release PRs, Mac, Windows, and Linux draft builds, and signed updates.
 ---
 
 # Releases
@@ -26,10 +26,16 @@ bump the minor version.
 
 A merged release PR runs the [Release workflow](../../.github/workflows/release.yml),
 which builds a **draft** release with the Mac DMG, the Windows `-setup.exe`,
-and the signed updater files for both. The Windows job runs after the Mac job
-because each one merges its platform into the draft's `latest.json`; run in
-parallel, one would overwrite the other. A draft missing either platform's
-`latest.json` entry would leave those users without updates. Inspect the draft and its assets before publishing it as the
+the Linux `.deb` and `.AppImage`, and the signed updater files. The jobs run
+one after another (Mac, Windows, Linux) because each merges its platform into
+the draft's `latest.json`; run in parallel, one would overwrite another. A
+draft missing a platform's `latest.json` entry would leave those users without
+updates, so a failed job means the draft is not ready to publish.
+
+On Linux, only the AppImage updates in place. A `.deb` install is updated by
+installing the next release's `.deb`. The Linux build runs on the oldest
+supported Ubuntu (22.04), because a binary built against a newer glibc does not
+start on older systems. Inspect the draft and its assets before publishing it as the
 latest release; never publish an empty or failed draft. The app only sees an
 update once the release is published, and it checks only when the user asks.
 

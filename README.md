@@ -28,6 +28,12 @@ only, so it needs no administrator rights. The installer is not code signed, so
 SmartScreen may warn on first run; choose **More info** → **Run anyway**. After
 that, updates install from Settings → About (Ctrl+,).
 
+**Linux** (x64, Ubuntu 22.04 or newer): on Ubuntu or Debian, download the
+`.deb` and install it with `sudo apt install ./Conductor_*.deb`; update by
+installing the next release's `.deb`. On other distros, download the
+`.AppImage`, make it executable (`chmod +x`), and run it; it updates from
+Settings → About (Ctrl+,).
+
 ## Getting started (development)
 
 You need Node.js 24.22.1+, [pnpm](https://pnpm.io/), and the [Rust toolchain and Tauri prerequisites](https://tauri.app/start/prerequisites/).
