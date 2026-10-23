@@ -656,7 +656,7 @@ export function VariablesPane({
       ) : (
         <div className="text-xs text-[var(--app-dim)]">
           {!collections.length
-            ? "Import a collection to add collection and environment variables."
+            ? "Create or import a collection to add collection and environment variables."
             : `${selectedCollectionName ?? "This collection"} has no environments yet. Create one with New, or Import one.`}
         </div>
       )}

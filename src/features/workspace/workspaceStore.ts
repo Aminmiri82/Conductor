@@ -28,6 +28,7 @@ import type {
   CollectionNode,
   CollectionSummary,
   EnvironmentSummary,
+  ImportedCollection,
   RequestDetail,
 } from "@/features/types";
 
@@ -56,6 +57,7 @@ type WorkspaceState = {
   loadCollections: () => Promise<void>;
   loadEnvironments: () => Promise<void>;
   importCollection: (path: string) => Promise<void>;
+  createCollection: (name: string) => Promise<void>;
   importEnvironment: (
     collectionId: string,
     contents: string,
@@ -144,19 +146,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   importCollection: async (path) => {
     set({ error: undefined });
     try {
-      const { collectionId, collections, tree } =
-        await api.importPostmanCollection(path);
-      set({
-        collections,
-        tree,
-        activeCollectionId: collectionId,
-        activeRequestId: undefined,
-        tabs: [],
-      });
-      useWorkspaceUiStore.getState().setActiveCollectionId(collectionId);
-      useDraftStore.getState().clearAll();
-      useResponseStore.getState().clearAll();
-      await useWorkspaceUiStore.getState().flushWorkspaceUiState();
+      await showNewCollection(await api.importPostmanCollection(path));
+    } catch (error) {
+      set({ error: String(error) });
+    }
+  },
+
+  createCollection: async (name) => {
+    set({ error: undefined });
+    try {
+      await showNewCollection(await api.createCollection(name));
     } catch (error) {
       set({ error: String(error) });
     }
@@ -500,6 +499,25 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   setError: (error) => set({ error: String(error) }),
   clearError: () => set({ error: undefined }),
 }));
+
+// After an import or a create, the new collection becomes the active one.
+async function showNewCollection({
+  collectionId,
+  collections,
+  tree,
+}: ImportedCollection) {
+  useWorkspaceStore.setState({
+    collections,
+    tree,
+    activeCollectionId: collectionId,
+    activeRequestId: undefined,
+    tabs: [],
+  });
+  useWorkspaceUiStore.getState().setActiveCollectionId(collectionId);
+  useDraftStore.getState().clearAll();
+  useResponseStore.getState().clearAll();
+  await useWorkspaceUiStore.getState().flushWorkspaceUiState();
+}
 
 function normalizeRequestParams(request: RequestDetail): RequestDetail {
   const { url, query } = loadQuery(request.url, request.query);

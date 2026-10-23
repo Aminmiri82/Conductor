@@ -12,6 +12,7 @@ export type {
   CollectionNode,
   CollectionSummary,
   EnvironmentSummary,
+  ImportedCollection,
   KeyValue,
   RequestBody,
   RequestDetail,
