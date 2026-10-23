@@ -177,7 +177,7 @@ pub fn rename_folder(
         .with_connection(|connection| update_folder_name(connection, &node_id, name))?)
 }
 
-pub(crate) fn update_folder_name(
+fn update_folder_name(
     connection: &Connection,
     node_id: &str,
     name: &str,

@@ -51,11 +51,13 @@
   --app-put: #fcd34d;
   --app-delete: #fca5a5;
   --app-patch: #86efac;
+  --app-query: #5eead4;
   --app-get-bg: rgb(125 211 252 / 0.1);
   --app-post-bg: rgb(196 181 253 / 0.12);
   --app-put-bg: rgb(252 211 77 / 0.1);
   --app-delete-bg: rgb(252 165 165 / 0.1);
   --app-patch-bg: rgb(134 239 172 / 0.1);
+  --app-query-bg: rgb(94 234 212 / 0.1);
   --app-radius: 6px;
   --app-radius-lg: 8px;
   --app-mono:
@@ -99,11 +101,13 @@
   --app-put: #ffaa5c;
   --app-delete: #ff6b6b;
   --app-patch: #7eedb8;
+  --app-query: #5ee6d6;
   --app-get-bg: rgb(127 207 255 / 0.08);
   --app-post-bg: rgb(255 209 102 / 0.1);
   --app-put-bg: rgb(255 170 92 / 0.1);
   --app-delete-bg: rgb(255 107 107 / 0.1);
   --app-patch-bg: rgb(126 237 184 / 0.1);
+  --app-query-bg: rgb(94 230 214 / 0.1);
   --app-radius: 3px;
   --app-radius-lg: 4px;
   --app-tab-transform: uppercase;
@@ -124,11 +128,13 @@
   --app-put: #000;
   --app-delete: #fff;
   --app-patch: #000;
+  --app-query: #000;
   --app-get-bg: #cdf5e0;
   --app-post-bg: #fff09b;
   --app-put-bg: #ffd29b;
   --app-delete-bg: #000;
   --app-patch-bg: #cfe5ff;
+  --app-query-bg: #b8f0ec;
   --app-radius: 0;
   --app-radius-lg: 0;
   --app-tab-transform: uppercase;
@@ -169,6 +175,12 @@
   --method-fg: var(--app-patch);
   --method-bg: var(--app-patch-bg);
   --method-border: color-mix(in oklab, var(--app-patch) 34%, transparent);
+}
+
+[data-method="QUERY" i] {
+  --method-fg: var(--app-query);
+  --method-bg: var(--app-query-bg);
+  --method-border: color-mix(in oklab, var(--app-query) 34%, transparent);
 }
 
 .method-badge {

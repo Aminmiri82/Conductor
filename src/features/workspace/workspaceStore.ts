@@ -55,11 +55,14 @@ type WorkspaceState = {
   saving: boolean;
   sendingRequestIds: ReadonlySet<string>;
   error?: string;
+  // A folder made by ⌘⇧N, for the sidebar to open in rename once it shows.
+  pendingRenameId?: string;
   loadCollections: () => Promise<void>;
   loadEnvironments: () => Promise<void>;
   importCollection: (path: string) => Promise<void>;
   createCollection: (name: string) => Promise<void>;
   deleteCollection: (collectionId: string) => Promise<void>;
+  renameCollection: (collectionId: string, name: string) => Promise<void>;
   importEnvironment: (
     collectionId: string,
     contents: string,
@@ -83,6 +86,8 @@ type WorkspaceState = {
   ) => Promise<string | undefined>;
   renameFolder: (nodeId: string, name: string) => Promise<void>;
   createRequestNextToActive: () => Promise<void>;
+  createFolderNextToActive: () => Promise<void>;
+  clearPendingRename: () => void;
   duplicateRequest: (requestId: string) => Promise<void>;
   deleteNode: (node: CollectionNode) => Promise<void>;
   moveNode: (
@@ -186,6 +191,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       });
       useDraftStore.getState().clearAll();
       useResponseStore.getState().clearAll();
+    } catch (error) {
+      set({ error: String(error) });
+    }
+  },
+
+  renameCollection: async (collectionId, name) => {
+    set({ error: undefined });
+    try {
+      set({ collections: await api.renameCollection(collectionId, name) });
     } catch (error) {
       set({ error: String(error) });
     }
@@ -358,6 +372,22 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const { parentId, position } = placementAfterRequest(tree, activeRequestId);
     await get().createRequestIn(parentId, position);
   },
+
+  // Placed like a new request; the sidebar is shown so the rename is visible.
+  createFolderNextToActive: async () => {
+    const { tree, activeRequestId } = get();
+    const { parentId, position } = placementAfterRequest(tree, activeRequestId);
+    const nodeId = await get().createFolderIn(parentId, position);
+    if (nodeId) {
+      set({
+        pendingRenameId: nodeId,
+        sidebarVisible: true,
+        sidebarAutoHidePending: false,
+      });
+    }
+  },
+
+  clearPendingRename: () => set({ pendingRenameId: undefined }),
 
   duplicateRequest: async (requestId) => {
     const collectionId = get().activeCollectionId;

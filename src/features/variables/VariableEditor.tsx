@@ -163,7 +163,7 @@ export const VariableEditor = memo(function VariableEditor({
       targetFor: (scope) => {
         if (scope === "global") return { scope };
         if (scope === "collection") {
-          return { scope, collectionId: collectionId };
+          return { scope, collectionId };
         }
         return activeEnvironmentId
           ? { scope, environmentId: activeEnvironmentId }

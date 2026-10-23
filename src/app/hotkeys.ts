@@ -11,6 +11,7 @@ export function useAppHotkeys() {
       const {
         activeRequestId,
         closeRequestTab,
+        createFolderNextToActive,
         createRequestNextToActive,
         duplicateRequest,
         saveActiveRequest,
@@ -49,6 +50,9 @@ export function useAppHotkeys() {
         );
         if (unclaimed) void createRequestNextToActive();
       }
+      if (action === "new-folder") {
+        void createFolderNextToActive();
+      }
       if (action === "close-request" && activeRequestId) {
         void closeRequestTab(activeRequestId);
       }
@@ -80,7 +84,7 @@ export function useAppHotkeys() {
       }
       if (key === "n") {
         event.preventDefault();
-        performAction("new-request");
+        performAction(event.shiftKey ? "new-folder" : "new-request");
       }
       if (key === "o") {
         event.preventDefault();

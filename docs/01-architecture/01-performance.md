@@ -45,10 +45,9 @@ Every command call serializes JSON across the webview boundary.
 
 - Reads use the pooled read-only connections so they never queue behind the
   single writer ([`connection.rs`](../../src-tauri/src/storage/connection.rs)).
-- Every query path needs an index. `every_query_uses_an_index`
-  ([`query_plans.rs`](../../src-tauri/src/storage/query_plans.rs)) plans every
-  SQL literal in the source, foreign-key cascades included, and fails on a full
-  scan. A scan that is the point of a query is listed there with its reason.
+- Queries on hot paths (opening a collection or request, sending, search)
+  need an index. Check new ones with `EXPLAIN QUERY PLAN`. A scan is fine when
+  the table is small by nature, such as listing every collection.
 - Multi-row writes happen in one transaction.
 
 ### Frontend State And Rendering

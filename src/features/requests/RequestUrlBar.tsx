@@ -26,7 +26,16 @@ import { useWorkspaceUiStore } from "@/features/workspace/workspaceUiStore";
 // key has no value from the last resolve (it was typed since).
 type VariableValues = Partial<ResolvedRequestPreview["variableValues"]>;
 
-const methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
+const methods = [
+  "GET",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+  "QUERY",
+  "HEAD",
+  "OPTIONS",
+];
 
 export function RequestUrlBar({
   request,

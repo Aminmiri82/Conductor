@@ -3,6 +3,7 @@ import {
   lazy,
   Suspense,
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -63,6 +64,10 @@ export function CollectionSidebar() {
   const createRequestIn = useWorkspaceStore((state) => state.createRequestIn);
   const createFolderIn = useWorkspaceStore((state) => state.createFolderIn);
   const renameFolder = useWorkspaceStore((state) => state.renameFolder);
+  const pendingRenameId = useWorkspaceStore((state) => state.pendingRenameId);
+  const clearPendingRename = useWorkspaceStore(
+    (state) => state.clearPendingRename,
+  );
   const duplicateRequest = useWorkspaceStore((state) => state.duplicateRequest);
   const deleteNode = useWorkspaceStore((state) => state.deleteNode);
   const moveNode = useWorkspaceStore((state) => state.moveNode);
@@ -158,6 +163,17 @@ export function CollectionSidebar() {
     },
     [createFolderIn, openFolder, startRename],
   );
+
+  useEffect(() => {
+    if (!pendingRenameId) return;
+    clearPendingRename();
+    const parentId = findNodeById(
+      useWorkspaceStore.getState().tree,
+      pendingRenameId,
+    )?.parentId;
+    if (parentId) openFolder(parentId);
+    startRename(pendingRenameId);
+  }, [pendingRenameId, clearPendingRename, openFolder, startRename]);
 
   const syncVisibleRows = useCallback(() => {
     const element = scrollRef.current;

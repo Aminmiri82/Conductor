@@ -45,6 +45,7 @@ export const commands = {
 	listCollections: () => __TAURI_INVOKE<CollectionSummary[]>("list_collections"),
 	listEnvironments: () => __TAURI_INVOKE<EnvironmentSummary[]>("list_environments"),
 	listVariables: (target: VariableTarget) => __TAURI_INVOKE<VariableEntry[]>("list_variables", { target }),
+	renameCollection: (collectionId: string, name: string) => __TAURI_INVOKE<CollectionSummary[]>("rename_collection", { collectionId, name }),
 	renameEnvironment: (input: RenameEnvironmentInput) => __TAURI_INVOKE<null>("rename_environment", { input }),
 	/**
 	 *  Renames a folder. Requests are renamed by saving the request, since their
@@ -73,7 +74,7 @@ export type ApiKeyLocation = "query" |
  *  What the user picked in the app menu, sent to the webview as the typed
  *  `app-menu-action` event.
  */
-export type AppMenuAction = "open-request" | "new-request" | "duplicate-request" | "save-request" | "send-request" | "close-request" | "toggle-sidebar" | "focus-url" | "settings" | "check-for-updates";
+export type AppMenuAction = "open-request" | "new-request" | "new-folder" | "duplicate-request" | "save-request" | "send-request" | "close-request" | "toggle-sidebar" | "focus-url" | "settings" | "check-for-updates";
 
 export type AuthConfig = {
 	authType: AuthType,

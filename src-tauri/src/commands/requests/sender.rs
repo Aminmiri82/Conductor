@@ -150,49 +150,29 @@ pub(crate) async fn send(
         state.database.with_connection(|connection| {
             let tx = connection.transaction()?;
             for variable in &script_writes {
-                match variable.scope {
-                    ScriptVariableScope::Collection => {
-                        let target = VariableTarget::Collection {
-                            collection_id: input.request.collection_id.clone(),
-                        };
-                        save_script_variable(
-                            &tx,
-                            &target,
-                            &variable.key,
-                            &variable.value,
-                            &now,
-                        )?;
-                        updated_variables.push(KeyValue {
-                            key: variable.key.clone(),
-                            value: variable.value.clone(),
-                            enabled: true,
-                        });
-                    }
-                    ScriptVariableScope::Environment => {
-                        if let Some(environment_id) = input.environment_id.as_deref() {
-                            let target = VariableTarget::Environment {
-                                environment_id: environment_id.to_string(),
-                            };
-                            save_script_variable(
-                                &tx,
-                                &target,
-                                &variable.key,
-                                &variable.value,
-                                &now,
-                            )?;
-                            updated_variables.push(KeyValue {
-                                key: variable.key.clone(),
-                                value: variable.value.clone(),
-                                enabled: true,
-                            });
-                        } else {
+                let target = match variable.scope {
+                    ScriptVariableScope::Collection => VariableTarget::Collection {
+                        collection_id: input.request.collection_id.clone(),
+                    },
+                    ScriptVariableScope::Environment => match input.environment_id.as_deref() {
+                        Some(environment_id) => VariableTarget::Environment {
+                            environment_id: environment_id.to_string(),
+                        },
+                        None => {
                             variable_warnings.push(format!(
                                 "Skipped environment variable '{}' because no environment is active",
                                 variable.key
                             ));
+                            continue;
                         }
-                    }
-                }
+                    },
+                };
+                save_script_variable(&tx, &target, &variable.key, &variable.value, &now)?;
+                updated_variables.push(KeyValue {
+                    key: variable.key.clone(),
+                    value: variable.value.clone(),
+                    enabled: true,
+                });
             }
 
             tx.commit()?;
@@ -365,6 +345,34 @@ mod tests {
         );
         assert_eq!(received.header("content-type"), Some("application/json"));
         assert_eq!(&received.body[..], br#"{"owner":"secret-token"}"#);
+    }
+
+    #[test]
+    fn a_query_request_sends_its_method_and_body() {
+        let server = TestServer::replying(200, "application/json", "[]");
+        let app = TestApp::new();
+        let (collection, environment, request_id) =
+            seed_request(&app, json!({ "authType": "noauth" }));
+
+        send_now(
+            &app,
+            json!({
+                "id": request_id,
+                "collectionId": collection,
+                "name": "Search",
+                "method": "QUERY",
+                "url": format!("{}/items", server.url),
+                "headers": [],
+                "query": [],
+                "pathParams": [],
+                "body": { "mode": "raw", "raw": "{\"name\":\"shoe\"}", "rawLanguage": "json" }
+            }),
+            &environment,
+        );
+
+        let received = server.only_request();
+        assert_eq!(received.method, "QUERY");
+        assert_eq!(&received.body[..], br#"{"name":"shoe"}"#);
     }
 
     #[test]
