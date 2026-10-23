@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.11](https://github.com/Aminmiri82/Conductor/compare/app-v0.1.10...app-v0.1.11) (2026-10-23)
+
+
+### Features
+
+* create collections from scratch without a Postman import ([#20](https://github.com/Aminmiri82/Conductor/issues/20)) ([ac226b3](https://github.com/Aminmiri82/Conductor/commit/ac226b3c9eddc3256b4ee836704f2293742b2b90))
+
 ## [0.1.10](https://github.com/Aminmiri82/Conductor/compare/app-v0.1.9...app-v0.1.10) (2026-10-23)
 
 
