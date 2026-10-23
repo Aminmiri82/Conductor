@@ -64,7 +64,7 @@ import {
   SectionTitle,
 } from "./SettingsParts";
 
-const columns = "grid-cols-[minmax(140px,.8fr)_minmax(180px,1.4fr)_120px]";
+const columns = "grid-cols-[minmax(0,.8fr)_minmax(0,1.4fr)_108px]";
 
 // Row actions stay out of the way until the row is hovered or focused.
 const onRowHover =
@@ -492,6 +492,7 @@ export function VariablesPane({
       >
         {variables.map((variable, index) => {
           const duplicate = duplicates.has(variable.key.trim());
+          const masked = variable.sensitive && !revealed[index];
           return (
             <Row
               key={index}
@@ -516,29 +517,14 @@ export function VariablesPane({
                 className={cn(
                   !variable.enabled && "text-[var(--app-dim)] line-through",
                 )}
-                type={
-                  variable.sensitive && !revealed[index] ? "password" : "text"
-                }
+                type={masked ? "password" : "text"}
                 value={variable.value}
                 placeholder="Value"
                 onChange={(event) =>
                   updateVariable(index, { value: event.target.value }, "typing")
                 }
               />
-              <div className="flex items-center justify-end pr-1">
-                {variable.enabled ? null : (
-                  // Imports can bring disabled rows; this is the only
-                  // way back, so it stays visible.
-                  <RowAction
-                    className="text-[var(--app-accent)] hover:text-[var(--app-accent)]"
-                    onClick={() =>
-                      updateVariable(index, { enabled: true }, "now")
-                    }
-                    title="Disabled. Click to enable"
-                  >
-                    <Power />
-                  </RowAction>
-                )}
+              <div className="flex items-center justify-end gap-0.5 pr-1">
                 {variable.sensitive ? (
                   <RowAction
                     className={onRowHover}
@@ -574,6 +560,25 @@ export function VariablesPane({
                   }
                 >
                   {variable.sensitive ? <Lock /> : <LockOpen />}
+                </RowAction>
+                <RowAction
+                  // A disabled row keeps it in sight: imports can bring
+                  // disabled rows, and this is the way back.
+                  className={
+                    variable.enabled
+                      ? onRowHover
+                      : "text-[var(--app-accent)] hover:text-[var(--app-accent)]"
+                  }
+                  onClick={() =>
+                    updateVariable(index, { enabled: !variable.enabled }, "now")
+                  }
+                  title={
+                    variable.enabled
+                      ? "Disable variable"
+                      : "Disabled. Click to enable"
+                  }
+                >
+                  <Power />
                 </RowAction>
                 <RowAction
                   className={cn(onRowHover, "hover:text-destructive")}
@@ -908,7 +913,7 @@ function RowAction({
       variant="ghost"
       size="icon"
       className={cn(
-        "size-7 text-[var(--app-dim)] focus-visible:opacity-100 [&_svg]:size-3.5",
+        "size-6 shrink-0 text-[var(--app-dim)] focus-visible:opacity-100 [&_svg]:size-3",
         className,
       )}
       onClick={onClick}
