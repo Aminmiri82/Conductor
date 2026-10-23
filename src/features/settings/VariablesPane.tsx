@@ -1,3 +1,4 @@
+import { confirm } from "@tauri-apps/plugin-dialog";
 import {
   type ChangeEvent,
   type ReactNode,
@@ -349,8 +350,9 @@ export function VariablesPane({
 
   async function deleteSelectedEnvironment() {
     if (!selectedEnvironmentId) return;
-    const confirmed = window.confirm(
+    const confirmed = await confirm(
       `Delete environment "${selectedEnvironment?.name ?? "selected environment"}"?`,
+      { kind: "warning" },
     );
     if (!confirmed) return;
 

@@ -1,4 +1,4 @@
-import { type DragEvent, memo, useEffect } from "react";
+import { type DragEvent, memo, useEffect, useRef } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -32,6 +32,11 @@ type TreeRowProps = {
   isDragging: boolean;
   // A descendant of the dragged node: dropping here would nest it in itself.
   isInvalidTarget: boolean;
+  // This folder's name is being edited in place.
+  renaming: boolean;
+  onStartRename: (nodeId: string) => void;
+  // `null` cancels the rename.
+  onFinishRename: (nodeId: string, name: string | null) => void;
   onToggleOpen: (nodeId: string) => void;
   onOpenFolder: (nodeId: string) => void;
   onSelectRequest: (requestId: string) => Promise<void>;
@@ -64,6 +69,9 @@ export const TreeRow = memo(function TreeRow({
   dragActive,
   isDragging,
   isInvalidTarget,
+  renaming,
+  onStartRename,
+  onFinishRename,
   onToggleOpen,
   onOpenFolder,
   onSelectRequest,
@@ -78,6 +86,8 @@ export const TreeRow = memo(function TreeRow({
 }: TreeRowProps) {
   const isFolder = node.kind === "folder";
   const showInto = dropIntent === "into";
+  // Set when the chosen action opens a rename (Rename, or Add folder).
+  const renameOnClose = useRef(false);
 
   useEffect(() => {
     if (!showInto || !isFolder || open) return;
@@ -140,7 +150,7 @@ export const TreeRow = memo(function TreeRow({
             data-sidebar-request-id={
               node.kind === "request" ? node.requestId : undefined
             }
-            draggable
+            draggable={!renaming}
             onDragStart={onDragStart}
             onDragEnd={onEndDrag}
             onDragOver={onDragOver}
@@ -156,6 +166,7 @@ export const TreeRow = memo(function TreeRow({
             )}
             style={{ paddingLeft: indent, borderRadius: "var(--app-radius)" }}
             onClick={() => {
+              if (renaming) return;
               if (isFolder) {
                 onToggleOpen(node.id);
               } else if (node.requestId) {
@@ -189,10 +200,38 @@ export const TreeRow = memo(function TreeRow({
                 {node.method}
               </span>
             ) : null}
-            <span className="min-w-0 flex-1 truncate">{node.name}</span>
+            {renaming ? (
+              <input
+                data-rename-input
+                autoFocus
+                defaultValue={node.name}
+                aria-label="Folder name"
+                className="h-5 min-w-0 flex-1 border border-[var(--app-accent)] bg-[var(--app-panel-2)] px-1 text-xs text-[var(--app-text)] outline-none"
+                style={{ borderRadius: "var(--app-radius)" }}
+                onFocus={(event) => event.currentTarget.select()}
+                onClick={(event) => event.stopPropagation()}
+                onKeyDown={(event) => {
+                  event.stopPropagation();
+                  if (event.key === "Enter") event.currentTarget.blur();
+                  if (event.key === "Escape") onFinishRename(node.id, null);
+                }}
+                onBlur={(event) =>
+                  onFinishRename(node.id, event.currentTarget.value)
+                }
+              />
+            ) : (
+              <span className="min-w-0 flex-1 truncate">{node.name}</span>
+            )}
           </div>
         </ContextMenuTrigger>
-        <ContextMenuContent className="w-44">
+        <ContextMenuContent
+          className="w-44"
+          onCloseAutoFocus={(event) => {
+            if (!renameOnClose.current) return;
+            renameOnClose.current = false;
+            focusRenameInput(event);
+          }}
+        >
           {isFolder ? (
             <>
               <ContextMenuItem
@@ -203,11 +242,20 @@ export const TreeRow = memo(function TreeRow({
                 Add request
               </ContextMenuItem>
               <ContextMenuItem
-                onSelect={() =>
-                  void onCreateFolder(node.id, node.children.length)
-                }
+                onSelect={() => {
+                  renameOnClose.current = true;
+                  void onCreateFolder(node.id, node.children.length);
+                }}
               >
                 Add folder
+              </ContextMenuItem>
+              <ContextMenuItem
+                onSelect={() => {
+                  renameOnClose.current = true;
+                  onStartRename(node.id);
+                }}
+              >
+                Rename folder
               </ContextMenuItem>
               <ContextMenuSeparator />
               <ContextMenuItem
@@ -241,6 +289,15 @@ export const TreeRow = memo(function TreeRow({
     </div>
   );
 });
+
+// A menu that opens a rename must not hand focus back to its trigger on close:
+// that blurs the rename input, which saves it. The input may mount before the
+// menu finishes closing (when the menu's focus trap keeps it from focusing
+// itself) or after (when it autofocuses), so take focus here if it exists.
+export function focusRenameInput(event: Event) {
+  event.preventDefault();
+  document.querySelector<HTMLInputElement>("[data-rename-input]")?.focus();
+}
 
 function DropLine({
   inset,

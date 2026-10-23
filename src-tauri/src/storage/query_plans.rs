@@ -20,6 +20,11 @@ const INTENTIONAL_SCANS: &[(&str, &str)] = &[
         "lists every collection for the sidebar; one row per collection",
     ),
     (
+        "WHERE collection_id = collections.id) FROM collections ORDER BY updated_at DESC",
+        "the settings page lists every collection with its counts; one row per \
+         collection, and each count searches its child table by collection_id",
+    ),
+    (
         "FROM environments ORDER BY name",
         "lists every environment for the picker; one row per environment",
     ),
@@ -41,6 +46,11 @@ const KNOWN_GAPS: &[(&str, &str)] = &[
     (
         "DELETE FROM environments WHERE id = ?",
         "the cascade to variables scans idx_variables_context for the same reason",
+    ),
+    (
+        "DELETE FROM collections WHERE id = ?",
+        "the cascade to variables by collection_id has only the partial \
+         ux_variables_collection_key, so it scans idx_variables_context",
     ),
 ];
 

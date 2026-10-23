@@ -4,6 +4,10 @@ on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, edited]
+  # Runs on main too, so main holds warm Rust caches: PRs can restore caches
+  # saved on main, but not each other's.
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -13,9 +17,33 @@ concurrency:
   group: checks-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# Release PRs only bump versions, so they get `release-pr` instead of the full
+# jobs. The bot's own pull_request run (which waits for approval) skips
+# everything; the dispatched run from release-please.yml is the one to wait on.
 jobs:
+  release-pr:
+    if: github.event_name == 'workflow_dispatch' && startsWith(github.ref_name, 'release-please--')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Only version files changed
+        run: |
+          changed=$(git diff --name-only "$(git merge-base origin/main HEAD)" HEAD)
+          echo "$changed"
+          unexpected=$(echo "$changed" | grep -vxE 'CHANGELOG\.md|package\.json|\.release-please-manifest\.json|src-tauri/tauri\.conf\.json|src-tauri/Cargo\.toml|src-tauri/Cargo\.lock' || true)
+          if [ -n "$unexpected" ]; then
+            echo "::error::A release PR should only bump versions, but it also changes: $unexpected"
+            exit 1
+          fi
+      - run: node scripts/check-release-version.mjs
+
   check:
+    if: ${{ !startsWith(github.head_ref || github.ref_name, 'release-please--') }}
     runs-on: macos-latest
+    timeout-minutes: 25
     steps:
       - name: Check PR title for automatic release notes
         if: github.event_name == 'pull_request'
@@ -33,13 +61,18 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          key: checks
+          # Saving takes about a minute and only main's caches reach other PRs.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: pnpm install --frozen-lockfile
       - run: node scripts/check-release-version.mjs
       - run: pnpm check
       - run: git diff --exit-code -- src-tauri/Cargo.lock src/bindings.ts
 
   windows:
+    if: ${{ !startsWith(github.head_ref || github.ref_name, 'release-please--') }}
     runs-on: windows-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -51,6 +84,8 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          key: checks
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
       # Catches installer breakage on the PR instead of in the release draft. A
@@ -59,13 +94,18 @@ jobs:
         run: pnpm tauri build --debug --bundles nsis
 
   linux:
+    if: ${{ !startsWith(github.head_ref || github.ref_name, 'release-please--') }}
     runs-on: ubuntu-22.04
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+      # Cached because apt mirrors are slow and have hung a run for 20+ minutes.
       - name: Install Tauri's Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libfuse2
+        uses: awalsh128/cache-apt-pkgs-action@v1.6.3
+        timeout-minutes: 10
+        with:
+          packages: libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libfuse2
+          version: 1
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -75,6 +115,8 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          key: checks
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
       - name: Build the packages

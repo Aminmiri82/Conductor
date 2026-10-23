@@ -100,7 +100,8 @@
     "no-useless-assignment": "error",
     "react/rules-of-hooks": "error",
     "react/exhaustive-deps": "error",
-    "conductor/no-internal-mocking": "error"
+    "conductor/no-internal-mocking": "error",
+    "conductor/no-window-dialogs": "error"
   },
   "overrides": [
     {

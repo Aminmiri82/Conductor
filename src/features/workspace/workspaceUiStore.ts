@@ -264,6 +264,7 @@ function isUrlDisplayMode(value: unknown): value is UrlDisplayMode {
 function isSettingsTab(value: unknown): value is SettingsTab {
   return (
     value === "appearance" ||
+    value === "collections" ||
     value === "variables" ||
     value === "shortcuts" ||
     value === "about"

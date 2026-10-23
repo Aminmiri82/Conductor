@@ -21,6 +21,7 @@ jobs:
     # Bundle sizes and lockfiles don't depend on the OS, and Linux runners
     # start faster. Binary and DMG sizes are recorded per release instead.
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:

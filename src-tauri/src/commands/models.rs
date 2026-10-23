@@ -12,6 +12,18 @@ pub struct CollectionSummary {
     pub name: String,
 }
 
+/// A collection with what it holds, for the settings page. Kept apart from
+/// `CollectionSummary` so startup never pays for the counts.
+#[derive(Debug, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectionStats {
+    pub id: String,
+    pub name: String,
+    pub request_count: u32,
+    pub folder_count: u32,
+    pub environment_count: u32,
+}
+
 /// Everything the sidebar shows after an import or a create, so it needs no
 /// follow-up calls: the new collection, the updated collection list, and its tree.
 #[derive(Debug, Serialize, specta::Type)]

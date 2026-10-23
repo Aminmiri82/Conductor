@@ -159,6 +159,36 @@ pub(crate) fn add_folder(
     Ok(node_id)
 }
 
+/// Renames a folder. Requests are renamed by saving the request, since their
+/// name lives on the request row too.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn rename_folder(
+    node_id: String,
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<(), CommandError> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("A folder needs a name.".into());
+    }
+    Ok(state
+        .database
+        .with_connection(|connection| update_folder_name(connection, &node_id, name))?)
+}
+
+pub(crate) fn update_folder_name(
+    connection: &Connection,
+    node_id: &str,
+    name: &str,
+) -> Result<(), StorageError> {
+    connection.execute(
+        "UPDATE collection_nodes SET name = ?, updated_at = ? WHERE id = ? AND kind = 'folder'",
+        params![name, Utc::now().to_rfc3339(), node_id],
+    )?;
+    Ok(())
+}
+
 #[tauri::command(async)]
 #[specta::specta]
 pub fn delete_node(node_id: String, state: State<'_, AppState>) -> Result<(), CommandError> {
@@ -432,6 +462,25 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM requests", [], |row| row.get(0))
             .unwrap();
         assert_eq!(requests, 1, "requests under the folder were left behind");
+    }
+
+    #[test]
+    fn renaming_a_folder_keeps_its_place_and_contents() {
+        let mut connection = test_connection();
+        let collection = fixtures::collection(&connection);
+        let folder = fixtures::folder(&mut connection, &collection, None);
+        fixtures::request(&mut connection, &collection, Some(&folder));
+        let request = fixtures::request(&mut connection, &collection, None);
+
+        update_folder_name(&connection, &folder, "Auth").unwrap();
+        // A request node is not a folder; its name comes from saving the request.
+        update_folder_name(&connection, &request.node_id, "Nope").unwrap();
+
+        let tree = read_tree(&connection, &collection).unwrap();
+        assert_eq!(ids(&tree), [folder.as_str(), request.node_id.as_str()]);
+        assert_eq!(tree[0].name, "Auth");
+        assert_eq!(children(&tree).len(), 1);
+        assert_ne!(tree[1].name, "Nope");
     }
 
     #[test]

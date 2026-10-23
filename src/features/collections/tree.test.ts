@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CollectionNode } from "@/features/types";
-import { moveNodeInTree, resolveDrop } from "./tree";
+import { moveNodeInTree, renameFolderNode, resolveDrop } from "./tree";
 
 function node(
   id: string,
@@ -105,5 +105,21 @@ describe("dropping a node", () => {
       parentId: null,
       position: 3,
     });
+  });
+});
+
+describe("renaming a folder", () => {
+  it("renames a nested folder without re-rendering the rows around it", () => {
+    const tree = [
+      node("a", 0),
+      node("f", 1, null, [node("g", 0, "f", [node("x", 0, "g")])]),
+    ];
+
+    const next = renameFolderNode(tree, "g", "Auth");
+
+    const renamed = childrenOf(next[1])[0];
+    expect(renamed.name).toBe("Auth");
+    expect(childrenOf(renamed)).toBe(childrenOf(childrenOf(tree[1])[0]));
+    expect(next[0]).toBe(tree[0]);
   });
 });

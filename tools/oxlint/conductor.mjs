@@ -44,7 +44,38 @@ const noInternalMocking = {
   },
 };
 
+// tauri-plugin-dialog replaces these with async versions. `window.confirm`
+// then returns a promise, which is always truthy, so a confirm guard never
+// stops anything.
+const NATIVE_DIALOGS = new Set(["alert", "confirm", "prompt"]);
+
+const noWindowDialogs = {
+  meta: {
+    type: "problem",
+    docs: {
+      description: "Use the dialog plugin's awaited API, not window dialogs.",
+    },
+    messages: {
+      windowDialog:
+        "`window.{{name}}` is replaced by an async version under the dialog plugin. Await `confirm`, `ask`, or `message` from @tauri-apps/plugin-dialog instead.",
+    },
+  },
+  create(context) {
+    return {
+      MemberExpression(node) {
+        if (node.computed || node.object.type !== "Identifier") return;
+        if (node.object.name !== "window" && node.object.name !== "globalThis") return;
+        if (!NATIVE_DIALOGS.has(node.property.name)) return;
+        context.report({ node, messageId: "windowDialog", data: { name: node.property.name } });
+      },
+    };
+  },
+};
+
 export default {
   meta: { name: "conductor" },
-  rules: { "no-internal-mocking": noInternalMocking },
+  rules: {
+    "no-internal-mocking": noInternalMocking,
+    "no-window-dialogs": noWindowDialogs,
+  },
 };

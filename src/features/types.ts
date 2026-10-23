@@ -10,6 +10,7 @@ export type {
   BodyFieldType,
   BodyMode,
   CollectionNode,
+  CollectionStats,
   CollectionSummary,
   EnvironmentSummary,
   ImportedCollection,
@@ -35,7 +36,8 @@ export type AppTheme = "softpro" | "conductor" | "brutalist";
 
 export type UrlDisplayMode = "flat" | "syntax" | "chip" | "hybrid";
 
-export type SettingsTab = "appearance" | "variables" | "shortcuts" | "about";
+export type SettingsTab =
+  "appearance" | "collections" | "variables" | "shortcuts" | "about";
 
 export type WorkspaceUiState = {
   activeCollectionId?: string;
