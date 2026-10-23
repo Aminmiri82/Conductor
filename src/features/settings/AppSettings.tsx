@@ -84,7 +84,7 @@ export function AppSettings({
             target?.focus();
           }
         }}
-        className="flex h-[min(640px,88vh)] w-[min(960px,94vw)] max-w-none min-w-0 flex-col gap-0 overflow-hidden border border-[var(--app-line)] bg-[var(--app-bg)] p-0 text-base shadow-[0_30px_80px_rgba(0,0,0,.6)] ring-0 sm:max-w-none"
+        className="flex h-[min(672px,92vh)] w-[min(1008px,96vw)] max-w-none min-w-0 flex-col gap-0 overflow-hidden border border-[var(--app-line)] bg-[var(--app-bg)] p-0 text-base shadow-[0_30px_80px_rgba(0,0,0,.6)] ring-0 sm:max-w-none"
         style={{ borderRadius: "var(--app-radius-lg)" }}
       >
         <div className="flex h-11 shrink-0 items-center gap-3 border-b border-[var(--app-line)] bg-[var(--app-panel)] px-3">
@@ -105,7 +105,7 @@ export function AppSettings({
           </Button>
         </div>
         <div className="flex min-h-0 flex-1">
-          <nav className="w-52 shrink-0 border-r border-[var(--app-line)] bg-[var(--app-panel)] p-2">
+          <nav className="w-[clamp(136px,16vw,208px)] shrink-0 border-r border-[var(--app-line)] bg-[var(--app-panel)] p-2">
             {SETTINGS_TABS.map((item) => (
               <button
                 key={item.id}

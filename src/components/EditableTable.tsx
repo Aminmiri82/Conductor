@@ -94,7 +94,7 @@ export function CellInput({ className, ...props }: ComponentProps<"input">) {
   return (
     <Input
       className={cn(
-        "app-mono h-8 rounded-none border-0 bg-transparent text-xs shadow-none focus-visible:ring-0",
+        "app-mono h-8 rounded-none border-0 bg-transparent text-xs shadow-none focus-visible:ring-0 dark:bg-transparent",
         className,
       )}
       {...props}
