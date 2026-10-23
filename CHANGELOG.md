@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.12](https://github.com/Aminmiri82/Conductor/compare/app-v0.1.11...app-v0.1.12) (2026-10-23)
+
+
+### Features
+
+* manage collections in settings, rename folders, and speed up CI ([#22](https://github.com/Aminmiri82/Conductor/issues/22)) ([af70869](https://github.com/Aminmiri82/Conductor/commit/af708691ecdebda7013658ed06eaefe8e5423879))
+
 ## [0.1.11](https://github.com/Aminmiri82/Conductor/compare/app-v0.1.10...app-v0.1.11) (2026-10-23)
 
 
