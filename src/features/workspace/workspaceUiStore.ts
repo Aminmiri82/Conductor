@@ -4,7 +4,6 @@ import type {
   AppTheme,
   EnvironmentSummary,
   RequestEditorTab,
-  SettingsTab,
   UrlDisplayMode,
   WorkspaceUiState,
 } from "@/features/types";
@@ -37,7 +36,6 @@ const DEFAULT_WORKSPACE_UI_STATE: WorkspaceUiState = {
   appTheme: "softpro",
   accentColor: "#a78bfa",
   urlDisplayMode: "chip",
-  settingsTab: "appearance",
   requestEditorTabs: {},
 };
 let workspaceUiStateFlushTimer:
@@ -203,9 +201,6 @@ function normalizeWorkspaceUiState(
     urlDisplayMode: isUrlDisplayMode(value.urlDisplayMode)
       ? value.urlDisplayMode
       : DEFAULT_WORKSPACE_UI_STATE.urlDisplayMode,
-    settingsTab: isSettingsTab(value.settingsTab)
-      ? value.settingsTab
-      : DEFAULT_WORKSPACE_UI_STATE.settingsTab,
     requestEditorTabs:
       value.requestEditorTabs && typeof value.requestEditorTabs === "object"
         ? normalizeRequestEditorTabs(value.requestEditorTabs)
@@ -258,16 +253,6 @@ function isUrlDisplayMode(value: unknown): value is UrlDisplayMode {
     value === "syntax" ||
     value === "chip" ||
     value === "hybrid"
-  );
-}
-
-function isSettingsTab(value: unknown): value is SettingsTab {
-  return (
-    value === "appearance" ||
-    value === "collections" ||
-    value === "variables" ||
-    value === "shortcuts" ||
-    value === "about"
   );
 }
 

@@ -39,18 +39,19 @@ export function useAppHotkeys() {
       if (action === "save-request") {
         void saveActiveRequest();
       }
-      if (action === "duplicate-request" && activeRequestId) {
+      // An open editor with its own rows (the Variables settings pane)
+      // claims ⌘N, ⌘⇧N and ⌘D by cancelling these events.
+      if (
+        action === "duplicate-request" &&
+        unclaimed("conductor:duplicate") &&
+        activeRequestId
+      ) {
         void duplicateRequest(activeRequestId);
       }
-      if (action === "new-request") {
-        // An open editor that adds its own rows (the Variables settings
-        // pane) claims ⌘N by cancelling this event.
-        const unclaimed = window.dispatchEvent(
-          new Event("conductor:new", { cancelable: true }),
-        );
-        if (unclaimed) void createRequestNextToActive();
+      if (action === "new-request" && unclaimed("conductor:new")) {
+        void createRequestNextToActive();
       }
-      if (action === "new-folder") {
+      if (action === "new-folder" && unclaimed("conductor:new-folder")) {
         void createFolderNextToActive();
       }
       if (action === "close-request" && activeRequestId) {
@@ -78,7 +79,8 @@ export function useAppHotkeys() {
         performAction("save-request");
       }
       const { activeRequestId } = useWorkspaceStore.getState();
-      if (key === "d" && activeRequestId) {
+      // ⌘⇧D belongs to the Variables settings pane (duplicate environment).
+      if (key === "d" && !event.shiftKey) {
         event.preventDefault();
         performAction("duplicate-request");
       }
@@ -120,6 +122,10 @@ export function useAppHotkeys() {
       void unlisten.then((dispose) => dispose());
     };
   }, []);
+}
+
+function unclaimed(name: string) {
+  return window.dispatchEvent(new Event(name, { cancelable: true }));
 }
 
 function isTauriRuntime() {

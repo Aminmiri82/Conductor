@@ -30,6 +30,7 @@ export const api = {
   createCollection: commands.createCollection,
   deleteCollection: commands.deleteCollection,
   renameCollection: commands.renameCollection,
+  getCollectionProfile: commands.getCollectionProfile,
   getRequest: commands.getRequest,
   createRequest: (
     collectionId: string,

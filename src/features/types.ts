@@ -10,11 +10,14 @@ export type {
   BodyFieldType,
   BodyMode,
   CollectionNode,
+  CollectionProfile,
   CollectionStats,
   CollectionSummary,
   EnvironmentSummary,
+  EnvironmentVariableCount,
   ImportedCollection,
   KeyValue,
+  MethodCount,
   RequestBody,
   RequestDetail,
   ResolvedRequestPreview,
@@ -46,6 +49,5 @@ export type WorkspaceUiState = {
   appTheme: AppTheme;
   accentColor: string;
   urlDisplayMode: UrlDisplayMode;
-  settingsTab: SettingsTab;
   requestEditorTabs: Record<string, RequestEditorTab>;
 };

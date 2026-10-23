@@ -36,6 +36,7 @@ export const commands = {
 	duplicateEnvironment: (input: DuplicateEnvironmentInput) => __TAURI_INVOKE<string>("duplicate_environment", { input }),
 	deleteNode: (nodeId: string) => __TAURI_INVOKE<null>("delete_node", { nodeId }),
 	duplicateRequest: (input: DuplicateRequestInput) => __TAURI_INVOKE<DuplicateRequestResult>("duplicate_request", { input }),
+	getCollectionProfile: (collectionId: string) => __TAURI_INVOKE<CollectionProfile>("get_collection_profile", { collectionId }),
 	getCollectionTree: (collectionId: string) => __TAURI_INVOKE<CollectionNode[]>("get_collection_tree", { collectionId }),
 	getRequest: (requestId: string) => __TAURI_INVOKE<RequestDetail>("get_request", { requestId }),
 	importPostmanEnvironment: (collectionId: string, postmanJson: string, fileName: string | null) => __TAURI_INVOKE<string>("import_postman_environment", { collectionId, postmanJson, fileName }),
@@ -131,6 +132,30 @@ export type CollectionNode = {
 export type CollectionNodeKind = { kind: "folder"; children: CollectionNode[] } | { kind: "request"; requestId: string; method: string };
 
 /**
+ *  The settings page's profile of one collection, read when it is selected
+ *  there. Everything comes from the tables as they are; nothing is tracked
+ *  for it.
+ */
+export type CollectionProfile = {
+	/**  Most used first; only methods that occur. */
+	methods: MethodCount[],
+	collectionVariableCount: number,
+	/**  In the order the Variables page lists them. */
+	environments: EnvironmentVariableCount[],
+	createdAt: string,
+	/**  The newest change to any folder or request, if there is one. */
+	lastEditedAt: string | null,
+	/**  How many folders deep the tree goes; 0 without folders. */
+	deepestNesting: number,
+	/**  The folder with the most requests under it, counting nested ones. */
+	largestFolder: FolderSize | null,
+	/**  The request saved most recently. */
+	latestRequest: string | null,
+	/**  Requests whose URL uses a `{{variable}}`. */
+	variableUrlCount: number,
+};
+
+/**
  *  A collection with what it holds, for the settings page. Kept apart from
  *  `CollectionSummary` so startup never pays for the counts.
  */
@@ -191,9 +216,20 @@ export type EnvironmentSummary = {
 	name: string,
 };
 
+export type EnvironmentVariableCount = {
+	id: string,
+	name: string,
+	variableCount: number,
+};
+
 export type FileBody = {
 	path?: string | null,
 	contentType?: string | null,
+};
+
+export type FolderSize = {
+	name: string,
+	requestCount: number,
 };
 
 /**  JSON blob whose shape is owned by the frontend; Rust only stores it. */
@@ -218,6 +254,11 @@ export type KeyValue = {
 	key: string,
 	value: string,
 	enabled?: boolean,
+};
+
+export type MethodCount = {
+	method: string,
+	count: number,
 };
 
 export type MoveNodeInput = {
