@@ -6,7 +6,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import type { SettingsTab } from "@/features/types";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
-import { useWorkspaceUiStore } from "@/features/workspace/workspaceUiStore";
 import { AboutPane } from "./AboutPane";
 import { AppearancePane } from "./AppearancePane";
 import { CollectionsPane } from "./CollectionsPane";
@@ -24,18 +23,18 @@ const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
 export function AppSettings({
   open,
   onOpenChange,
+  tab,
+  onTabChange,
   updateCheckRequested,
   consumeUpdateCheck,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  tab: SettingsTab;
+  onTabChange: (tab: SettingsTab) => void;
   updateCheckRequested: boolean;
   consumeUpdateCheck: () => void;
 }) {
-  const tab = useWorkspaceUiStore((state) => state.workspaceUi.settingsTab);
-  const setWorkspacePreference = useWorkspaceUiStore(
-    (state) => state.setWorkspacePreference,
-  );
   const activeCollectionId = useWorkspaceStore(
     (state) => state.activeCollectionId,
   );
@@ -116,7 +115,7 @@ export function AppSettings({
                     "border border-[color-mix(in_oklab,var(--app-accent)_28%,transparent)] bg-[color-mix(in_oklab,var(--app-accent)_14%,transparent)] text-[var(--app-text)]",
                 )}
                 style={{ borderRadius: "var(--app-radius)" }}
-                onClick={() => setWorkspacePreference("settingsTab", item.id)}
+                onClick={() => onTabChange(item.id)}
               >
                 {item.label}
               </button>

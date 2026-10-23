@@ -1,7 +1,9 @@
 mod import;
+mod profile;
 mod tree;
 
 pub use import::import_postman_collection;
+pub use profile::get_collection_profile;
 #[cfg(test)]
 pub(crate) use tree::{add_folder, read_tree};
 pub use tree::{create_folder, delete_node, get_collection_tree, move_node, rename_folder};

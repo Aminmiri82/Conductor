@@ -24,6 +24,52 @@ pub struct CollectionStats {
     pub environment_count: u32,
 }
 
+/// The settings page's profile of one collection, read when it is selected
+/// there. Everything comes from the tables as they are; nothing is tracked
+/// for it.
+#[derive(Debug, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectionProfile {
+    /// Most used first; only methods that occur.
+    pub methods: Vec<MethodCount>,
+    pub collection_variable_count: u32,
+    /// In the order the Variables page lists them.
+    pub environments: Vec<EnvironmentVariableCount>,
+    pub created_at: String,
+    /// The newest change to any folder or request, if there is one.
+    pub last_edited_at: Option<String>,
+    /// How many folders deep the tree goes; 0 without folders.
+    pub deepest_nesting: u32,
+    /// The folder with the most requests under it, counting nested ones.
+    pub largest_folder: Option<FolderSize>,
+    /// The request saved most recently.
+    pub latest_request: Option<String>,
+    /// Requests whose URL uses a `{{variable}}`.
+    pub variable_url_count: u32,
+}
+
+#[derive(Debug, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct MethodCount {
+    pub method: String,
+    pub count: u32,
+}
+
+#[derive(Debug, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentVariableCount {
+    pub id: String,
+    pub name: String,
+    pub variable_count: u32,
+}
+
+#[derive(Debug, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderSize {
+    pub name: String,
+    pub request_count: u32,
+}
+
 /// Everything the sidebar shows after an import or a create, so it needs no
 /// follow-up calls: the new collection, the updated collection list, and its tree.
 #[derive(Debug, Serialize, specta::Type)]

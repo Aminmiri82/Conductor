@@ -10,9 +10,9 @@ mod storage;
 mod test_server;
 
 use commands::collections::{
-    create_collection, create_folder, delete_collection, delete_node, get_collection_tree,
-    import_postman_collection, list_collection_stats, list_collections, move_node,
-    rename_collection, rename_folder,
+    create_collection, create_folder, delete_collection, delete_node, get_collection_profile,
+    get_collection_tree, import_postman_collection, list_collection_stats, list_collections,
+    move_node, rename_collection, rename_folder,
 };
 use commands::requests::{
     create_request, duplicate_request, get_request, resolve_request, save_request,
@@ -25,7 +25,7 @@ use commands::variables::{
 use commands::workspace_state::{get_workspace_state, set_workspace_state};
 use storage::Database;
 use tauri::{
-    menu::{Menu, MenuItemBuilder, PredefinedMenuItem, Submenu},
+    menu::{AboutMetadata, Menu, MenuItemBuilder, PredefinedMenuItem, Submenu},
     Manager,
 };
 use tauri_specta::Event;
@@ -98,6 +98,7 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             duplicate_environment,
             delete_node,
             duplicate_request,
+            get_collection_profile,
             get_collection_tree,
             get_request,
             import_postman_environment,
@@ -284,7 +285,19 @@ fn build_app_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result
                 app.package_info().name.clone(),
                 true,
                 &[
-                    &PredefinedMenuItem::about(app, None, None)?,
+                    &PredefinedMenuItem::about(
+                        app,
+                        None,
+                        Some(AboutMetadata {
+                            // Without this a dev run, which has no bundle,
+                            // shows a folder icon. This is the first .png in
+                            // tauri.conf.json's icon list, so the 256px one
+                            // is listed first to keep it sharp.
+                            icon: app.default_window_icon().cloned(),
+                            copyright: Some("© 2026 Yara Miri".into()),
+                            ..Default::default()
+                        }),
+                    )?,
                     &MenuItemBuilder::with_id("check_for_updates", "Check for Updates...")
                         .build(app)?,
                     &PredefinedMenuItem::separator(app)?,

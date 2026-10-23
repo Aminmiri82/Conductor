@@ -22,6 +22,17 @@ export function ShortcutsPane() {
         ["Close tab", ["⌘", "W"]],
       ],
     },
+    {
+      title: "Variables settings",
+      rows: [
+        ["New variable", ["⌘", "N"]],
+        ["Duplicate variable", ["⌘", "D"]],
+        ["Delete variable", ["⌘", "⌫"]],
+        ["New environment", ["⌘", "⇧", "N"]],
+        ["Duplicate environment", ["⌘", "⇧", "D"]],
+        ["Import environment", ["⌘", "I"]],
+      ],
+    },
   ];
 
   return (

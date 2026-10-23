@@ -1,4 +1,11 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -9,8 +16,8 @@ import {
 import { CollectionSidebar } from "@/features/collections/CollectionSidebar";
 import { RequestWorkspace } from "@/features/requests/RequestWorkspace";
 import { AppTopBar } from "@/features/shell/AppTopBar";
+import type { SettingsTab } from "@/features/types";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
-import { useWorkspaceUiStore } from "@/features/workspace/workspaceUiStore";
 
 // Neither is on the first screen. Each loads the first time it opens and then
 // stays mounted so its close animation can run.
@@ -27,6 +34,12 @@ const OpenRequestDialog = lazy(() =>
 
 export function AppShell() {
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("appearance");
+  // Read by the open-settings listener, which is registered once.
+  const settingsOpenRef = useRef(false);
+  useEffect(() => {
+    settingsOpenRef.current = settingsOpen;
+  });
   const [openRequestOpen, setOpenRequestOpen] = useState(false);
   const [updateCheckRequested, setUpdateCheckRequested] = useState(false);
   const consumeUpdateCheck = useCallback(
@@ -40,16 +53,17 @@ export function AppShell() {
   const clearError = useWorkspaceStore((state) => state.clearError);
 
   useEffect(() => {
+    // Settings opens on Appearance; the last tab is not restored. ⌘, while
+    // it is open leaves the tab alone.
     function openSettings() {
+      if (!settingsOpenRef.current) setSettingsTab("appearance");
       setSettingsOpen(true);
     }
     function openRequest() {
       setOpenRequestOpen(true);
     }
     function checkForUpdates() {
-      useWorkspaceUiStore
-        .getState()
-        .setWorkspacePreference("settingsTab", "about");
+      setSettingsTab("about");
       setUpdateCheckRequested(true);
       setSettingsOpen(true);
     }
@@ -69,7 +83,11 @@ export function AppShell() {
 
   return (
     <main className="flex h-screen flex-col overflow-hidden bg-[var(--app-bg)] text-[var(--app-text)]">
-      <AppTopBar onOpenSettings={() => setSettingsOpen(true)} />
+      <AppTopBar
+        onOpenSettings={() =>
+          window.dispatchEvent(new Event("conductor:open-settings"))
+        }
+      />
 
       {error ? (
         <div className="flex h-9 shrink-0 items-center gap-2 border-b border-destructive/30 bg-destructive/10 px-3 text-xs text-destructive">
@@ -116,6 +134,8 @@ export function AppShell() {
           <AppSettings
             open={settingsOpen}
             onOpenChange={setSettingsOpen}
+            tab={settingsTab}
+            onTabChange={setSettingsTab}
             updateCheckRequested={updateCheckRequested}
             consumeUpdateCheck={consumeUpdateCheck}
           />
