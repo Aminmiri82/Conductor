@@ -25,7 +25,7 @@ use commands::variables::{
 use commands::workspace_state::{get_workspace_state, set_workspace_state};
 use storage::Database;
 use tauri::{
-    menu::{AboutMetadata, Menu, MenuItemBuilder, PredefinedMenuItem, Submenu},
+    menu::{Menu, MenuItemBuilder, PredefinedMenuItem, Submenu},
     Manager,
 };
 use tauri_specta::Event;
@@ -288,7 +288,9 @@ fn build_app_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result
                     &PredefinedMenuItem::about(
                         app,
                         None,
-                        Some(AboutMetadata {
+                        // Spelled out because only the macOS menu uses it; an import
+                        // would be unused, and so an error, elsewhere.
+                        Some(tauri::menu::AboutMetadata {
                             // Without this a dev run, which has no bundle,
                             // shows a folder icon. This is the first .png in
                             // tauri.conf.json's icon list, so the 256px one
