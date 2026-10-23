@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.13](https://github.com/Aminmiri82/Conductor/compare/app-v0.1.12...app-v0.1.13) (2026-10-23)
+
+
+### Features
+
+* send QUERY requests, rename collections, and add New Folder (⌘⇧N) ([#24](https://github.com/Aminmiri82/Conductor/issues/24)) ([3698e5b](https://github.com/Aminmiri82/Conductor/commit/3698e5b1da000ac00be3b372ed387055044866e9))
+
 ## [0.1.12](https://github.com/Aminmiri82/Conductor/compare/app-v0.1.11...app-v0.1.12) (2026-10-23)
 
 
