@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { Library, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -6,6 +6,7 @@ import type {
   CollectionProfile,
   CollectionStats,
   CollectionSummary,
+  MethodCount,
 } from "@/features/types";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { api } from "@/lib/tauri";
@@ -37,8 +38,6 @@ export function CollectionsPane() {
     collections.find((collection) => collection.id === activeCollectionId) ??
     collections[0];
   const [renaming, setRenaming] = useState(false);
-  // Escape unmounts the input, and the blur that follows must not save it.
-  const renamingRef = useRef(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   // Counts are read only while this page is open, and again whenever the
@@ -58,35 +57,25 @@ export function CollectionsPane() {
 
   function select(collectionId: string) {
     setSelectedId(collectionId);
-    renamingRef.current = false;
     setRenaming(false);
     setConfirmingDelete(false);
   }
 
   function startRename() {
-    renamingRef.current = true;
     setRenaming(true);
     setConfirmingDelete(false);
   }
 
   function finishRename(collection: CollectionSummary, name: string | null) {
-    if (!renamingRef.current) return;
-    renamingRef.current = false;
     setRenaming(false);
     const trimmed = name?.trim();
     if (!trimmed || trimmed === collection.name) return;
     void renameCollection(collection.id, trimmed);
   }
 
-  async function confirmDelete(collection: CollectionSummary) {
-    setConfirmingDelete(false);
-    await deleteCollection(collection.id);
-  }
-
   // Like a new environment: made with a placeholder name and renamed at once.
   async function createAndRename() {
-    await createCollection("New collection");
-    const created = useWorkspaceStore.getState().activeCollectionId;
+    const created = await createCollection("New collection");
     if (!created) return;
     select(created);
     startRename();
@@ -138,11 +127,12 @@ export function CollectionsPane() {
             onAskDelete={() => {
               setConfirmingDelete(true);
               setRenaming(false);
-              renamingRef.current = false;
             }}
             onCancelDelete={() => setConfirmingDelete(false)}
-            onDelete={() => void confirmDelete(selected)}
-            setError={setError}
+            onDelete={() => {
+              setConfirmingDelete(false);
+              void deleteCollection(selected.id);
+            }}
             // With one collection there is no list, so its + moves here.
             onCreate={
               collections.length > 1 ? undefined : () => void createAndRename()
@@ -183,7 +173,6 @@ function CollectionDetail({
   onAskDelete,
   onCancelDelete,
   onDelete,
-  setError,
   onCreate,
 }: {
   collection: CollectionSummary;
@@ -196,12 +185,12 @@ function CollectionDetail({
   onAskDelete: () => void;
   onCancelDelete: () => void;
   onDelete: () => void;
-  setError: (error: unknown) => void;
   onCreate?: () => void;
 }) {
   // Only the selected collection's profile is ever read; this component
   // remounts per selection, so the state belongs to one collection.
   const [profile, setProfile] = useState<CollectionProfile | null>(null);
+  const setError = useWorkspaceStore((state) => state.setError);
   useEffect(() => {
     let current = true;
     api
@@ -215,6 +204,8 @@ function CollectionDetail({
     };
   }, [collection.id, setError]);
 
+  const requestCount =
+    profile?.methods.reduce((sum, entry) => sum + entry.count, 0) ?? 0;
   const variableCount = profile
     ? profile.collectionVariableCount +
       profile.environments.reduce((sum, e) => sum + e.variableCount, 0)
@@ -305,11 +296,8 @@ function CollectionDetail({
       {profile ? (
         <>
           {profile.methods.length ? (
-            <Section
-              title="Methods"
-              aside={plural(stats?.requestCount ?? 0, "request")}
-            >
-              <MethodMix profile={profile} />
+            <Section title="Methods" aside={plural(requestCount, "request")}>
+              <MethodMix methods={profile.methods} total={requestCount} />
             </Section>
           ) : null}
           {profile.environments.length || profile.collectionVariableCount ? (
@@ -456,12 +444,17 @@ function Fact({ label: text, value }: { label: string; value: string | null }) {
 
 // A stacked bar in the sidebar's method colours; `data-method` picks the
 // colour through the rules in index.css.
-function MethodMix({ profile }: { profile: CollectionProfile }) {
-  const total = profile.methods.reduce((sum, m) => sum + m.count, 0);
+function MethodMix({
+  methods,
+  total,
+}: {
+  methods: MethodCount[];
+  total: number;
+}) {
   return (
     <>
       <div className="mb-2 flex h-2 gap-px overflow-hidden rounded-[2px]">
-        {profile.methods.map((entry) => (
+        {methods.map((entry) => (
           <div
             key={entry.method}
             data-method={entry.method}
@@ -472,7 +465,7 @@ function MethodMix({ profile }: { profile: CollectionProfile }) {
         ))}
       </div>
       <div className="app-mono flex flex-wrap gap-x-3.5 gap-y-1 text-[11px] text-[var(--app-dim)]">
-        {profile.methods.map((entry) => (
+        {methods.map((entry) => (
           <span key={entry.method} className="inline-flex items-center gap-1.5">
             <span
               data-method={entry.method}

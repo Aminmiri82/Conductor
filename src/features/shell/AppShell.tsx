@@ -1,11 +1,4 @@
-import {
-  lazy,
-  Suspense,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -35,11 +28,6 @@ const OpenRequestDialog = lazy(() =>
 export function AppShell() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("appearance");
-  // Read by the open-settings listener, which is registered once.
-  const settingsOpenRef = useRef(false);
-  useEffect(() => {
-    settingsOpenRef.current = settingsOpen;
-  });
   const [openRequestOpen, setOpenRequestOpen] = useState(false);
   const [updateCheckRequested, setUpdateCheckRequested] = useState(false);
   const consumeUpdateCheck = useCallback(
@@ -56,7 +44,7 @@ export function AppShell() {
     // Settings opens on Appearance; the last tab is not restored. ⌘, while
     // it is open leaves the tab alone.
     function openSettings() {
-      if (!settingsOpenRef.current) setSettingsTab("appearance");
+      if (!settingsOpen) setSettingsTab("appearance");
       setSettingsOpen(true);
     }
     function openRequest() {
@@ -79,7 +67,7 @@ export function AppShell() {
         checkForUpdates,
       );
     };
-  }, []);
+  }, [settingsOpen]);
 
   return (
     <main className="flex h-screen flex-col overflow-hidden bg-[var(--app-bg)] text-[var(--app-text)]">

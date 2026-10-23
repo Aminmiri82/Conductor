@@ -88,7 +88,7 @@ export const panelFrame =
 export const panelLabel =
   "text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--app-dim)]";
 
-export type ListDrawerItem = {
+type ListDrawerItem = {
   id: string;
   name: string;
   // A dot before the name, e.g. the collection open in the sidebar.
@@ -99,7 +99,7 @@ export type ListDrawerItem = {
 // The list beside a settings page's detail: pick one item, or add one.
 // A right-click action on a drawer row. It runs once the menu has closed, so
 // focus can move (to a name field, a prompt) without the menu taking it back.
-export type ListDrawerAction = {
+type ListDrawerAction = {
   label: string;
   icon: ReactNode;
   destructive?: boolean;
@@ -135,6 +135,8 @@ export function ListDrawer({
   onFinishEdit?: (id: string, name: string | null) => void;
 }) {
   const pending = useRef<(() => void) | null>(null);
+  // Escape unmounts the name field, and the blur that follows must not save.
+  const cancelled = useRef(false);
   return (
     <div
       className={cn("self-start overflow-hidden", panelFrame)}
@@ -181,14 +183,22 @@ export function ListDrawer({
                 aria-label={editLabel}
                 className="-mx-1 h-6 min-w-0 flex-1 border border-[var(--app-accent)] bg-[var(--app-panel-2)] px-1 text-xs text-[var(--app-text)] outline-none"
                 style={{ borderRadius: "var(--app-radius)" }}
-                onFocus={(event) => event.currentTarget.select()}
+                onFocus={(event) => {
+                  cancelled.current = false;
+                  event.currentTarget.select();
+                }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") event.currentTarget.blur();
-                  if (event.key === "Escape") onFinishEdit?.(item.id, null);
+                  if (event.key === "Escape") {
+                    cancelled.current = true;
+                    onFinishEdit?.(item.id, null);
+                  }
                 }}
-                onBlur={(event) =>
-                  onFinishEdit?.(item.id, event.currentTarget.value)
-                }
+                onBlur={(event) => {
+                  if (!cancelled.current) {
+                    onFinishEdit?.(item.id, event.currentTarget.value);
+                  }
+                }}
                 data-cancel-on-escape
               />
             </div>
@@ -267,6 +277,8 @@ export function EditableTitle({
   // `null` cancels the edit.
   onFinishEdit?: (name: string | null) => void;
 }) {
+  // Escape unmounts the field, and the blur that follows must not save.
+  const cancelled = useRef(false);
   if (editing) {
     return (
       <input
@@ -275,12 +287,20 @@ export function EditableTitle({
         aria-label={label}
         className="h-8 min-w-0 flex-1 border border-[var(--app-accent)] bg-[var(--app-panel-2)] px-2 text-base font-semibold text-[var(--app-text)] outline-none"
         style={{ borderRadius: "var(--app-radius)" }}
-        onFocus={(event) => event.currentTarget.select()}
+        onFocus={(event) => {
+          cancelled.current = false;
+          event.currentTarget.select();
+        }}
         onKeyDown={(event) => {
           if (event.key === "Enter") event.currentTarget.blur();
-          if (event.key === "Escape") onFinishEdit?.(null);
+          if (event.key === "Escape") {
+            cancelled.current = true;
+            onFinishEdit?.(null);
+          }
         }}
-        onBlur={(event) => onFinishEdit?.(event.currentTarget.value)}
+        onBlur={(event) => {
+          if (!cancelled.current) onFinishEdit?.(event.currentTarget.value);
+        }}
         data-cancel-on-escape
       />
     );
