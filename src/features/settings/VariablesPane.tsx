@@ -112,21 +112,28 @@ export function VariablesPane({
   const [scope, setScope] = useState<VariableScope>(
     activeCollectionId || collections[0] ? "environment" : "global",
   );
-  const [selectedCollectionId, setSelectedCollectionId] = useState(
-    activeCollectionId ?? collections[0]?.id ?? "",
-  );
+  const [pickedCollectionId, setPickedCollectionId] =
+    useState(activeCollectionId);
+  const selectedCollectionId = pickedCollectionId ?? collections[0]?.id ?? "";
   const activeEnvironmentId = useWorkspaceUiStore((state) =>
     activeEnvironmentIdFor(state.workspaceUi, selectedCollectionId),
   );
   const environments = allEnvironments.filter(
     (environment) => environment.collectionId === selectedCollectionId,
   );
-  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState(
-    activeEnvironmentId ?? environments[0]?.id ?? "",
-  );
-  const selectedEnvironment = environments.find(
-    (environment) => environment.id === selectedEnvironmentId,
-  );
+  const [pickedEnvironmentId, setPickedEnvironmentId] = useState("");
+  // Viewing an environment here does not make it active. When the pick is
+  // gone (another collection, or deleted), show the collection's active
+  // environment, or its first one.
+  const selectedEnvironment =
+    environments.find(
+      (environment) => environment.id === pickedEnvironmentId,
+    ) ??
+    environments.find(
+      (environment) => environment.id === activeEnvironmentId,
+    ) ??
+    environments[0];
+  const selectedEnvironmentId = selectedEnvironment?.id ?? "";
   const [variables, setVariables] = useState<VariableEntry[]>([]);
   const [status, setStatus] = useState<SaveStatus>("idle");
   const { save: saveVariables } = useSaveVariables();
@@ -137,8 +144,6 @@ export function VariablesPane({
   const addAfterMenu = useRef(false);
   // The environment being renamed, in the heading or in its drawer row.
   const [renaming, setRenaming] = useState<Renaming | null>(null);
-  // Escape unmounts the name field, and the blur that follows must not save.
-  const renamingRef = useRef<Renaming | null>(null);
   const [revealed, setRevealed] = useState<Record<number, boolean>>({});
   const environmentInputRef = useRef<HTMLInputElement>(null);
 
@@ -177,27 +182,6 @@ export function VariablesPane({
       ? { scope, environmentId: selectedEnvironmentId }
       : null;
   }, [scope, selectedCollectionId, selectedEnvironmentId]);
-
-  useEffect(() => {
-    if (selectedCollectionId || !collections[0]) return;
-    setSelectedCollectionId(collections[0].id);
-  }, [collections, selectedCollectionId]);
-
-  // Viewing an environment here does not make it active. When the selection
-  // is gone (another collection, or deleted), show the collection's active
-  // environment, or its first one.
-  const environmentIds = environments.map((environment) => environment.id);
-  const environmentIdsKey = environmentIds.join("\n");
-  useEffect(() => {
-    if (environmentIds.includes(selectedEnvironmentId)) return;
-    setSelectedEnvironmentId(
-      activeEnvironmentId && environmentIds.includes(activeEnvironmentId)
-        ? activeEnvironmentId
-        : (environmentIds[0] ?? ""),
-    );
-    // environmentIdsKey stands in for environmentIds, a new array each render.
-    // oxlint-disable-next-line react/exhaustive-deps
-  }, [activeEnvironmentId, environmentIdsKey, selectedEnvironmentId]);
 
   useEffect(() => {
     let mounted = true;
@@ -396,21 +380,20 @@ export function VariablesPane({
   }, []);
 
   function chooseEnvironment(environmentId: string) {
-    renamingRef.current = null;
     setRenaming(null);
-    setSelectedEnvironmentId(environmentId);
+    setPickedEnvironmentId(environmentId);
   }
 
   function startRename(environmentId: string, at: Renaming["at"]) {
-    const next = { environmentId, at };
-    renamingRef.current = next;
-    setRenaming(next);
+    setRenaming({ environmentId, at });
   }
 
   async function finishRename(environmentId: string, draft: string | null) {
-    if (renamingRef.current?.environmentId !== environmentId) return;
-    renamingRef.current = null;
-    setRenaming(null);
+    // A field that closes because another rename started (a new environment
+    // made while this one was being named) must not end that one.
+    setRenaming((current) =>
+      current?.environmentId === environmentId ? null : current,
+    );
     const name = draft?.trim();
     const current = environments.find((e) => e.id === environmentId)?.name;
     if (!name || name === current) return;
@@ -462,8 +445,8 @@ export function VariablesPane({
     event.target.value = "";
   }
 
-  // The selection falls back on its own when the selected one goes; see the
-  // effect above.
+  // The selection falls back on its own when the selected one goes; see
+  // `selectedEnvironment`.
   async function deleteEnvironment(deletedId: string) {
     const name = environments.find((e) => e.id === deletedId)?.name;
     const confirmed = await confirm(`Delete environment "${name}"?`, {
@@ -632,7 +615,7 @@ export function VariablesPane({
         {scope === "environment" && collections.length ? (
           <Select
             value={selectedCollectionId}
-            onValueChange={setSelectedCollectionId}
+            onValueChange={setPickedCollectionId}
           >
             <SelectTrigger className={pickerClass} aria-label="Collection">
               <SelectValue />
@@ -849,7 +832,7 @@ export function VariablesPane({
                     : undefined,
               }))}
               selectedId={selectedCollectionId}
-              onSelect={setSelectedCollectionId}
+              onSelect={setPickedCollectionId}
             />
           ) : null}
           <div className="min-w-0">

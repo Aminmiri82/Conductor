@@ -60,7 +60,8 @@ type WorkspaceState = {
   loadCollections: () => Promise<void>;
   loadEnvironments: () => Promise<void>;
   importCollection: (path: string) => Promise<void>;
-  createCollection: (name: string) => Promise<void>;
+  // The new collection's id, or undefined when it could not be created.
+  createCollection: (name: string) => Promise<string | undefined>;
   deleteCollection: (collectionId: string) => Promise<void>;
   renameCollection: (collectionId: string, name: string) => Promise<void>;
   importEnvironment: (
@@ -164,9 +165,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   createCollection: async (name) => {
     set({ error: undefined });
     try {
-      await showNewCollection(await api.createCollection(name));
+      const created = await api.createCollection(name);
+      await showNewCollection(created);
+      return created.collectionId;
     } catch (error) {
       set({ error: String(error) });
+      return undefined;
     }
   },
 
