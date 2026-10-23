@@ -28,6 +28,7 @@ export const api = {
   getCollectionTree: commands.getCollectionTree,
   importPostmanCollection: commands.importPostmanCollection,
   createCollection: commands.createCollection,
+  deleteCollection: commands.deleteCollection,
   getRequest: commands.getRequest,
   createRequest: (
     collectionId: string,
@@ -56,6 +57,8 @@ export const api = {
   duplicateRequest: (requestId: string) =>
     commands.duplicateRequest({ requestId }),
   deleteNode: commands.deleteNode,
+  renameFolder: commands.renameFolder,
+  listCollectionStats: commands.listCollectionStats,
   moveNode: (
     nodeId: string,
     parentId: string | null | undefined,

@@ -238,3 +238,24 @@ export function updateRequestNode(
   });
   return changed ? next : nodes;
 }
+
+// Keeps every untouched node's identity, so only the renamed row re-renders.
+export function renameFolderNode(
+  nodes: CollectionNode[],
+  nodeId: string,
+  name: string,
+): CollectionNode[] {
+  let changed = false;
+  const next = nodes.map((node) => {
+    if (node.kind !== "folder") return node;
+    if (node.id === nodeId) {
+      changed = true;
+      return { ...node, name };
+    }
+    const children = renameFolderNode(node.children, nodeId, name);
+    if (children === node.children) return node;
+    changed = true;
+    return { ...node, children };
+  });
+  return changed ? next : nodes;
+}

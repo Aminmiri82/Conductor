@@ -9,11 +9,13 @@ import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { useWorkspaceUiStore } from "@/features/workspace/workspaceUiStore";
 import { AboutPane } from "./AboutPane";
 import { AppearancePane } from "./AppearancePane";
+import { CollectionsPane } from "./CollectionsPane";
 import { ShortcutsPane } from "./ShortcutsPane";
 import { VariablesPane } from "./VariablesPane";
 
 const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
   { id: "appearance", label: "Appearance" },
+  { id: "collections", label: "Collections" },
   { id: "variables", label: "Variables" },
   { id: "shortcuts", label: "Shortcuts" },
   { id: "about", label: "About" },
@@ -123,6 +125,7 @@ export function AppSettings({
           <ScrollArea className="min-w-0 flex-1">
             <div className="p-6">
               {tab === "appearance" ? <AppearancePane /> : null}
+              {tab === "collections" ? <CollectionsPane /> : null}
               {tab === "variables" ? (
                 <VariablesPane activeCollectionId={activeCollectionId} />
               ) : null}

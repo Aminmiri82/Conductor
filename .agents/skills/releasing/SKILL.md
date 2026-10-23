@@ -12,10 +12,13 @@ on any failure; never force-push, skip checks, or edit a published release.
    message (`fix:`/`feat:` drive the version bump), push, and `gh pr create`.
 2. When the PR's checks pass, `gh pr merge --squash --delete-branch`.
 3. The push to `main` makes release-please open `chore(main): release app X.Y.Z`.
-   Its checks run as a dispatched `checks.yml` run on the bot's branch, not
-   as PR checks; wait for that run, then squash-merge the release PR.
+   Its checks run as a dispatched `checks.yml` run (`event=workflow_dispatch`)
+   on the bot's branch; wait for that run's `release-pr` job, then squash-merge
+   the release PR. Ignore the bot's `pull_request` run: it waits for approval
+   and skips every job.
 4. That merge runs the `Release PR` workflow, which builds a **draft** on Mac,
-   then Windows, then Linux. Wait for all three jobs to succeed and confirm the
+   Windows, and Linux in parallel, then writes `latest.json` in the `updater`
+   job. Wait for all of them to succeed and confirm the
    draft has the `.dmg`, the `.app.tar.gz` and its `.sig`, the `-setup.exe` and
    its `.sig`, the `.deb`, the `.AppImage` and its `.sig`, and a `latest.json`
    with the new version and the `darwin-aarch64`, `windows-x86_64`, and

@@ -1,4 +1,4 @@
-import { open } from "@tauri-apps/plugin-dialog";
+import { confirm, open } from "@tauri-apps/plugin-dialog";
 import {
   lazy,
   Suspense,
@@ -26,9 +26,15 @@ import {
 } from "@/components/ui/select";
 import type { CollectionNode } from "@/features/types";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
-import { RootEndDropZone, TREE_ROW_HEIGHT, TreeRow } from "./TreeRow";
+import {
+  focusRenameInput,
+  RootEndDropZone,
+  TREE_ROW_HEIGHT,
+  TreeRow,
+} from "./TreeRow";
 import {
   collectNodeIds,
+  findNodeById,
   flattenVisibleNodes,
   resolveDrop,
   type DropTarget,
@@ -56,6 +62,7 @@ export function CollectionSidebar() {
   const importCollection = useWorkspaceStore((state) => state.importCollection);
   const createRequestIn = useWorkspaceStore((state) => state.createRequestIn);
   const createFolderIn = useWorkspaceStore((state) => state.createFolderIn);
+  const renameFolder = useWorkspaceStore((state) => state.renameFolder);
   const duplicateRequest = useWorkspaceStore((state) => state.duplicateRequest);
   const deleteNode = useWorkspaceStore((state) => state.deleteNode);
   const moveNode = useWorkspaceStore((state) => state.moveNode);
@@ -66,6 +73,11 @@ export function CollectionSidebar() {
   } | null>(null);
   const [target, setTargetState] = useState<DropTarget>(null);
   const [openIds, setOpenIds] = useState<Set<string>>(() => new Set());
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  // Read by the stable finish callback: Escape clears the rename, and the
+  // input's blur as it unmounts must not then save it.
+  const renamingIdRef = useRef<string | null>(null);
+  const renameOnMenuClose = useRef(false);
   const [newCollectionOpen, setNewCollectionOpen] = useState(false);
   const [newCollectionOpened, setNewCollectionOpened] = useState(false);
   // First and last row touching the viewport. The scroll position itself lives
@@ -117,6 +129,35 @@ export function CollectionSidebar() {
       return next;
     });
   }, []);
+
+  const startRename = useCallback((nodeId: string) => {
+    renamingIdRef.current = nodeId;
+    setRenamingId(nodeId);
+  }, []);
+
+  const finishRename = useCallback(
+    (nodeId: string, name: string | null) => {
+      if (renamingIdRef.current !== nodeId) return;
+      renamingIdRef.current = null;
+      setRenamingId(null);
+      const trimmed = name?.trim();
+      const current = findNodeById(useWorkspaceStore.getState().tree, nodeId);
+      if (!trimmed || trimmed === current?.name) return;
+      void renameFolder(nodeId, trimmed);
+    },
+    [renameFolder],
+  );
+
+  // A new folder opens straight into rename, since it starts as "New Folder".
+  const createFolderAndRename = useCallback(
+    async (parentId: string | null | undefined, position: number) => {
+      const nodeId = await createFolderIn(parentId, position);
+      if (!nodeId) return;
+      if (parentId) openFolder(parentId);
+      startRename(nodeId);
+    },
+    [createFolderIn, openFolder, startRename],
+  );
 
   const syncVisibleRows = useCallback(() => {
     const element = scrollRef.current;
@@ -191,7 +232,7 @@ export function CollectionSidebar() {
         node.kind === "folder"
           ? `Delete folder "${node.name}" and everything inside it?`
           : `Delete request "${node.name}"?`;
-      if (!window.confirm(message)) return;
+      if (!(await confirm(message, { kind: "warning" }))) return;
       await deleteNode(node);
     },
     [deleteNode],
@@ -241,7 +282,15 @@ export function CollectionSidebar() {
                 <Plus className="size-4" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-40">
+            <DropdownMenuContent
+              align="end"
+              className="w-40"
+              onCloseAutoFocus={(event) => {
+                if (!renameOnMenuClose.current) return;
+                renameOnMenuClose.current = false;
+                focusRenameInput(event);
+              }}
+            >
               <DropdownMenuItem
                 disabled={!activeCollectionId}
                 onSelect={() => void createRequestIn(null, tree.length)}
@@ -250,7 +299,10 @@ export function CollectionSidebar() {
               </DropdownMenuItem>
               <DropdownMenuItem
                 disabled={!activeCollectionId}
-                onSelect={() => void createFolderIn(null, tree.length)}
+                onSelect={() => {
+                  renameOnMenuClose.current = true;
+                  void createFolderAndRename(null, tree.length);
+                }}
               >
                 Add folder
               </DropdownMenuItem>
@@ -296,11 +348,14 @@ export function CollectionSidebar() {
                 dragActive={dragActive}
                 isDragging={drag?.source.id === item.node.id}
                 isInvalidTarget={drag?.descendantIds.has(item.node.id) ?? false}
+                renaming={renamingId === item.node.id}
+                onStartRename={startRename}
+                onFinishRename={finishRename}
                 onToggleOpen={toggleOpen}
                 onOpenFolder={openFolder}
                 onSelectRequest={selectRequest}
                 onCreateRequest={createRequestIn}
-                onCreateFolder={createFolderIn}
+                onCreateFolder={createFolderAndRename}
                 onDuplicateRequest={duplicateRequest}
                 onDeleteNode={confirmDeleteNode}
                 onBeginDrag={beginDrag}

@@ -26,11 +26,20 @@ bump the minor version.
 
 A merged release PR runs the [Release workflow](../../.github/workflows/release.yml),
 which builds a **draft** release with the Mac DMG, the Windows `-setup.exe`,
-the Linux `.deb` and `.AppImage`, and the signed updater files. The jobs run
-one after another (Mac, Windows, Linux) because each merges its platform into
-the draft's `latest.json`; run in parallel, one would overwrite another. A
-draft missing a platform's `latest.json` entry would leave those users without
-updates, so a failed job means the draft is not ready to publish.
+the Linux `.deb` and `.AppImage`, and the signed updater files. The three
+builds run in parallel and do not repeat `pnpm check`, since the same code
+already passed it on its PR and on `main`. None of them writes `latest.json`:
+parallel jobs rewriting one file would drop a platform. A final `updater` job
+writes it once from the draft's assets and signatures with
+[`scripts/updater-json.mjs`](../../scripts/updater-json.mjs), and fails if any
+platform is missing. A draft without a platform's `latest.json` entry would
+leave those users without updates, so a failed job means the draft is not
+ready to publish.
+
+The release PR itself gets a light check: the dispatched
+[Checks](../../.github/workflows/checks.yml) run confirms it only changes
+version files and that every version agrees. The bot's own `pull_request` run
+skips all jobs, so there is one run to wait on.
 
 On Linux, only the AppImage updates in place. A `.deb` install is updated by
 installing the next release's `.deb`. The Linux build runs on the oldest

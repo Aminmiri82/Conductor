@@ -4,7 +4,7 @@ mod tree;
 pub use import::import_postman_collection;
 #[cfg(test)]
 pub(crate) use tree::{add_folder, read_tree};
-pub use tree::{create_folder, delete_node, get_collection_tree, move_node};
+pub use tree::{create_folder, delete_node, get_collection_tree, move_node, rename_folder};
 pub(crate) use tree::{sort_order_after, sort_order_for_position};
 
 use chrono::Utc;
@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use super::{
     error::CommandError,
-    models::{CollectionSummary, ImportedCollection},
+    models::{CollectionStats, CollectionSummary, ImportedCollection},
 };
 use crate::{storage::StorageError, AppState};
 
@@ -61,6 +61,61 @@ fn add_collection(connection: &Connection, name: &str) -> Result<String, Storage
     Ok(collection_id)
 }
 
+#[tauri::command(async)]
+#[specta::specta]
+pub fn list_collection_stats(
+    state: State<'_, AppState>,
+) -> Result<Vec<CollectionStats>, CommandError> {
+    Ok(state.database.with_read_connection(read_collection_stats)?)
+}
+
+fn read_collection_stats(connection: &Connection) -> Result<Vec<CollectionStats>, StorageError> {
+    let mut statement = connection.prepare(
+        "SELECT id, name,
+                (SELECT COUNT(*) FROM collection_nodes
+                 WHERE collection_id = collections.id AND kind = 'request'),
+                (SELECT COUNT(*) FROM collection_nodes
+                 WHERE collection_id = collections.id AND kind = 'folder'),
+                (SELECT COUNT(*) FROM environments
+                 WHERE collection_id = collections.id)
+         FROM collections ORDER BY updated_at DESC",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok(CollectionStats {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            request_count: row.get(2)?,
+            folder_count: row.get(3)?,
+            environment_count: row.get(4)?,
+        })
+    })?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(StorageError::from)
+}
+
+/// Deletes a collection and, through the schema's cascades, its folders,
+/// requests, environments, and variables. Returns the remaining collections.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn delete_collection(
+    collection_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<CollectionSummary>, CommandError> {
+    Ok(state.database.with_connection(|connection| {
+        remove_collection(connection, &collection_id)?;
+        read_collections(connection)
+    })?)
+}
+
+fn remove_collection(connection: &Connection, collection_id: &str) -> Result<(), StorageError> {
+    connection.execute(
+        "DELETE FROM collections WHERE id = ?",
+        rusqlite::params![collection_id],
+    )?;
+    Ok(())
+}
+
 fn read_collections(connection: &Connection) -> Result<Vec<CollectionSummary>, StorageError> {
     let mut statement =
         connection.prepare("SELECT id, name FROM collections ORDER BY updated_at DESC")?;
@@ -92,6 +147,75 @@ mod tests {
         assert_eq!(collections[0].id, collection);
         assert_eq!(collections[0].name, "My API");
         assert_eq!(read_tree(&connection, &collection).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn deleting_a_collection_removes_everything_in_it_and_nothing_else() {
+        let mut connection = test_connection();
+        let doomed = add_collection(&connection, "Doomed").unwrap();
+        let kept = add_collection(&connection, "Kept").unwrap();
+        let folder = fixtures::folder(&mut connection, &doomed, None);
+        fixtures::request(&mut connection, &doomed, Some(&folder));
+        fixtures::environment(&connection, &doomed);
+        fixtures::request(&mut connection, &kept, None);
+        fixtures::environment(&connection, &kept);
+
+        remove_collection(&connection, &doomed).unwrap();
+
+        let collections = read_collections(&connection).unwrap();
+        assert_eq!(collections.len(), 1);
+        assert_eq!(collections[0].id, kept);
+        let count = |sql: &str| -> i64 {
+            connection
+                .query_row(sql, rusqlite::params![doomed], |row| row.get(0))
+                .unwrap()
+        };
+        assert_eq!(
+            count("SELECT COUNT(*) FROM requests WHERE collection_id = ?"),
+            0
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM collection_nodes WHERE collection_id = ?"),
+            0
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM environments WHERE collection_id = ?"),
+            0
+        );
+        assert_eq!(read_tree(&connection, &kept).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn collection_stats_count_requests_folders_and_environments_per_collection() {
+        let mut connection = test_connection();
+        let busy = add_collection(&connection, "Busy").unwrap();
+        let empty = add_collection(&connection, "Empty").unwrap();
+        let folder = fixtures::folder(&mut connection, &busy, None);
+        fixtures::folder(&mut connection, &busy, Some(&folder));
+        fixtures::request(&mut connection, &busy, None);
+        fixtures::request(&mut connection, &busy, Some(&folder));
+        fixtures::request(&mut connection, &busy, Some(&folder));
+        fixtures::environment(&connection, &busy);
+
+        let stats = read_collection_stats(&connection).unwrap();
+        let of = |id: &str| stats.iter().find(|stat| stat.id == id).unwrap();
+
+        assert_eq!(
+            (
+                of(&busy).request_count,
+                of(&busy).folder_count,
+                of(&busy).environment_count
+            ),
+            (3, 2, 1)
+        );
+        assert_eq!(
+            (
+                of(&empty).request_count,
+                of(&empty).folder_count,
+                of(&empty).environment_count
+            ),
+            (0, 0, 0)
+        );
     }
 
     #[test]

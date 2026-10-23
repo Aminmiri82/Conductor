@@ -14,6 +14,7 @@ import {
   moveNodeInTree,
   placementAfterRequest,
   removeNodeById,
+  renameFolderNode,
   requestIdsForNode,
   updateRequestNode,
 } from "@/features/collections/tree";
@@ -58,6 +59,7 @@ type WorkspaceState = {
   loadEnvironments: () => Promise<void>;
   importCollection: (path: string) => Promise<void>;
   createCollection: (name: string) => Promise<void>;
+  deleteCollection: (collectionId: string) => Promise<void>;
   importEnvironment: (
     collectionId: string,
     contents: string,
@@ -74,10 +76,12 @@ type WorkspaceState = {
     parentId: string | null | undefined,
     position: number,
   ) => Promise<void>;
+  // Resolves to the new folder's node id, so the sidebar can start renaming it.
   createFolderIn: (
     parentId: string | null | undefined,
     position: number,
-  ) => Promise<void>;
+  ) => Promise<string | undefined>;
+  renameFolder: (nodeId: string, name: string) => Promise<void>;
   createRequestNextToActive: () => Promise<void>;
   duplicateRequest: (requestId: string) => Promise<void>;
   deleteNode: (node: CollectionNode) => Promise<void>;
@@ -156,6 +160,32 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ error: undefined });
     try {
       await showNewCollection(await api.createCollection(name));
+    } catch (error) {
+      set({ error: String(error) });
+    }
+  },
+
+  deleteCollection: async (collectionId) => {
+    set({ error: undefined });
+    try {
+      const collections = await api.deleteCollection(collectionId);
+      set({ collections });
+      // Its environments went with it.
+      await get().loadEnvironments();
+      if (get().activeCollectionId !== collectionId) return;
+      const next = collections[0]?.id;
+      if (next) {
+        await get().selectCollection(next);
+        return;
+      }
+      set({
+        tree: [],
+        activeCollectionId: undefined,
+        activeRequestId: undefined,
+        tabs: [],
+      });
+      useDraftStore.getState().clearAll();
+      useResponseStore.getState().clearAll();
     } catch (error) {
       set({ error: String(error) });
     }
@@ -306,6 +336,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       set((state) => ({
         tree: insertNodeAt(state.tree, parentId ?? null, position, node),
       }));
+      return nodeId;
+    } catch (error) {
+      set({ error: String(error) });
+    }
+  },
+
+  renameFolder: async (nodeId, name) => {
+    set({ error: undefined });
+    try {
+      await api.renameFolder(nodeId, name);
+      set((state) => ({ tree: renameFolderNode(state.tree, nodeId, name) }));
     } catch (error) {
       set({ error: String(error) });
     }

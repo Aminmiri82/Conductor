@@ -23,6 +23,11 @@ export const commands = {
 	createEnvironment: (input: CreateEnvironmentInput) => __TAURI_INVOKE<string>("create_environment", { input }),
 	createFolder: (input: CreateFolderInput) => __TAURI_INVOKE<string>("create_folder", { input }),
 	createRequest: (input: CreateRequestInput) => __TAURI_INVOKE<CreateRequestResult>("create_request", { input }),
+	/**
+	 *  Deletes a collection and, through the schema's cascades, its folders,
+	 *  requests, environments, and variables. Returns the remaining collections.
+	 */
+	deleteCollection: (collectionId: string) => __TAURI_INVOKE<CollectionSummary[]>("delete_collection", { collectionId }),
 	deleteEnvironment: (environmentId: string) => __TAURI_INVOKE<null>("delete_environment", { environmentId }),
 	/**
 	 *  Copies an environment and all its variables into the same collection,
@@ -36,10 +41,16 @@ export const commands = {
 	importPostmanEnvironment: (collectionId: string, postmanJson: string, fileName: string | null) => __TAURI_INVOKE<string>("import_postman_environment", { collectionId, postmanJson, fileName }),
 	/**  Reads the file at `path` in Rust, so a large collection never crosses IPC. */
 	importPostmanCollection: (path: string) => __TAURI_INVOKE<ImportedCollection>("import_postman_collection", { path }),
+	listCollectionStats: () => __TAURI_INVOKE<CollectionStats[]>("list_collection_stats"),
 	listCollections: () => __TAURI_INVOKE<CollectionSummary[]>("list_collections"),
 	listEnvironments: () => __TAURI_INVOKE<EnvironmentSummary[]>("list_environments"),
 	listVariables: (target: VariableTarget) => __TAURI_INVOKE<VariableEntry[]>("list_variables", { target }),
 	renameEnvironment: (input: RenameEnvironmentInput) => __TAURI_INVOKE<null>("rename_environment", { input }),
+	/**
+	 *  Renames a folder. Requests are renamed by saving the request, since their
+	 *  name lives on the request row too.
+	 */
+	renameFolder: (nodeId: string, name: string) => __TAURI_INVOKE<null>("rename_folder", { nodeId, name }),
 	resolveRequest: (request: RequestDetail, environmentId: string | null) => __TAURI_INVOKE<ResolvedRequestPreview>("resolve_request", { request, environmentId }),
 	moveNode: (input: MoveNodeInput) => __TAURI_INVOKE<null>("move_node", { input }),
 	saveRequest: (request: RequestDetail) => __TAURI_INVOKE<null>("save_request", { request }),
@@ -117,6 +128,18 @@ export type CollectionNode = {
  *  neither side needs a null for the other's fields.
  */
 export type CollectionNodeKind = { kind: "folder"; children: CollectionNode[] } | { kind: "request"; requestId: string; method: string };
+
+/**
+ *  A collection with what it holds, for the settings page. Kept apart from
+ *  `CollectionSummary` so startup never pays for the counts.
+ */
+export type CollectionStats = {
+	id: string,
+	name: string,
+	requestCount: number,
+	folderCount: number,
+	environmentCount: number,
+};
 
 export type CollectionSummary = {
 	id: string,

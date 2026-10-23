@@ -23,6 +23,7 @@ concurrency:
 jobs:
   draft:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       id: ${{ steps.draft.outputs.id }}
       sha: ${{ steps.draft.outputs.sha }}
@@ -60,9 +61,13 @@ jobs:
             core.setOutput('sha', commit.sha);
             core.setOutput('notes', release.body);
 
+  # The three builds run in parallel and skip `pnpm check`: the same code
+  # already passed it on its PR and again on main. None of them writes
+  # latest.json; the `updater` job does that once all three have uploaded.
   mac:
     needs: draft
     runs-on: macos-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -83,8 +88,6 @@ jobs:
         env:
           RELEASE_TAG: ${{ inputs.release-tag }}
         run: node scripts/check-release-version.mjs
-      - run: pnpm check
-      - run: git diff --exit-code -- src-tauri/Cargo.lock src/bindings.ts
       - name: Build release draft
         uses: tauri-apps/tauri-action@v1
         env:
@@ -96,7 +99,10 @@ jobs:
           tagName: ${{ inputs.release-tag }}
           releaseBody: ${{ needs.draft.outputs.notes }}
           releaseDraft: true
+          uploadUpdaterJson: false
           args: --target aarch64-apple-darwin --bundles app,dmg --config src-tauri/tauri.release.conf.json
+      # The build must not have changed the lockfile it was given.
+      - run: git diff --exit-code -- src-tauri/Cargo.lock
       # Records what this release ships and compares it with the last published
       # release, so the numbers are in front of Yara before the draft is
       # published. Report only: PRs are where budgets block.
@@ -119,11 +125,9 @@ jobs:
           fi
 
   windows:
-    # Runs after the Mac build, not beside it: tauri-action merges each
-    # platform into the draft's latest.json, and two jobs rewriting it at once
-    # would drop one platform from the updater.
-    needs: [draft, mac]
+    needs: draft
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -140,7 +144,6 @@ jobs:
         with:
           workspaces: src-tauri
       - run: pnpm install --frozen-lockfile
-      - run: pnpm check
       # The NSIS installer is the .exe users download. It installs per user,
       # so it needs no admin rights, and it is also the signed updater artifact.
       - name: Build release draft
@@ -154,22 +157,25 @@ jobs:
           tagName: ${{ inputs.release-tag }}
           releaseBody: ${{ needs.draft.outputs.notes }}
           releaseDraft: true
+          uploadUpdaterJson: false
           args: --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/tauri.release.conf.json
 
   linux:
-    # Last in the latest.json chain, for the same reason Windows waits on Mac.
-    needs: [draft, windows]
+    needs: draft
     # The oldest supported Ubuntu, because a binary built against a newer glibc
     # won't start on older systems.
     runs-on: ubuntu-22.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.draft.outputs.sha }}
       - name: Install Tauri's Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libfuse2
+        uses: awalsh128/cache-apt-pkgs-action@v1.6.3
+        timeout-minutes: 10
+        with:
+          packages: libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libfuse2
+          version: 1
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -182,7 +188,6 @@ jobs:
         with:
           workspaces: src-tauri
       - run: pnpm install --frozen-lockfile
-      - run: pnpm check
       # The AppImage runs on most distros and is the updater artifact; the .deb
       # is the native Ubuntu install, updated by reinstalling.
       - name: Build release draft
@@ -196,4 +201,34 @@ jobs:
           tagName: ${{ inputs.release-tag }}
           releaseBody: ${{ needs.draft.outputs.notes }}
           releaseDraft: true
+          uploadUpdaterJson: false
           args: --target x86_64-unknown-linux-gnu --bundles deb,appimage --config src-tauri/tauri.release.conf.json
+
+  updater:
+    # Written once, after every platform has uploaded its signed artifact.
+    needs: [draft, mac, windows, linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.draft.outputs.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - name: Write latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.draft.outputs.id }}
+          RELEASE_TAG: ${{ inputs.release-tag }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > release.json
+          mkdir sigs
+          jq -r '.assets[] | select(.name | endswith(".sig")) | "\(.id) \(.name)"' release.json |
+            while read -r id name; do
+              gh api -H "Accept: application/octet-stream" \
+                "repos/$GITHUB_REPOSITORY/releases/assets/$id" > "sigs/$name"
+            done
+          node scripts/updater-json.mjs release.json sigs > latest.json
+          jq '{version, platforms: (.platforms | keys)}' latest.json
+          gh release upload "$RELEASE_TAG" latest.json --clobber
