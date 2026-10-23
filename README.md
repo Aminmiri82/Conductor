@@ -14,16 +14,29 @@ Conductor is a desktop API client built with Tauri, React, and Rust. It aims to 
 
 ## Install
 
-To install Conductor, download the `.dmg` from the
-[latest release](https://github.com/Aminmiri82/Conductor/releases/latest)
-(Apple Silicon only), open it, and drag Conductor into Applications. The app
-is not notarized, so macOS blocks the first launch. Try to open it once, then
-choose **Open Anyway** in System Settings → Privacy & Security. After that,
-updates install from the app menu or Settings → About.
+Download Conductor from the
+[latest release](https://github.com/Aminmiri82/Conductor/releases/latest).
+
+**macOS** (Apple Silicon only): download the `.dmg`, open it, and drag
+Conductor into Applications. The app is not notarized, so macOS blocks the
+first launch. Try to open it once, then choose **Open Anyway** in System
+Settings → Privacy & Security. After that, updates install from the app menu or
+Settings → About.
+
+**Windows** (x64): download and run the `-setup.exe`. It installs for your user
+only, so it needs no administrator rights. The installer is not code signed, so
+SmartScreen may warn on first run; choose **More info** → **Run anyway**. After
+that, updates install from Settings → About (Ctrl+,).
+
+**Linux** (x64, Ubuntu 22.04 or newer): on Ubuntu or Debian, download the
+`.deb` and install it with `sudo apt install ./Conductor_*.deb`; update by
+installing the next release's `.deb`. On other distros, download the
+`.AppImage`, make it executable (`chmod +x`), and run it; it updates from
+Settings → About (Ctrl+,).
 
 ## Getting started (development)
 
-You need Node.js 22.12+, [pnpm](https://pnpm.io/), and the [Rust toolchain and Tauri prerequisites](https://tauri.app/start/prerequisites/).
+You need Node.js 24.22.1+, [pnpm](https://pnpm.io/), and the [Rust toolchain and Tauri prerequisites](https://tauri.app/start/prerequisites/).
 
 ```bash
 pnpm install

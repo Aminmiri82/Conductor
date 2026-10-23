@@ -1,0 +1,6 @@
+# LF everywhere, including Windows checkouts: prettier, the bindings check, and
+# the query plan test all compare text with LF line endings.
+* text=auto eol=lf
+*.ico binary
+*.icns binary
+*.png binary

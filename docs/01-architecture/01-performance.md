@@ -95,7 +95,7 @@ A deliberate regression lands in one of two ways, both Yara's call: raise the
 budget in the PR, with the numbers in its description, or add the
 `perf-regression-approved` label for a one-off.
 
-Each [Mac release](../../.github/workflows/mac-release.yml) also records its
+Each [release](../../.github/workflows/release.yml) also records its Mac
 binary and DMG sizes as `perf-size.json` on the draft release and compares them
 with the last published release. That comparison only reports.
 

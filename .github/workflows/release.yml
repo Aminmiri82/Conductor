@@ -1,4 +1,4 @@
-name: Mac release
+name: Release
 
 on:
   workflow_call:
@@ -17,7 +17,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: mac-release-${{ inputs.release-tag }}
+  group: release-${{ inputs.release-tag }}
   cancel-in-progress: false
 
 jobs:
@@ -60,7 +60,7 @@ jobs:
             core.setOutput('sha', commit.sha);
             core.setOutput('notes', release.body);
 
-  build:
+  mac:
     needs: draft
     runs-on: macos-latest
     steps:
@@ -70,7 +70,7 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version-file: .node-version
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -117,3 +117,83 @@ jobs:
             echo "No perf-size.json on the previous release yet; this release starts the baseline."
             node scripts/perf-size.mjs compare perf-size.json perf-size.json
           fi
+
+  windows:
+    # Runs after the Mac build, not beside it: tauri-action merges each
+    # platform into the draft's latest.json, and two jobs rewriting it at once
+    # would drop one platform from the updater.
+    needs: [draft, mac]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.draft.outputs.sha }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      # The NSIS installer is the .exe users download. It installs per user,
+      # so it needs no admin rights, and it is also the signed updater artifact.
+      - name: Build release draft
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        with:
+          releaseId: ${{ needs.draft.outputs.id }}
+          tagName: ${{ inputs.release-tag }}
+          releaseBody: ${{ needs.draft.outputs.notes }}
+          releaseDraft: true
+          args: --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/tauri.release.conf.json
+
+  linux:
+    # Last in the latest.json chain, for the same reason Windows waits on Mac.
+    needs: [draft, windows]
+    # The oldest supported Ubuntu, because a binary built against a newer glibc
+    # won't start on older systems.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.draft.outputs.sha }}
+      - name: Install Tauri's Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libfuse2
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      # The AppImage runs on most distros and is the updater artifact; the .deb
+      # is the native Ubuntu install, updated by reinstalling.
+      - name: Build release draft
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        with:
+          releaseId: ${{ needs.draft.outputs.id }}
+          tagName: ${{ inputs.release-tag }}
+          releaseBody: ${{ needs.draft.outputs.notes }}
+          releaseDraft: true
+          args: --target x86_64-unknown-linux-gnu --bundles deb,appimage --config src-tauri/tauri.release.conf.json
