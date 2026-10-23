@@ -27,7 +27,7 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version-file: .node-version
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
@@ -37,3 +37,23 @@ jobs:
       - run: node scripts/check-release-version.mjs
       - run: pnpm check
       - run: git diff --exit-code -- src-tauri/Cargo.lock src/bindings.ts
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      # Catches installer breakage on the PR instead of in the release draft. A
+      # debug build skips LTO, which dominates release compile time.
+      - name: Build the installer
+        run: pnpm tauri build --debug --bundles nsis

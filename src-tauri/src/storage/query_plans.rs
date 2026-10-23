@@ -151,7 +151,9 @@ fn source_queries() -> Vec<(String, String)> {
             .strip_prefix(&root)
             .unwrap_or(&path)
             .display()
-            .to_string();
+            .to_string()
+            // Windows paths use backslashes; TEST_ONLY_FILES uses slashes.
+            .replace('\\', "/");
         if TEST_ONLY_FILES.contains(&name.as_str()) {
             continue;
         }

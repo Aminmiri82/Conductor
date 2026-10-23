@@ -45,7 +45,7 @@ jobs:
   build:
     needs: prepare
     if: needs.prepare.outputs.release-created == 'true'
-    uses: ./.github/workflows/mac-release.yml
+    uses: ./.github/workflows/release.yml
     with:
       release-tag: ${{ needs.prepare.outputs.tag }}
     secrets: inherit
