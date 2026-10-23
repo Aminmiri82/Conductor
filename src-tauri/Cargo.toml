@@ -32,7 +32,7 @@ tokio-util = { version = "0.7.17", features = ["io"] }
 thiserror = "2.0.18"
 uuid = { version = "1.23.1", features = ["v4"] }
 chrono = "0.4.44"
-rusqlite = { version = "0.32.1", features = ["bundled"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 # Same major version and TLS setup as tauri-plugin-updater, so only one
 # reqwest and one rustls (with ring, not aws-lc-rs) are compiled.
 reqwest = { version = "0.13", default-features = false, features = ["form", "json", "multipart", "query", "rustls-no-provider", "stream"] }
