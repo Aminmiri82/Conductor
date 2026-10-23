@@ -11,7 +11,8 @@ mod test_server;
 
 use commands::collections::{
     create_collection, create_folder, delete_collection, delete_node, get_collection_tree,
-    import_postman_collection, list_collection_stats, list_collections, move_node, rename_folder,
+    import_postman_collection, list_collection_stats, list_collections, move_node,
+    rename_collection, rename_folder,
 };
 use commands::requests::{
     create_request, duplicate_request, get_request, resolve_request, save_request,
@@ -44,6 +45,7 @@ pub struct AppState {
 pub enum AppMenuAction {
     OpenRequest,
     NewRequest,
+    NewFolder,
     DuplicateRequest,
     SaveRequest,
     SendRequest,
@@ -61,6 +63,7 @@ impl AppMenuAction {
         Some(match id {
             "open_request" => Self::OpenRequest,
             "new_request" => Self::NewRequest,
+            "new_folder" => Self::NewFolder,
             "duplicate_request" => Self::DuplicateRequest,
             "save_request" => Self::SaveRequest,
             "send_request" => Self::SendRequest,
@@ -103,6 +106,7 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             list_collections,
             list_environments,
             list_variables,
+            rename_collection,
             rename_environment,
             rename_folder,
             resolve_request,
@@ -205,6 +209,9 @@ fn build_app_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result
         &[
             &MenuItemBuilder::with_id("new_request", "New Request")
                 .accelerator("CmdOrCtrl+N")
+                .build(app)?,
+            &MenuItemBuilder::with_id("new_folder", "New Folder")
+                .accelerator("CmdOrCtrl+Shift+N")
                 .build(app)?,
             &MenuItemBuilder::with_id("open_request", "Open Request...")
                 .accelerator("CmdOrCtrl+O")

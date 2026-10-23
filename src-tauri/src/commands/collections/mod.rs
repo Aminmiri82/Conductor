@@ -108,6 +108,37 @@ pub fn delete_collection(
     })?)
 }
 
+#[tauri::command(async)]
+#[specta::specta]
+pub fn rename_collection(
+    collection_id: String,
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<CollectionSummary>, CommandError> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("A collection needs a name.".into());
+    }
+    Ok(state.database.with_connection(|connection| {
+        update_collection_name(connection, &collection_id, name)?;
+        read_collections(connection)
+    })?)
+}
+
+// Leaves `updated_at` alone: the list is ordered by it, and a rename should not
+// move the collection while the user is looking at it.
+fn update_collection_name(
+    connection: &Connection,
+    collection_id: &str,
+    name: &str,
+) -> Result<(), StorageError> {
+    connection.execute(
+        "UPDATE collections SET name = ? WHERE id = ?",
+        rusqlite::params![name, collection_id],
+    )?;
+    Ok(())
+}
+
 fn remove_collection(connection: &Connection, collection_id: &str) -> Result<(), StorageError> {
     connection.execute(
         "DELETE FROM collections WHERE id = ?",
@@ -216,6 +247,32 @@ mod tests {
             ),
             (0, 0, 0)
         );
+    }
+
+    #[test]
+    fn renaming_a_collection_keeps_its_place_in_the_list() {
+        let connection = test_connection();
+        let first = add_collection(&connection, "First").unwrap();
+        let second = add_collection(&connection, "Second").unwrap();
+        let order = |connection: &Connection| {
+            read_collections(connection)
+                .unwrap()
+                .into_iter()
+                .map(|collection| (collection.id, collection.name))
+                .collect::<Vec<_>>()
+        };
+        let before = order(&connection);
+
+        update_collection_name(&connection, &first, "Renamed").unwrap();
+
+        let after = order(&connection);
+        assert_eq!(
+            after.iter().map(|(id, _)| id).collect::<Vec<_>>(),
+            before.iter().map(|(id, _)| id).collect::<Vec<_>>()
+        );
+        let name_of = |id: &str| after.iter().find(|(row, _)| row == id).unwrap().1.clone();
+        assert_eq!(name_of(&first), "Renamed");
+        assert_eq!(name_of(&second), "Second");
     }
 
     #[test]

@@ -15,6 +15,7 @@ export function ShortcutsPane() {
       title: "Requests",
       rows: [
         ["New request", ["⌘", "N"]],
+        ["New folder", ["⌘", "⇧", "N"]],
         ["Send", ["⌘", "↵"]],
         ["Save", ["⌘", "S"]],
         ["Duplicate tab", ["⌘", "D"]],

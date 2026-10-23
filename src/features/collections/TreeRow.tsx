@@ -32,7 +32,6 @@ type TreeRowProps = {
   isDragging: boolean;
   // A descendant of the dragged node: dropping here would nest it in itself.
   isInvalidTarget: boolean;
-  // This folder's name is being edited in place.
   renaming: boolean;
   onStartRename: (nodeId: string) => void;
   // `null` cancels the rename.

@@ -29,6 +29,7 @@ export const api = {
   importPostmanCollection: commands.importPostmanCollection,
   createCollection: commands.createCollection,
   deleteCollection: commands.deleteCollection,
+  renameCollection: commands.renameCollection,
   getRequest: commands.getRequest,
   createRequest: (
     collectionId: string,
