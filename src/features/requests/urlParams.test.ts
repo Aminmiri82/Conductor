@@ -3,6 +3,7 @@ import {
   applyPathParamRowChanges,
   loadQuery,
   buildQueryString,
+  derivePathParamRows,
   deriveQueryRows,
   parsePathParamKeys,
   replaceQueryInUrl,
@@ -117,5 +118,21 @@ describe("query params", () => {
     expect(
       replaceQueryInUrl("https://api.test/search?old=1#results", query),
     ).toBe("https://api.test/search?q=a+b#results");
+  });
+});
+
+// The params table and Variables tab re-render when these arrays change, so
+// typing in the URL path must not hand back new arrays for the same rows.
+describe("URL edits that leave the rows unchanged", () => {
+  it("keeps the same query rows when only the path changes", () => {
+    const query = deriveQueryRows("https://api.test/item?page=2", []);
+    expect(deriveQueryRows("https://api.test/items?page=2", query)).toBe(query);
+  });
+
+  it("keeps the same path param rows when only the query changes", () => {
+    const pathParams = derivePathParamRows("https://api.test/users/:id", []);
+    expect(
+      derivePathParamRows("https://api.test/users/:id?page=2", pathParams),
+    ).toBe(pathParams);
   });
 });

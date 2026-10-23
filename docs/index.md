@@ -14,8 +14,8 @@ reading every page is not required.
 - [IPC And Generated Types](./01-architecture/02-ipc-and-types.md): How the
   frontend calls Rust, how the TypeScript types are generated, and how to add
   a command.
-- [Storage](./01-architecture/03-storage.md): Where data lives, how the schema
-  changes before 1.0, and how to run against a throwaway database.
+- [Storage](./01-architecture/03-storage.md): Where data lives, how to change
+  the schema without losing data, and how to run against a throwaway database.
 
 Testing rules live in the
 [writing-tests skill](../.agents/skills/writing-tests/SKILL.md).

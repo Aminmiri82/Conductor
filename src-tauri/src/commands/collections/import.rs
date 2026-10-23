@@ -2,6 +2,8 @@
 //! structs below (unknown fields ignored, missing ones defaulted), mapped to
 //! the same models the editor saves, and written in one transaction.
 
+use std::path::Path;
+
 use chrono::Utc;
 use rusqlite::Connection;
 use serde::Deserialize;
@@ -9,12 +11,13 @@ use serde_json::Value;
 use tauri::State;
 use uuid::Uuid;
 
-use super::tree::sort_order_at;
+use super::read_collections;
+use super::tree::{read_tree, sort_order_at};
 use crate::commands::{
     error::CommandError,
     models::{
         ApiKeyLocation, AuthConfig, AuthType, BodyField, BodyFieldType, BodyMode, FileBody,
-        GraphqlBody, KeyValue, RequestBody, VariableTarget,
+        GraphqlBody, ImportedCollection, KeyValue, RequestBody, VariableTarget,
     },
     postman::{
         flag_or_false, lenient_enum, lenient_list, null_default, object_or_text, stringified, text,
@@ -27,18 +30,30 @@ use crate::storage::{
 };
 use crate::AppState;
 
+/// Reads the file at `path` in Rust, so a large collection never crosses IPC.
 #[tauri::command(async)]
 #[specta::specta]
 pub fn import_postman_collection(
-    postman_json: String,
+    path: String,
     state: State<'_, AppState>,
-) -> Result<String, CommandError> {
-    let collection: PostmanCollection = serde_json::from_str(&postman_json)?;
+) -> Result<ImportedCollection, CommandError> {
+    import_file(&state, Path::new(&path))
+}
+
+fn import_file(state: &AppState, path: &Path) -> Result<ImportedCollection, CommandError> {
+    let collection: PostmanCollection = serde_json::from_slice(&std::fs::read(path)?)?;
     let now = Utc::now().to_rfc3339();
 
-    Ok(state
+    let collection_id = state
         .database
-        .with_connection(|connection| store_collection(connection, &collection, &now))?)
+        .with_connection(|connection| store_collection(connection, &collection, &now))?;
+    Ok(state.database.with_read_connection(|connection| {
+        Ok(ImportedCollection {
+            collections: read_collections(connection)?,
+            tree: read_tree(connection, &collection_id)?,
+            collection_id,
+        })
+    })?)
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -487,6 +502,41 @@ mod tests {
     fn import(connection: &mut Connection, collection: Value) -> String {
         let collection = serde_json::from_value(collection).expect("collection should parse");
         store_collection(connection, &collection, "now").expect("collection should import")
+    }
+
+    #[test]
+    fn importing_a_file_returns_the_collection_list_and_tree_the_sidebar_shows() {
+        let app = crate::fixtures::TestApp::new();
+        let path = std::env::temp_dir().join(format!("conductor-import-{}.json", Uuid::new_v4()));
+        let collection = json!({
+            "info": { "name": "Shop" },
+            "item": [{ "name": "Orders", "item": [{ "name": "List orders", "request": "https://shop.test/orders" }] }]
+        });
+        std::fs::write(&path, collection.to_string()).unwrap();
+
+        let imported = import_file(&app.state, &path);
+        std::fs::remove_file(&path).unwrap();
+        let imported = imported.unwrap();
+
+        let names = |nodes: &[crate::commands::models::CollectionNode]| {
+            nodes
+                .iter()
+                .map(|node| node.name.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            imported
+                .collections
+                .iter()
+                .map(|collection| (collection.id.as_str(), collection.name.as_str()))
+                .collect::<Vec<_>>(),
+            [(imported.collection_id.as_str(), "Shop")]
+        );
+        assert_eq!(names(&imported.tree), ["Orders"]);
+        let CollectionNodeKind::Folder { children } = &imported.tree[0].kind else {
+            panic!("expected a folder");
+        };
+        assert_eq!(names(children), ["List orders"]);
     }
 
     fn imported(collection: Value) -> (Connection, String) {

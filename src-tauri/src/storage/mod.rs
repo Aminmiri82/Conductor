@@ -1,5 +1,7 @@
 mod connection;
 mod migrations;
+#[cfg(test)]
+mod query_plans;
 mod rows;
 
 pub use rows::{

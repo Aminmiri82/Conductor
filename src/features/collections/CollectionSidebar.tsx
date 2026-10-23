@@ -1,11 +1,5 @@
-import {
-  type ChangeEvent,
-  useCallback,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Import, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -34,7 +28,6 @@ import {
 const TREE_OVERSCAN = 8;
 
 export function CollectionSidebar() {
-  const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const collections = useWorkspaceStore((state) => state.collections);
   const tree = useWorkspaceStore((state) => state.tree);
@@ -148,12 +141,11 @@ export function CollectionSidebar() {
     setTargetState(null);
   }, []);
 
-  async function onFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    const text = await file.text();
-    await importCollection(text);
-    event.target.value = "";
+  async function pickCollectionFile() {
+    const path = await open({
+      filters: [{ name: "Postman collection", extensions: ["json"] }],
+    });
+    if (path) await importCollection(path);
   }
 
   const performDrop = useCallback(async () => {
@@ -193,18 +185,11 @@ export function CollectionSidebar() {
             variant="ghost"
             size="icon"
             className="size-7 text-[var(--app-dim)] hover:text-[var(--app-text)]"
-            onClick={() => inputRef.current?.click()}
+            onClick={() => void pickCollectionFile()}
             title="Import Postman collection"
           >
             <Import className="size-4" />
           </Button>
-          <input
-            ref={inputRef}
-            className="hidden"
-            type="file"
-            accept=".json,application/json"
-            onChange={onFileChange}
-          />
         </div>
         <div className="flex items-center gap-2">
           <Select

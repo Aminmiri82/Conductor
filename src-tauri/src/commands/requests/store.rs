@@ -216,7 +216,8 @@ pub fn save_request(
     }
 
     Ok(state.database.with_connection(|connection| {
-        connection.execute(
+        let tx = connection.transaction()?;
+        tx.execute(
             "UPDATE requests
              SET method = ?, url = ?, headers_json = ?, query_json = ?, path_params_json = ?,
                  auth_json = ?, body_json = ?, updated_at = ?
@@ -241,10 +242,11 @@ pub fn save_request(
                 request.id
             ],
         )?;
-        connection.execute(
+        tx.execute(
             "UPDATE collection_nodes SET name = ?, updated_at = ? WHERE request_id = ?",
             params![request.name, now, request.id],
         )?;
+        tx.commit()?;
         Ok(())
     })?)
 }

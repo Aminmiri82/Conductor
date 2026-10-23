@@ -275,6 +275,9 @@ export function ResponseViewer({
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
+  // The editor is read-only, so its document is always the last value applied
+  // here; comparing against this avoids rebuilding a large document as a string.
+  const appliedRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -298,6 +301,7 @@ export function ResponseViewer({
       }),
     });
     viewRef.current = view;
+    appliedRef.current = value;
     return () => {
       view.destroy();
       viewRef.current = null;
@@ -309,10 +313,11 @@ export function ResponseViewer({
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    if (view.state.doc.toString() === value) return;
+    if (appliedRef.current === value) return;
     view.dispatch({
       changes: { from: 0, to: view.state.doc.length, insert: value },
     });
+    appliedRef.current = value;
   }, [value]);
 
   return (

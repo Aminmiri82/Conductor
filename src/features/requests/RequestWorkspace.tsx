@@ -13,17 +13,19 @@ import { RequestUrlBar } from "@/features/requests/RequestUrlBar";
 import { KeyValueTable } from "@/features/requests/KeyValueTable";
 import { BodyEditor } from "@/features/requests/BodyEditor";
 import { AuthEditor } from "@/features/requests/AuthEditor";
-import { VariableEditor } from "@/features/variables/VariableEditor";
+import {
+  useRequestVariableNames,
+  VariableEditor,
+} from "@/features/variables/VariableEditor";
 import { RequestTabsBar } from "@/features/requests/RequestTabsBar";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
-import { useDraftStore } from "@/features/workspace/draftStore";
+import { useDraftStore, useDraftValue } from "@/features/workspace/draftStore";
 import { useResponseStore } from "@/features/workspace/responseStore";
 import { useWorkspaceUiStore } from "@/features/workspace/workspaceUiStore";
 import { api } from "@/lib/tauri";
 import type {
   KeyValue,
   RequestBody,
-  RequestDetail,
   ResolvedRequestPreview,
   SendRequestResult,
 } from "@/features/types";
@@ -74,16 +76,6 @@ export function RequestWorkspace() {
 
 const NO_UNRESOLVED: string[] = [];
 const NO_VALUES: ResolvedRequestPreview["variableValues"] = {};
-
-function useDraftValue<T>(
-  requestId: string,
-  select: (request: RequestDetail) => T,
-): T | undefined {
-  return useDraftStore((state) => {
-    const draft = state.drafts.get(requestId);
-    return draft && select(draft);
-  });
-}
 
 function UrlBarSection({ requestId }: { requestId: string }) {
   const name = useDraftValue(requestId, (request) => request.name);
@@ -266,9 +258,19 @@ function BodySection({ requestId }: { requestId: string }) {
 }
 
 function VariablesSection({ requestId }: { requestId: string }) {
-  const request = useDraftStore((state) => state.drafts.get(requestId));
+  const collectionId = useDraftValue(
+    requestId,
+    (request) => request.collectionId,
+  );
+  const variableNames = useRequestVariableNames(requestId);
   // Keyed so a request switch drops the previous request's unsaved edits.
-  return request ? <VariableEditor key={requestId} request={request} /> : null;
+  return collectionId !== undefined ? (
+    <VariableEditor
+      key={requestId}
+      collectionId={collectionId}
+      variableNames={variableNames}
+    />
+  ) : null;
 }
 
 function ResponsePane({ requestId }: { requestId: string }) {

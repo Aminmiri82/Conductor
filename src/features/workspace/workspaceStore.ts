@@ -55,7 +55,7 @@ type WorkspaceState = {
   error?: string;
   loadCollections: () => Promise<void>;
   loadEnvironments: () => Promise<void>;
-  importCollection: (json: string) => Promise<void>;
+  importCollection: (path: string) => Promise<void>;
   importEnvironment: (
     collectionId: string,
     contents: string,
@@ -141,12 +141,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
-  importCollection: async (json) => {
+  importCollection: async (path) => {
     set({ error: undefined });
     try {
-      const collectionId = await api.importPostmanCollection(json);
-      const collections = await api.listCollections();
-      const tree = await api.getCollectionTree(collectionId);
+      const { collectionId, collections, tree } =
+        await api.importPostmanCollection(path);
       set({
         collections,
         tree,

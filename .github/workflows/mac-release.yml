@@ -97,3 +97,23 @@ jobs:
           releaseBody: ${{ needs.draft.outputs.notes }}
           releaseDraft: true
           args: --target aarch64-apple-darwin --bundles app,dmg --config src-tauri/tauri.release.conf.json
+      # Records what this release ships and compares it with the last published
+      # release, so the numbers are in front of Yara before the draft is
+      # published. Report only: PRs are where budgets block.
+      - name: Record release sizes
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.release-tag }}
+        run: |
+          release=src-tauri/target/aarch64-apple-darwin/release
+          node scripts/perf-size.mjs measure --binary "$release/conductor" \
+            --dmg "$(ls "$release"/bundle/dmg/*.dmg | head -n 1)" --out perf-size.json
+          gh release upload "$RELEASE_TAG" perf-size.json --clobber
+          previous=$(gh release list --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName')
+          if [ -n "$previous" ] && gh release download "$previous" --pattern perf-size.json --output previous-perf-size.json; then
+            node scripts/perf-size.mjs compare previous-perf-size.json perf-size.json
+          else
+            echo "No perf-size.json on the previous release yet; this release starts the baseline."
+            node scripts/perf-size.mjs compare perf-size.json perf-size.json
+          fi

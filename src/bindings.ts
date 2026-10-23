@@ -29,7 +29,8 @@ export const commands = {
 	getCollectionTree: (collectionId: string) => __TAURI_INVOKE<CollectionNode[]>("get_collection_tree", { collectionId }),
 	getRequest: (requestId: string) => __TAURI_INVOKE<RequestDetail>("get_request", { requestId }),
 	importPostmanEnvironment: (collectionId: string, postmanJson: string, fileName: string | null) => __TAURI_INVOKE<string>("import_postman_environment", { collectionId, postmanJson, fileName }),
-	importPostmanCollection: (postmanJson: string) => __TAURI_INVOKE<string>("import_postman_collection", { postmanJson }),
+	/**  Reads the file at `path` in Rust, so a large collection never crosses IPC. */
+	importPostmanCollection: (path: string) => __TAURI_INVOKE<ImportedCollection>("import_postman_collection", { path }),
 	listCollections: () => __TAURI_INVOKE<CollectionSummary[]>("list_collections"),
 	listEnvironments: () => __TAURI_INVOKE<EnvironmentSummary[]>("list_environments"),
 	listVariables: (target: VariableTarget) => __TAURI_INVOKE<VariableEntry[]>("list_variables", { target }),
@@ -172,6 +173,16 @@ export type FrontendJson = unknown;
 export type GraphqlBody = {
 	query?: string,
 	variables?: string,
+};
+
+/**
+ *  Everything the sidebar shows after an import, so it needs no follow-up
+ *  calls: the new collection, the updated collection list, and its tree.
+ */
+export type ImportedCollection = {
+	collectionId: string,
+	collections: CollectionSummary[],
+	tree: CollectionNode[],
 };
 
 export type KeyValue = {
