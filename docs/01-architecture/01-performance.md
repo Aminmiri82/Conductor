@@ -19,8 +19,10 @@ needs Yara's sign-off before it lands.
 - **Large collections stay smooth.** Hundreds of requests and multi-megabyte
   responses are normal, not edge cases.
 
-We do not have measured budgets yet. Until we do, compare before and after for
-anything performance-sensitive (see [Measuring](#measuring)).
+Only what Conductor ships has budgets so far: bundle chunks and dependency
+counts (see [Budgets In CI](#budgets-in-ci)). For startup, typing, and memory,
+compare before and after for anything performance-sensitive (see
+[Measuring](#measuring)).
 
 ## Rules
 
@@ -43,7 +45,10 @@ Every command call serializes JSON across the webview boundary.
 
 - Reads use the pooled read-only connections so they never queue behind the
   single writer ([`connection.rs`](../../src-tauri/src/storage/connection.rs)).
-- Every query path needs an index.
+- Every query path needs an index. `every_query_uses_an_index`
+  ([`query_plans.rs`](../../src-tauri/src/storage/query_plans.rs)) plans every
+  SQL literal in the source, foreign-key cascades included, and fails on a full
+  scan. A scan that is the point of a query is listed there with its reason.
 - Multi-row writes happen in one transaction.
 
 ### Frontend State And Rendering
@@ -75,3 +80,24 @@ Dev builds are unoptimized, so measure release builds for memory and startup:
 
 Report the numbers in the change description, including when a change made
 something slower on purpose.
+
+## Budgets In CI
+
+The [Perf workflow](../../.github/workflows/perf.yml) builds each PR and its
+base branch in the same job, measures both with
+[`perf-size.mjs`](../../scripts/perf-size.mjs), and fails when a metric in
+[`budgets.json`](../../perf/budgets.json) grows past its budget. Sizes are raw
+bytes, because the assets are embedded in the app and parsed from memory, so
+gzip size says nothing about startup. Any new crate in `Cargo.lock` or direct
+npm dependency fails the check, which enforces [Dependencies](#dependencies).
+
+A deliberate regression lands in one of two ways, both Yara's call: raise the
+budget in the PR, with the numbers in its description, or add the
+`perf-regression-approved` label for a one-off.
+
+Each [Mac release](../../.github/workflows/mac-release.yml) also records its
+binary and DMG sizes as `perf-size.json` on the draft release and compares them
+with the last published release. That comparison only reports.
+
+Run it locally with `pnpm perf:size`, which builds the frontend and prints the
+measurements.

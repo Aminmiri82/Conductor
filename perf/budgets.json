@@ -1,0 +1,13 @@
+{
+  "$comment": "Read by scripts/perf-size.mjs. Raw bytes for sizes. Raising a budget needs Yara's sign-off in the PR description. Metrics not listed here are reported but never fail.",
+  "metrics": {
+    "js/entry": { "max": 480000, "maxGrowthPercent": 2 },
+    "js/total": { "maxGrowthPercent": 5 },
+    "js/lazy/ResponseViewer": { "maxGrowthPercent": 5 },
+    "css/total": { "max": 90000, "maxGrowthPercent": 5 },
+    "deps/cargo-crates": { "maxGrowth": 0 },
+    "deps/npm-direct": { "maxGrowth": 0 },
+    "app/binary": { "max": 13000000, "maxGrowthPercent": 3 },
+    "app/dmg": { "maxGrowthPercent": 3 }
+  }
+}

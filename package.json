@@ -23,7 +23,8 @@
     "lint:fix": "pnpm lint --fix",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"*.{js,ts,json,html}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"*.{js,ts,json,html}\"",
-    "agent:status": "bash scripts/agent-app.sh status"
+    "agent:status": "bash scripts/agent-app.sh status",
+    "perf:size": "pnpm build && node scripts/perf-size.mjs measure"
   },
   "dependencies": {
     "@codemirror/lang-json": "^6.0.2",

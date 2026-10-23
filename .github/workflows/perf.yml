@@ -1,0 +1,51 @@
+name: Perf
+
+# Compares what a PR ships against its base branch, built in the same job so
+# runner differences cancel out. Budgets live in perf/budgets.json. Yara can
+# accept a deliberate regression with the perf-regression-approved label.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  size:
+    # Bundle sizes and lockfiles don't depend on the OS, and Linux runners
+    # start faster. Binary and DMG sizes are recorded per release instead.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Measure the PR
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+          node scripts/perf-size.mjs measure --out "$RUNNER_TEMP/head.json"
+      - name: Measure the base branch
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git worktree add "$RUNNER_TEMP/base" "$(git merge-base "$BASE_SHA" HEAD)"
+          cd "$RUNNER_TEMP/base"
+          pnpm install --frozen-lockfile
+          pnpm build
+          # The PR's script, so a base that predates it still gets measured.
+          node "$GITHUB_WORKSPACE/scripts/perf-size.mjs" measure --out "$RUNNER_TEMP/base.json"
+      - name: Compare against budgets
+        env:
+          PERF_OVERRIDE: ${{ contains(github.event.pull_request.labels.*.name, 'perf-regression-approved') && '1' || '0' }}
+        run: node scripts/perf-size.mjs compare "$RUNNER_TEMP/base.json" "$RUNNER_TEMP/head.json"
