@@ -15,6 +15,11 @@ export const commands = {
 	 *  scopes is never deleted from one and missing from the other).
 	 */
 	applyVariableChanges: (changes: VariableChange[]) => __TAURI_INVOKE<null>("apply_variable_changes", { changes }),
+	/**
+	 *  Creates an empty collection, so a new user can start without a Postman file.
+	 *  Returns the same shape as an import so the sidebar can switch to it at once.
+	 */
+	createCollection: (name: string) => __TAURI_INVOKE<ImportedCollection>("create_collection", { name }),
 	createEnvironment: (input: CreateEnvironmentInput) => __TAURI_INVOKE<string>("create_environment", { input }),
 	createFolder: (input: CreateFolderInput) => __TAURI_INVOKE<string>("create_folder", { input }),
 	createRequest: (input: CreateRequestInput) => __TAURI_INVOKE<CreateRequestResult>("create_request", { input }),
@@ -176,8 +181,8 @@ export type GraphqlBody = {
 };
 
 /**
- *  Everything the sidebar shows after an import, so it needs no follow-up
- *  calls: the new collection, the updated collection list, and its tree.
+ *  Everything the sidebar shows after an import or a create, so it needs no
+ *  follow-up calls: the new collection, the updated collection list, and its tree.
  */
 export type ImportedCollection = {
 	collectionId: string,

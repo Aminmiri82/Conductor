@@ -1,11 +1,20 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Import, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -26,6 +35,13 @@ import {
 } from "./tree";
 
 const TREE_OVERSCAN = 8;
+
+// Not on the first screen; loads the first time it opens.
+const NewCollectionDialog = lazy(() =>
+  import("./NewCollectionDialog").then((module) => ({
+    default: module.NewCollectionDialog,
+  })),
+);
 
 export function CollectionSidebar() {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -50,6 +66,8 @@ export function CollectionSidebar() {
   } | null>(null);
   const [target, setTargetState] = useState<DropTarget>(null);
   const [openIds, setOpenIds] = useState<Set<string>>(() => new Set());
+  const [newCollectionOpen, setNewCollectionOpen] = useState(false);
+  const [newCollectionOpened, setNewCollectionOpened] = useState(false);
   // First and last row touching the viewport. The scroll position itself lives
   // in refs; state only changes when a row enters or leaves, not on every
   // scroll event.
@@ -141,6 +159,11 @@ export function CollectionSidebar() {
     setTargetState(null);
   }, []);
 
+  function openNewCollection() {
+    setNewCollectionOpened(true);
+    setNewCollectionOpen(true);
+  }
+
   async function pickCollectionFile() {
     const path = await open({
       filters: [{ name: "Postman collection", extensions: ["json"] }],
@@ -213,22 +236,27 @@ export function CollectionSidebar() {
                 variant="ghost"
                 size="icon"
                 className="size-8 shrink-0 text-[var(--app-dim)]"
-                disabled={!activeCollectionId}
-                title="Add to collection"
+                title="Add"
               >
                 <Plus className="size-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-40">
               <DropdownMenuItem
+                disabled={!activeCollectionId}
                 onSelect={() => void createRequestIn(null, tree.length)}
               >
                 Add request
               </DropdownMenuItem>
               <DropdownMenuItem
+                disabled={!activeCollectionId}
                 onSelect={() => void createFolderIn(null, tree.length)}
               >
                 Add folder
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={openNewCollection}>
+                New collection
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -289,12 +317,52 @@ export function CollectionSidebar() {
               performDrop={performDrop}
             />
           </div>
+        ) : activeCollectionId ? (
+          <div className="px-2 py-8 text-center text-xs text-[var(--app-dim)]">
+            This collection is empty.
+            <div className="mt-3">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => void createRequestIn(null, 0)}
+              >
+                Add request
+              </Button>
+            </div>
+          </div>
         ) : (
           <div className="px-2 py-8 text-center text-xs text-[var(--app-dim)]">
-            Import a Postman collection to begin.
+            Create a collection, or import one from Postman.
+            <div className="mt-3 flex justify-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={openNewCollection}
+              >
+                New collection
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => void pickCollectionFile()}
+              >
+                Import
+              </Button>
+            </div>
           </div>
         )}
       </div>
+      <Suspense>
+        {newCollectionOpened ? (
+          <NewCollectionDialog
+            open={newCollectionOpen}
+            onOpenChange={setNewCollectionOpen}
+          />
+        ) : null}
+      </Suspense>
     </aside>
   );
 }

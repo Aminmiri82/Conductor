@@ -12,8 +12,8 @@ pub struct CollectionSummary {
     pub name: String,
 }
 
-/// Everything the sidebar shows after an import, so it needs no follow-up
-/// calls: the new collection, the updated collection list, and its tree.
+/// Everything the sidebar shows after an import or a create, so it needs no
+/// follow-up calls: the new collection, the updated collection list, and its tree.
 #[derive(Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportedCollection {

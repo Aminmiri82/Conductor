@@ -50,7 +50,8 @@ export function RequestWorkspace() {
         <div className="max-w-sm text-center">
           <div className="text-sm font-medium">No request selected</div>
           <div className="mt-2 text-xs leading-5 text-[var(--app-dim)]">
-            Import a collection and choose a request from the sidebar.
+            Create or import a collection, then choose a request from the
+            sidebar.
           </div>
         </div>
       </section>
