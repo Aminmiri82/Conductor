@@ -113,7 +113,9 @@ mod tests {
         let message = CommandError::from(error).to_string();
 
         assert!(message.starts_with("error sending request: "), "{message}");
-        assert!(message.contains("Connection refused"), "{message}");
+        // The OS words it: "Connection refused" on Unix, "...actively refused
+        // it." on Windows.
+        assert!(message.contains("refused"), "{message}");
         assert!(!message.contains("secret"), "{message}");
     }
 }
