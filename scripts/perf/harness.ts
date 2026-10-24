@@ -2,15 +2,15 @@
 // through scripted scenarios, on macOS. See
 // docs/01-architecture/01-performance.md#perf-harness.
 //
-//   node scripts/perf-harness.mjs run [--scenario name]... [--runs 5]
+//   node scripts/perf/harness.ts run [--scenario name]... [--runs 5]
 //       [--warmup 1] [--quick] [--out file] [--skip-build]
-//   node scripts/perf-harness.mjs list
-//   node scripts/perf-harness.mjs compare <before.json> <after.json> [--markdown]
+//   node scripts/perf/harness.ts list
+//   node scripts/perf/harness.ts compare <before.json> <after.json> [--markdown]
 //
 // CI only (the Perf workflow's harness job):
-//   node scripts/perf-harness.mjs build [--root dir] [--target-dir dir] --app-out <path.app>
-//   node scripts/perf-harness.mjs run --app <path.app> [...run options]
-//   node scripts/perf-harness.mjs ab --base <a.app> --head <b.app>
+//   node scripts/perf/harness.ts build [--root dir] [--target-dir dir] --app-out <path.app>
+//   node scripts/perf/harness.ts run --app <path.app> [...run options]
+//   node scripts/perf/harness.ts ab --base <a.app> --head <b.app>
 //       --out-base <file> --out-head <file> [--scenario name]... [--runs 5]
 //
 // `run` builds a release app with the `perf-harness` feature (its own name,
@@ -22,7 +22,7 @@
 //
 // `ab` runs two builds alternately on one machine (base, head, head, base,
 // ...), so drift and heat land on both sides. `compare` calls a change real
-// only when the runs separate (see results.mjs); nothing here fails a check.
+// only when the runs separate (see harness-results.ts); nothing here fails a check.
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -36,11 +36,12 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { createServer } from "node:net";
+import { createServer, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import type { FixtureName } from "../../src/app/perf/fixtures.ts";
 import {
   ROLES,
   SCHEMA,
@@ -54,11 +55,17 @@ import {
   textTable,
   toMetrics,
   valuesOf,
-} from "./perf-harness/results.mjs";
+  type Checkpoint,
+  type Machine,
+  type Metrics,
+  type Result,
+  type Settings,
+  type Stamp,
+} from "./harness-results.ts";
 
 // Must match PROTOCOL in src-tauri/src/perf_harness.rs.
 const PROTOCOL = 1;
-const here = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const here = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const productName = "Conductor Perf Harness";
 const SCENARIO_TIMEOUT_MS = 5 * 60_000;
 const SETTINGS = { settleMs: 3000, idleMs: 15_000 };
@@ -98,10 +105,45 @@ const { values: options, positionals } = parseArgs({
   },
 });
 
-const commands = { run, build, ab, list, compare };
+// A build this script made; `stamp` says what it was made from.
+type App = { bundle: string; stamp: Stamp };
+// A build in a source tree, before `buildApp` or `warnIfStale` stamps it.
+type LocalApp = {
+  root: string;
+  targetDir: string;
+  bundle: string;
+  stamp?: Stamp;
+};
+type LoadedScenario = Awaited<ReturnType<typeof loadScenarios>>[number];
+// The parts of a scenario module the harness reads. Not `Scenario` from
+// scenario.ts, whose `ctx` type would pull the app's stores into this
+// program; loadScenarios checks the module at runtime instead.
+type ScenarioModule = {
+  default?: {
+    description: string;
+    fixtures: readonly FixtureName[];
+    prepare?: unknown;
+    run?: unknown;
+  };
+};
+// The JSON lines the app writes; see `append` in perf_harness.rs. Apps from
+// before the protocol existed write no `protocol`.
+type OutputLine =
+  | { pid: number; protocol?: number }
+  | { startupMs: number }
+  | Checkpoint
+  | { error: string };
+
+const commands: Partial<Record<string, () => Promise<void> | void>> = {
+  run,
+  build,
+  ab,
+  list,
+  compare,
+};
 if (!commands[command]) {
   console.error(
-    "usage: perf-harness.mjs run|list|compare|build|ab (see the header comment)",
+    "usage: harness.ts run|list|compare|build|ab (see the header comment)",
   );
   process.exit(2);
 }
@@ -112,7 +154,7 @@ if (["run", "build", "ab"].includes(command) && process.platform !== "darwin") {
 try {
   await commands[command]();
 } catch (error) {
-  console.error(`perf-harness: ${error.message}`);
+  console.error(`perf-harness: ${(error as Error).message}`);
   process.exit(1);
 }
 
@@ -161,10 +203,10 @@ async function build() {
 }
 
 async function ab() {
-  for (const name of ["base", "head", "out-base", "out-head"])
+  for (const name of ["base", "head", "out-base", "out-head"] as const)
     if (!options[name]) throw new Error(`ab needs --${name}`);
   const sides = await Promise.all(
-    [options.base, options.head].map(async (bundle) => {
+    [options.base!, options.head!].map(async (bundle) => {
       const app = appAt(resolve(bundle));
       return { app, scenarios: await loadScenarios(app.stamp.root) };
     }),
@@ -176,11 +218,11 @@ async function ab() {
   const selected = selectScenarios(common);
   for (const side of sides)
     side.scenarios = selected.map(({ name }) =>
-      side.scenarios.find((scenario) => scenario.name === name),
+      side.scenarios.find((scenario) => scenario.name === name)!,
     );
   const settings = settingsFromOptions();
   warnAboutPower();
-  const runs = [[], []];
+  const runs: Metrics[][] = [[], []];
   for (let index = -settings.warmup; index < settings.runs; index++) {
     // base, head, head, base, ...: drift over the job lands on both.
     const order = index % 2 === 0 ? [0, 1] : [1, 0];
@@ -199,9 +241,9 @@ async function ab() {
   const results = sides.map(({ app }, side) =>
     makeResult(app, settings, runs[side].slice(settings.warmup)),
   );
-  save(resolve(options["out-base"]), results[0]);
-  save(resolve(options["out-head"]), results[1]);
-  console.log(`\n${comparisonText(...results)}`);
+  save(resolve(options["out-base"]!), results[0]);
+  save(resolve(options["out-head"]!), results[1]);
+  console.log(`\n${comparisonText(results[0], results[1])}`);
 }
 
 async function list() {
@@ -220,25 +262,24 @@ function compare() {
 
 // Imports each scenario file in Node (it strips the types), which is why
 // scenario files import only ../scenario.ts and ../fixtures.ts.
-async function loadScenarios(root) {
+async function loadScenarios(root: string) {
   const directory = join(root, "src/app/perf/scenarios");
   const files = readdirSync(directory)
     .filter((file) => file.endsWith(".ts"))
     .sort();
-  const { fixtures } = await import(
-    pathToFileURL(join(root, "src/app/perf/fixtures.ts")).href
-  );
+  const { fixtures }: typeof import("../../src/app/perf/fixtures.ts") =
+    await import(pathToFileURL(join(root, "src/app/perf/fixtures.ts")).href);
   return Promise.all(
     files.map(async (file) => {
       const name = basename(file, ".ts");
-      let scenario;
+      let scenario: ScenarioModule["default"];
       try {
-        ({ default: scenario } = await import(
+        ({ default: scenario } = (await import(
           pathToFileURL(join(directory, file)).href
-        ));
+        )) as ScenarioModule);
       } catch (error) {
         throw new Error(
-          `could not import scenario ${name} (${error.message}). Scenario files may import only ../scenario.ts and ../fixtures.ts.`,
+          `could not import scenario ${name} (${(error as Error).message}). Scenario files may import only ../scenario.ts and ../fixtures.ts.`,
           { cause: error },
         );
       }
@@ -257,7 +298,7 @@ async function loadScenarios(root) {
   );
 }
 
-function selectScenarios(available) {
+function selectScenarios(available: LoadedScenario[]) {
   const wanted = (options.scenario ?? []).flatMap((value) => value.split(","));
   if (!wanted.length) return available;
   return wanted.map((name) => {
@@ -271,7 +312,7 @@ function selectScenarios(available) {
 }
 
 function settingsFromOptions() {
-  const count = (name, fallback) => {
+  const count = (name: "runs" | "warmup", fallback: number) => {
     const value = Number(options[name] ?? fallback);
     if (!Number.isInteger(value) || value < 0)
       throw new Error(`--${name} must be a whole number`);
@@ -290,7 +331,7 @@ function settingsFromOptions() {
 
 // --target-dir lets CI build the base branch into the PR's target dir, so
 // compiled dependencies are reused.
-function defaultApp(root) {
+function defaultApp(root: string): LocalApp {
   const targetDir = options["target-dir"]
     ? resolve(options["target-dir"])
     : join(root, "src-tauri/target/perf-harness");
@@ -301,7 +342,7 @@ function defaultApp(root) {
   };
 }
 
-function appAt(bundle) {
+function appAt(bundle: string): App {
   if (!existsSync(stampPath(bundle)))
     throw new Error(`${bundle} has no build stamp; build it with this script`);
   return {
@@ -310,11 +351,11 @@ function appAt(bundle) {
   };
 }
 
-function stampPath(bundle) {
+function stampPath(bundle: string) {
   return `${bundle}.build.json`;
 }
 
-async function buildApp(root, app) {
+async function buildApp(root: string, app: LocalApp) {
   console.log(
     `Building ${productName}.app (release, perf-harness) from ${root}...`,
   );
@@ -375,8 +416,8 @@ async function buildApp(root, app) {
  * noticed), and a hash of each scenario with the files it shares, so
  * `compare` can tell when the scenario itself changed.
  */
-function sourceStamp(root) {
-  const git = (...args) =>
+function sourceStamp(root: string): Stamp {
+  const git = (...args: string[]) =>
     execFileSync("git", ["-C", root, ...args], { encoding: "utf8" });
   const changes = createHash("sha256");
   changes.update(git("diff", "HEAD", "--binary", "--", ...APP_SOURCES));
@@ -400,7 +441,7 @@ function sourceStamp(root) {
         : readFileSync(path),
     );
   }
-  const hashOf = (...files) => {
+  const hashOf = (...files: string[]) => {
     const hash = createHash("sha256");
     for (const file of files) hash.update(readFileSync(join(root, file)));
     return hash.digest("hex").slice(0, 16);
@@ -428,7 +469,7 @@ function sourceStamp(root) {
 }
 
 // With --skip-build the last build is reused; say so when the tree moved on.
-function warnIfStale(app) {
+function warnIfStale(app: LocalApp): asserts app is LocalApp & App {
   const built = appAt(app.bundle).stamp;
   app.stamp = built;
   const now = sourceStamp(app.root);
@@ -439,8 +480,13 @@ function warnIfStale(app) {
 }
 
 /** One launch (two for a scenario with `prepare`) per scenario. */
-async function measureRun(app, scenarios, settings, label) {
-  const metrics = {};
+async function measureRun(
+  app: App,
+  scenarios: LoadedScenario[],
+  settings: Settings,
+  label: string,
+) {
+  const metrics: Metrics = {};
   for (const scenario of scenarios) {
     console.log(`${label}: ${scenario.name}...`);
     Object.assign(metrics, await measureScenario(app, scenario, settings));
@@ -448,12 +494,16 @@ async function measureRun(app, scenarios, settings, label) {
   return metrics;
 }
 
-async function measureScenario(app, scenario, settings) {
+async function measureScenario(
+  app: App,
+  scenario: LoadedScenario,
+  settings: Settings,
+) {
   const work = mkdtempSync(join(tmpdir(), "conductor-perf-"));
   const port = await freePort();
   const echo = spawn(
     process.execPath,
-    [join(here, "scripts/echo-server.mjs"), "--port", String(port)],
+    [join(here, "scripts/echo/echo-server.ts"), "--port", String(port)],
     { stdio: ["ignore", "pipe", "inherit"] },
   );
   try {
@@ -463,14 +513,14 @@ async function measureScenario(app, scenario, settings) {
     });
     echo.stdout.resume();
     const env = { echoUrl: `http://127.0.0.1:${port}` };
-    const fixtures = {};
+    const fixtures: Record<string, unknown> = {};
     for (const name of scenario.fixtures) {
       const { file, info } = scenario.generators[name](env);
       const path = join(work, `${name}.json`);
       writeFileSync(path, file);
       fixtures[name] = { ...info, path };
     }
-    const config = (phase) => ({
+    const config = (phase: "prepare" | "measure") => ({
       scenario: scenario.name,
       phase,
       settleMs: settings.settleMs,
@@ -494,7 +544,13 @@ async function measureScenario(app, scenario, settings) {
 // LaunchServices (`open`) rather than spawn: started from a shell, macOS
 // holds the terminal responsible for the app and its WebKit processes, so
 // the app could not find them.
-async function launch(app, work, phase, data, config) {
+async function launch(
+  app: App,
+  work: string,
+  phase: "prepare" | "measure",
+  data: string,
+  config: { scenario: string },
+) {
   const out = join(work, `${phase}.jsonl`);
   const log = join(work, `${phase}.log`);
   const env = {
@@ -529,13 +585,14 @@ async function launch(app, work, phase, data, config) {
     ? readFileSync(out, "utf8")
         .trim()
         .split("\n")
-        .map((line) => JSON.parse(line))
+        .map((line): OutputLine => JSON.parse(line))
     : [];
   if (!lines.length)
     throw new Error(`the app wrote nothing; its output:\n${readLog(log)}`);
-  if (lines[0].protocol !== PROTOCOL)
+  const protocol = "protocol" in lines[0] ? lines[0].protocol : undefined;
+  if (protocol !== PROTOCOL)
     throw new Error(
-      `the app speaks perf protocol ${lines[0].protocol ?? "0"} and this script ${PROTOCOL}; build both from compatible commits`,
+      `the app speaks perf protocol ${protocol ?? "0"} and this script ${PROTOCOL}; build both from compatible commits`,
     );
   const failure = lines.find((line) => "error" in line);
   if (failure)
@@ -555,9 +612,9 @@ async function launch(app, work, phase, data, config) {
 
 // Stops only the pid the app reported in this run's output, and only if it
 // is still this build.
-function stopHungApp(app, out) {
+function stopHungApp(app: App, out: string) {
   console.error("Scenario timed out; stopping the app this run started.");
-  const pid = existsSync(out)
+  const pid: number | undefined = existsSync(out)
     ? JSON.parse(readFileSync(out, "utf8").split("\n")[0]).pid
     : undefined;
   if (!pid) return;
@@ -572,12 +629,12 @@ function stopHungApp(app, out) {
   }
 }
 
-function readLog(log) {
+function readLog(log: string) {
   return existsSync(log) ? readFileSync(log, "utf8").slice(-4000) : "";
 }
 
-function machine() {
-  const read = (file, ...args) => {
+function machine(): Machine {
+  const read = (file: string, ...args: string[]) => {
     try {
       return execFileSync(file, args, { encoding: "utf8" }).trim();
     } catch {
@@ -606,7 +663,7 @@ function warnAboutPower() {
     );
 }
 
-function makeResult(app, settings, runs) {
+function makeResult(app: App, settings: Settings, runs: Metrics[]): Result {
   return {
     schema: SCHEMA,
     meta: {
@@ -620,13 +677,13 @@ function makeResult(app, settings, runs) {
   };
 }
 
-function save(path, result) {
+function save(path: string, result: Result) {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(result, null, 2)}\n`);
 }
 
-function load(path) {
-  const result = JSON.parse(readFileSync(path, "utf8"));
+function load(path: string) {
+  const result: Result = JSON.parse(readFileSync(path, "utf8"));
   if (result.schema !== SCHEMA)
     throw new Error(
       `${path} is a result file of schema ${result.schema ?? "0"}, and this script reads ${SCHEMA}; measure it again`,
@@ -634,9 +691,12 @@ function load(path) {
   return result;
 }
 
-function report({ median: metrics, runs }, scenarios) {
-  const value = (name) => metrics[name] ?? 0;
-  const noise = (name) => spread(valuesOf(runs, name));
+function report(
+  { median: metrics, runs }: Result,
+  scenarios: LoadedScenario[],
+) {
+  const value = (name: string) => metrics[name] ?? 0;
+  const noise = (name: string) => spread(valuesOf(runs, name));
   for (const { name: scenario } of scenarios) {
     const prefix = `${scenario}/`;
     const steps = [
@@ -646,7 +706,8 @@ function report({ median: metrics, runs }, scenarios) {
           .map((name) => name.slice(prefix.length, -"/time".length)),
       ),
     ];
-    const at = (step, name) => value(`${prefix}${step}/${name}`);
+    const at = (step: string, name: string) =>
+      value(`${prefix}${step}/${name}`);
     console.log(`\n== ${scenario} ==`);
     console.log(
       `Startup: ${ms(value(`${prefix}startup`))} from process start until the first load painted (±${ms(noise(`${prefix}startup`))})`,
@@ -676,7 +737,7 @@ function report({ median: metrics, runs }, scenarios) {
     );
     console.log(
       `Still held at the end, compared with ${steps[0]}: ${signed(
-        mb(at(steps.at(-1), "memory/total") - at(steps[0], "memory/total")),
+        mb(at(steps.at(-1)!, "memory/total") - at(steps[0], "memory/total")),
       )} MB`,
     );
 
@@ -698,7 +759,7 @@ function report({ median: metrics, runs }, scenarios) {
     console.log(
       "\nResponsiveness per step, ms (keystrokes only for typing steps)",
     );
-    const typed = (step) => `${prefix}${step}/keystroke-p50` in metrics;
+    const typed = (step: string) => `${prefix}${step}/keystroke-p50` in metrics;
     console.log(
       textTable(
         [
@@ -731,18 +792,22 @@ function fileStamp() {
 }
 
 function freePort() {
-  return new Promise((done, fail) => {
+  return new Promise<number>((done, fail) => {
     const server = createServer();
     server.once("error", fail);
     server.listen(0, "127.0.0.1", () => {
-      const { port } = server.address();
+      const { port } = server.address() as AddressInfo;
       server.close(() => done(port));
     });
   });
 }
 
-function exec(file, args, { cwd, env }) {
-  return new Promise((done, fail) => {
+function exec(
+  file: string,
+  args: string[],
+  { cwd, env }: { cwd: string; env: Record<string, string> },
+) {
+  return new Promise<void>((done, fail) => {
     const child = spawn(file, args, {
       cwd,
       stdio: "inherit",

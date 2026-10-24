@@ -1,11 +1,77 @@
 // What the perf harness does with the numbers: turns an app run's output into
 // flat metrics, summarizes runs, and compares two result files. Pure, so it
-// is unit tested (results.test.mjs). See scripts/perf-harness.mjs.
+// is unit tested (harness-results.test.ts). See scripts/perf/harness.ts.
 
 /** Bumped when the result file changes shape; `compare` refuses others. */
 export const SCHEMA = 1;
 
 export const ROLES = ["app", "WebContent", "Networking", "GPU", "other"];
+
+/** Metric name to value; a run may lack a metric another run has. */
+export type Metrics = Record<string, number | undefined>;
+
+/** A checkpoint line of the app's output; see `Checkpoint` in perf_harness.rs. */
+export type Checkpoint = {
+  label: string;
+  stepMs: number;
+  atMs: number;
+  rustHeap: number;
+  rustHeapPeak: number;
+  processes: {
+    pid: number;
+    name: string;
+    footprint: number;
+    cpuNs: number;
+    wakeups: number;
+  }[];
+  metrics: Record<string, number>;
+};
+
+/** What a build was made from, written next to it as `<app>.build.json`. */
+export type Stamp = {
+  root: string;
+  sha: string;
+  dirty: boolean;
+  changesHash: string;
+  scenarioHashes: Record<string, string>;
+  builtAt?: string;
+};
+
+export type Machine = {
+  macOS: string;
+  chip: string;
+  memoryBytes: number;
+  power: "battery" | "ac";
+  lowPower: boolean;
+};
+
+export type Settings = {
+  settleMs: number;
+  idleMs: number;
+  quick: boolean;
+  runs: number;
+  warmup: number;
+};
+
+/** A result file. */
+export type Result = {
+  schema: number;
+  meta: { app: Stamp; machine: Machine; settings: Settings; date: string };
+  runs: Metrics[];
+  median: Metrics;
+};
+
+type Verdict = "worse" | "better" | "new" | "removed" | "noise";
+
+type Row = {
+  name: string;
+  before: number | undefined;
+  after: number | undefined;
+  change: number | undefined;
+  percent: number | undefined;
+  verdict: Verdict;
+  p: number;
+};
 
 // Two-sided p-value below which `compare` calls a change real.
 const SIGNIFICANCE = 0.05;
@@ -13,7 +79,7 @@ const SIGNIFICANCE = 0.05;
 // The app process is listed first. WebKit may run several WebContent
 // processes, which are summed; macOS helpers it attributes to the app go
 // under `other`.
-function roleOf(name, index) {
+function roleOf(name: string, index: number) {
   if (index === 0) return "app";
   return ROLES.find((role) => name.endsWith(`.${role}`)) ?? "other";
 }
@@ -31,15 +97,21 @@ function roleOf(name, index) {
 //   <scenario>/<step>/<name>                what the step measured itself,
 //                                           such as longest-frame or
 //                                           keystroke-p95 (ms)
-export function toMetrics(scenario, { startupMs, checkpoints }) {
-  const metrics = { [`${scenario}/startup`]: startupMs };
-  const previous = new Map();
-  let previousAt;
+export function toMetrics(
+  scenario: string,
+  {
+    startupMs,
+    checkpoints,
+  }: { startupMs: number | undefined; checkpoints: Checkpoint[] },
+) {
+  const metrics: Metrics = { [`${scenario}/startup`]: startupMs };
+  const previous = new Map<number, { cpuNs: number; wakeups: number }>();
+  let previousAt: number | undefined;
   for (const checkpoint of checkpoints) {
     const { label, stepMs, atMs, rustHeap, rustHeapPeak, processes } =
       checkpoint;
     const prefix = `${scenario}/${label}`;
-    const add = (name, value) =>
+    const add = (name: string, value: number) =>
       (metrics[`${prefix}/${name}`] =
         (metrics[`${prefix}/${name}`] ?? 0) + value);
     metrics[`${prefix}/time`] = stepMs;
@@ -72,11 +144,11 @@ export function toMetrics(scenario, { startupMs, checkpoints }) {
 }
 
 /** Every value a metric had across runs; runs that lack it are left out. */
-export function valuesOf(runs, name) {
+export function valuesOf(runs: Metrics[], name: string) {
   return runs.map((run) => run[name]).filter((value) => value !== undefined);
 }
 
-function median(values) {
+function median(values: number[]) {
   const sorted = [...values].sort((a, b) => a - b);
   const middle = Math.floor(sorted.length / 2);
   return sorted.length % 2
@@ -84,7 +156,7 @@ function median(values) {
     : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
-export function medians(runs) {
+export function medians(runs: Metrics[]) {
   const names = [...new Set(runs.flatMap(Object.keys))];
   return Object.fromEntries(
     names.map((name) => [name, median(valuesOf(runs, name))]),
@@ -92,11 +164,11 @@ export function medians(runs) {
 }
 
 /** Half the spread across runs: a change smaller than this is noise. */
-export function spread(values) {
+export function spread(values: number[]) {
   return (Math.max(...values) - Math.min(...values)) / 2;
 }
 
-function binomial(n, k) {
+function binomial(n: number, k: number) {
   let result = 1;
   for (let i = 1; i <= k; i++) result = (result * (n - k + i)) / i;
   return result;
@@ -108,7 +180,10 @@ function binomial(n, k) {
  * by chance. The p-value of that ordering is 2 / C(n + m, n), so 3 runs a side
  * can never pass (0.1) and 5 a side can (0.008).
  */
-export function verdict(before, after) {
+export function verdict(
+  before: number[],
+  after: number[],
+): { kind: "worse" | "better" | "noise"; p: number } {
   const p = 2 / binomial(before.length + after.length, before.length);
   const separated =
     Math.max(...before) < Math.min(...after) ||
@@ -119,11 +194,14 @@ export function verdict(before, after) {
 }
 
 /** Rows for every metric in either file, changed ones first. */
-export function compareResults(before, after) {
+export function compareResults(
+  before: Pick<Result, "runs" | "median">,
+  after: Pick<Result, "runs" | "median">,
+) {
   const names = [
     ...new Set([...Object.keys(before.median), ...Object.keys(after.median)]),
   ];
-  const rows = names.map((name) => {
+  const rows = names.map((name): Row => {
     const [a, b] = [before.median[name], after.median[name]];
     const result = verdict(
       valuesOf(before.runs, name),
@@ -134,13 +212,13 @@ export function compareResults(before, after) {
       before: a,
       after: b,
       change: a === undefined || b === undefined ? undefined : b - a,
-      percent: a ? ((b - a) / a) * 100 : undefined,
+      percent: a && b !== undefined ? ((b - a) / a) * 100 : undefined,
       verdict:
         a === undefined ? "new" : b === undefined ? "removed" : result.kind,
       p: result.p,
     };
   });
-  const rank = {
+  const rank: Record<Verdict, number> = {
     worse: 0,
     better: 1,
     new: 2,
@@ -151,15 +229,15 @@ export function compareResults(before, after) {
 }
 
 /** Why two result files may not be comparable, as sentences. */
-export function comparisonWarnings(before, after) {
-  const warnings = [];
-  const machine = (result) => result.meta.machine;
-  for (const key of ["macOS", "chip", "memoryBytes"])
+export function comparisonWarnings(before: Result, after: Result) {
+  const warnings: string[] = [];
+  const machine = (result: Result) => result.meta.machine;
+  for (const key of ["macOS", "chip", "memoryBytes"] as const)
     if (machine(before)[key] !== machine(after)[key])
       warnings.push(
         `They ran on different machines (${key}: ${machine(before)[key]} vs ${machine(after)[key]}).`,
       );
-  for (const key of ["settleMs", "idleMs"])
+  for (const key of ["settleMs", "idleMs"] as const)
     if (before.meta.settings[key] !== after.meta.settings[key])
       warnings.push(
         `They used different ${key} (${before.meta.settings[key]} vs ${after.meta.settings[key]}).`,
@@ -167,7 +245,7 @@ export function comparisonWarnings(before, after) {
   for (const [side, result] of [
     ["before", before],
     ["after", after],
-  ]) {
+  ] as const) {
     if (machine(result).power === "battery")
       warnings.push(`The ${side} run was on battery power.`);
     if (machine(result).lowPower)
@@ -177,7 +255,7 @@ export function comparisonWarnings(before, after) {
         `The ${side} file has ${result.runs.length} run(s); with fewer than 5 a side, no change can be told apart from noise.`,
       );
   }
-  const hashes = (result) => result.meta.app.scenarioHashes;
+  const hashes = (result: Result) => result.meta.app.scenarioHashes;
   for (const [scenario, hash] of Object.entries(hashes(after))) {
     const old = hashes(before)[scenario];
     if (old && old !== hash)
@@ -188,28 +266,31 @@ export function comparisonWarnings(before, after) {
   return warnings;
 }
 
-function formatterFor(name) {
+function formatterFor(name: string): (value: number) => string {
   if (name.includes("/memory/") || name.includes("rust-heap"))
     return (bytes) => `${mb(bytes)} MB`;
   if (name.endsWith("wakeups-per-second")) return (rate) => rate.toFixed(1);
   return ms;
 }
 
-export function mb(bytes) {
+export function mb(bytes: number) {
   return (bytes / 1024 / 1024).toFixed(1);
 }
 
-export function ms(value) {
+export function ms(value: number) {
   return `${Number(value).toFixed(0)} ms`;
 }
 
 // Adds a + to a positive number or a formatted one such as "12 ms".
-export function signed(value, digits) {
-  const text = digits === undefined ? String(value) : value.toFixed(digits);
+export function signed(value: number | string, digits?: number) {
+  const text =
+    typeof value === "number" && digits !== undefined
+      ? value.toFixed(digits)
+      : String(value);
   return parseFloat(text) > 0 ? `+${text}` : text;
 }
 
-function cells(row) {
+function cells(row: Row) {
   const format = formatterFor(row.name);
   return [
     row.name,
@@ -226,11 +307,11 @@ function cells(row) {
 
 const HEADERS = ["metric", "before", "after", "change", "verdict"];
 
-export function textTable(headers, rows) {
+export function textTable(headers: string[], rows: string[][]) {
   const widths = headers.map((header, column) =>
     Math.max(header.length, ...rows.map((row) => String(row[column]).length)),
   );
-  const line = (cells) =>
+  const line = (cells: string[]) =>
     cells
       .map((cell, column) =>
         column
@@ -241,7 +322,7 @@ export function textTable(headers, rows) {
   return [line(headers), ...rows.map(line)].join("\n");
 }
 
-export function comparisonText(before, after) {
+export function comparisonText(before: Result, after: Result) {
   const rows = compareResults(before, after);
   const changed = rows.filter(
     ({ verdict }) => verdict === "worse" || verdict === "better",
@@ -256,7 +337,7 @@ export function comparisonText(before, after) {
   ].join("\n");
 }
 
-function markdownTable(rows) {
+function markdownTable(rows: Row[]) {
   return [
     `| ${HEADERS.join(" | ")} |`,
     `| ${HEADERS.map((_, index) => (index ? "--:" : ":--")).join(" | ")} |`,
@@ -265,7 +346,7 @@ function markdownTable(rows) {
 }
 
 /** For a PR or the CI step summary: changed metrics, then all of them. */
-export function comparisonMarkdown(before, after) {
+export function comparisonMarkdown(before: Result, after: Result) {
   const rows = compareResults(before, after);
   const changed = rows.filter(
     ({ verdict }) => verdict === "worse" || verdict === "better",

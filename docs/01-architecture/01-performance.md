@@ -104,12 +104,12 @@ out compressed ones.
 
 ### `pnpm perf:run`
 
-[`perf-harness.mjs`](../../scripts/perf-harness.mjs) builds a release app
+[`perf/harness.ts`](../../scripts/perf/harness.ts) builds a release app
 with the `perf-harness` Cargo feature. The build is called Conductor Perf
 Harness and has its own identifier and target directory, so it never touches
 the installed app. For each scenario and run, it launches that app through
 LaunchServices on a throwaway data directory against the local
-[echo server](../../scripts/echo-server.mjs). The webview runs the scenario,
+[echo server](../../scripts/echo/echo-server.ts). The webview runs the scenario,
 and after each step [`perf_harness.rs`](../../src-tauri/src/perf_harness.rs)
 records a checkpoint:
 
@@ -233,7 +233,7 @@ says.
 
 The [Perf workflow](../../.github/workflows/perf.yml) builds each PR and its
 base branch in the same job, measures both with
-[`perf-size.mjs`](../../scripts/perf-size.mjs), and fails when a metric in
+[`perf/size.ts`](../../scripts/perf/size.ts), and fails when a metric in
 [`budgets.json`](../../perf/budgets.json) grows past its budget. Sizes are raw
 bytes, because the assets are embedded in the app and parsed from memory, so
 gzip size says nothing about startup. Any new crate in `Cargo.lock` or direct

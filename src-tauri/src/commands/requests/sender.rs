@@ -313,7 +313,7 @@ mod tests {
 
     #[test]
     fn a_large_json_response_reaches_the_webview_within_its_payload_budget() {
-        // Shaped like scripts/echo-server.mjs's `_json` responses, which the
+        // Shaped like scripts/echo/echo-server.ts's `_json` responses, which the
         // perf harness sends.
         let items = (0..)
             .map(|id| {

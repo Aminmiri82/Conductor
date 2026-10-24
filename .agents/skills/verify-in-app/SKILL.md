@@ -65,17 +65,17 @@ checks such as menu placement or settings that do not depend on collections.
 For anything that sends, start the echo server and import its collection:
 
 ```bash
-node scripts/echo-server.mjs            # http://127.0.0.1:18766; note the PID it prints
+node scripts/echo/echo-server.ts             # http://127.0.0.1:18766; note the PID it prints
 ```
 
-`scripts/echo-collection.json` has one request per send path (query rows,
+`scripts/echo/echo-collection.json` has one request per send path (query rows,
 folder-inherited bearer auth, JSON, urlencoded and multipart bodies, a test
 script that saves a variable, a 500, a slow reply, a binary download), all
 using `{{baseUrl}}`. The echo reply shows exactly what Conductor sent. The
 server's header comment lists its `_status`, `_delay` and `_bytes` knobs.
 
 When a scenario needs an endpoint the echo cannot fake, write one: pass
-`--routes .agent-app/<name>.mjs` (format in the server's header comment), or
+`--routes .agent-app/<name>.ts` (format in the server's header comment), or
 start another loopback server. Never send to a real environment. If the
 endpoint would help later runs too, propose adding it to the echo server and
 collection rather than keeping it to yourself.

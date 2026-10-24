@@ -9,7 +9,7 @@ import type { CollectionNode } from "@/features/types";
 import type { FixtureName } from "./fixtures.ts";
 import type { Scenario, ScenarioContext, StepMetrics } from "./scenario.ts";
 
-/** Written by `measureScenario` in scripts/perf-harness.mjs. */
+/** Written by `measureScenario` in scripts/perf/harness.ts. */
 type Config = {
   scenario: string;
   phase: "prepare" | "measure";
@@ -34,6 +34,10 @@ const scenarios = import.meta.glob<{ default: Scenario<FixtureName> }>(
   "./scenarios/*.ts",
 );
 
+// Plain string events, not typed tauri-specta ones, on purpose: typed events
+// are registered in `specta_builder()`, which generates src/bindings.ts, and
+// the harness only exists in `perf-harness` builds, so the bindings would
+// depend on the build. See src-tauri/src/perf_harness.rs.
 async function request<T>(event: string, reply: string, payload?: unknown) {
   let resolve: (value: T) => void = () => {};
   const answer = new Promise<T>((done) => (resolve = done));

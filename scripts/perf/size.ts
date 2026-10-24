@@ -2,8 +2,8 @@
 // optionally the binary and DMG) and compares two measurements against
 // perf/budgets.json. See docs/01-architecture/01-performance.md#measuring.
 //
-//   node scripts/perf-size.mjs measure [--dist dist] [--binary path] [--dmg path] [--out file]
-//   node scripts/perf-size.mjs compare <base.json> <head.json> [--budgets perf/budgets.json]
+//   node scripts/perf/size.ts measure [--dist dist] [--binary path] [--dmg path] [--out file]
+//   node scripts/perf/size.ts compare <base.json> <head.json> [--budgets perf/budgets.json]
 //
 // `compare` exits 1 when a budgeted metric grows past its budget, unless
 // PERF_OVERRIDE=1 (set by CI when Yara adds the perf-regression-approved label).
@@ -16,6 +16,9 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+
+type Sizes = Record<string, number>;
+type Budget = { max?: number; maxGrowth?: number; maxGrowthPercent?: number };
 
 const [command, ...rest] = process.argv.slice(2);
 const { values: options, positionals } = parseArgs({
@@ -31,19 +34,18 @@ const { values: options, positionals } = parseArgs({
 });
 
 if (command === "measure") measure();
-else if (command === "compare") compare(...positionals);
+else if (command === "compare") compare(positionals[0], positionals[1]);
 else {
-  console.error(
-    "usage: perf-size.mjs measure|compare (see the header comment)",
-  );
+  console.error("usage: size.ts measure|compare (see the header comment)");
   process.exit(2);
 }
 
 function measure() {
   // Assets are embedded in the app and read from memory, never downloaded, so
   // raw bytes (what WebKit parses) matter, not gzip.
-  const metrics = {};
-  const add = (name, bytes) => (metrics[name] = (metrics[name] ?? 0) + bytes);
+  const metrics: Sizes = {};
+  const add = (name: string, bytes: number) =>
+    (metrics[name] = (metrics[name] ?? 0) + bytes);
   const assets = join(options.dist, "assets");
   const html = readFileSync(join(options.dist, "index.html"), "utf8");
   // `js/entry` is everything that loads at startup: the entry script plus the
@@ -76,8 +78,10 @@ function measure() {
   }
 
   const lock = readFileSync("src-tauri/Cargo.lock", "utf8");
-  metrics["deps/cargo-crates"] = lock.match(/^\[\[package\]\]$/gm).length;
-  const manifest = JSON.parse(readFileSync("package.json", "utf8"));
+  metrics["deps/cargo-crates"] = lock.match(/^\[\[package\]\]$/gm)!.length;
+  const manifest: { dependencies?: Record<string, string> } = JSON.parse(
+    readFileSync("package.json", "utf8"),
+  );
   metrics["deps/npm-direct"] = Object.keys(manifest.dependencies ?? {}).length;
 
   if (options.binary) metrics["app/binary"] = statSync(options.binary).size;
@@ -88,17 +92,19 @@ function measure() {
   else process.stdout.write(json);
 }
 
-function compare(basePath, headPath) {
+function compare(basePath: string, headPath: string) {
   if (!basePath || !headPath)
     throw new Error("compare needs <base.json> <head.json>");
-  const read = (path) => JSON.parse(readFileSync(path, "utf8"));
-  const base = read(basePath);
-  const head = read(headPath);
-  const budgets = read(options.budgets).metrics;
+  const read = <T>(path: string): T => JSON.parse(readFileSync(path, "utf8"));
+  const base = read<Sizes>(basePath);
+  const head = read<Sizes>(headPath);
+  const budgets = read<{ metrics: Record<string, Budget> }>(
+    options.budgets,
+  ).metrics;
   const override = process.env.PERF_OVERRIDE === "1";
 
-  const failures = [];
-  const rows = [];
+  const failures: string[] = [];
+  const rows: string[] = [];
   const names = [
     ...new Set([
       ...Object.keys(budgets),
@@ -111,7 +117,7 @@ function compare(basePath, headPath) {
     const after = head[name];
     if (before === undefined && after === undefined) continue;
     const budget = budgets[name];
-    const problems = [];
+    const problems: string[] = [];
     if (budget && after !== undefined) {
       if (budget.max !== undefined && after > budget.max)
         problems.push(`over the ${format(name, budget.max)} cap`);
@@ -172,18 +178,18 @@ function compare(basePath, headPath) {
   if (failures.length && !override) process.exit(1);
 }
 
-function isCount(name) {
+function isCount(name: string) {
   return name.startsWith("deps/");
 }
 
-function unit(name) {
+function unit(name: string) {
   return isCount(name) ? "" : " B";
 }
 
-function format(name, value) {
+function format(name: string, value: number) {
   return isCount(name) ? String(value) : `${(value / 1024).toFixed(1)} KB`;
 }
 
-function signed(value, digits = 0) {
+function signed(value: number, digits = 0) {
   return `${value >= 0 ? "+" : ""}${value.toFixed(digits)}`;
 }

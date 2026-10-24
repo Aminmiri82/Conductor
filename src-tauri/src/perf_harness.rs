@@ -1,4 +1,4 @@
-//! The perf harness behind `pnpm perf:run` (scripts/perf-harness.mjs). Only
+//! The perf harness behind `pnpm perf:run` (scripts/perf/harness.ts). Only
 //! built with the `perf-harness` feature, on macOS, and never shipped.
 //!
 //! The webview runs one scenario (src/app/perf/) and emits a checkpoint event
@@ -206,7 +206,7 @@ fn checkpoint(event: CheckpointEvent) -> Checkpoint {
 }
 
 /// Answers the scenario's events. Configured by the environment that
-/// scripts/perf-harness.mjs launches the app with. `CONDUCTOR_PERF_CONFIG`
+/// scripts/perf/harness.ts launches the app with. `CONDUCTOR_PERF_CONFIG`
 /// is the scenario's config, passed to the webview as is.
 pub fn listen(app: &AppHandle) {
     let Some(out) = std::env::var_os("CONDUCTOR_PERF_OUT").map(PathBuf::from) else {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { buildUpdaterJson } from "./updater-json.mjs";
+import { buildUpdaterJson } from "./updater-json.ts";
 
-const asset = (name, id) => ({
+const asset = (name: string, id: number) => ({
   name,
   url: `https://api.github.com/repos/o/r/releases/assets/${id}`,
 });
@@ -19,7 +19,7 @@ const draftAssets = [
   asset("perf-size.json", 10),
 ];
 
-const build = (assets) =>
+const build = (assets: ReturnType<typeof asset>[]) =>
   buildUpdaterJson({
     version: "1.2.3",
     notes: "notes",

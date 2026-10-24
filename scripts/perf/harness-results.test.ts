@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { compareResults, medians, verdict } from "./results.mjs";
+import {
+  compareResults,
+  medians,
+  verdict,
+  type Metrics,
+} from "./harness-results.ts";
 
-const result = (values) => {
-  const runs = values.map((value) => ({ "s/import/time": value }));
+const result = (values: number[]) => {
+  const runs = values.map((value): Metrics => ({ "s/import/time": value }));
   return { runs, median: medians(runs) };
 };
 

@@ -1,16 +1,16 @@
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 
-const json = (path) => JSON.parse(readFileSync(path, "utf8"));
-const version = json("package.json").version;
+const json = <T>(path: string): T => JSON.parse(readFileSync(path, "utf8"));
+const version = json<{ version: string }>("package.json").version;
 assert.match(version, /^\d+\.\d+\.\d+$/);
 assert.equal(
-  json("src-tauri/tauri.conf.json").version,
+  json<{ version: string }>("src-tauri/tauri.conf.json").version,
   version,
   "Tauri version differs",
 );
 assert.equal(
-  json(".release-please-manifest.json")["."],
+  json<{ ".": string }>(".release-please-manifest.json")["."],
   version,
   "Release manifest version differs",
 );

@@ -2,7 +2,7 @@
 // scenario lists the fixtures it needs and reads each one's `info` (plus the
 // `path` it was written to) with `ctx.fixture(name)`.
 //
-// No runtime imports: scripts/perf-harness.mjs imports this file directly
+// No runtime imports: scripts/perf/harness.ts imports this file directly
 // (Node strips the types), and only scenarios' types reach the webview.
 
 export type FixtureEnv = {

@@ -5,14 +5,16 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 
-const oxlint = fileURLToPath(new URL("../../node_modules/oxlint/bin/oxlint", import.meta.url));
-const plugin = fileURLToPath(new URL("./conductor.mjs", import.meta.url));
+const oxlint = fileURLToPath(
+  new URL("../../node_modules/oxlint/bin/oxlint", import.meta.url),
+);
+const plugin = fileURLToPath(new URL("./conductor.ts", import.meta.url));
 const directory = mkdtempSync(join(tmpdir(), "conductor-lint-"));
 afterAll(() => rmSync(directory, { recursive: true, force: true }));
 
 // Lints `source` with only `rule` on, through the real oxlint, and returns the
 // lines it flagged. Fixtures mark the lines they expect with `// flagged`.
-function flaggedLines(rule, source) {
+function flaggedLines(rule: string, source: string) {
   const config = join(directory, `${rule}.json`);
   const file = join(directory, `${rule}.ts`);
   writeFileSync(
@@ -24,21 +26,25 @@ function flaggedLines(rule, source) {
     }),
   );
   writeFileSync(file, source);
-  let output;
+  let output: string;
   try {
-    output = execFileSync(process.execPath, [oxlint, "-c", config, "-f", "unix", file], {
-      encoding: "utf8",
-    });
+    output = execFileSync(
+      process.execPath,
+      [oxlint, "-c", config, "-f", "unix", file],
+      {
+        encoding: "utf8",
+      },
+    );
   } catch (error) {
     // oxlint exits non-zero when it reports anything.
-    output = error.stdout;
+    output = (error as { stdout: string }).stdout;
   }
   return [...output.matchAll(/:(\d+):\d+: /g)]
     .map((match) => Number(match[1]))
     .sort((a, b) => a - b);
 }
 
-function markedLines(source) {
+function markedLines(source: string) {
   return source
     .split("\n")
     .flatMap((line, index) => (line.includes("// flagged") ? [index + 1] : []));
@@ -67,7 +73,9 @@ const draft = useDraftStore((state) => {
 const shallow = useWorkspaceStore(useShallow((state) => ({ tabs: state.tabs })));
 const outside = useWorkspaceStore.getState();
 `;
-    expect(flaggedLines("narrow-store-selector", source)).toEqual(markedLines(source));
+    expect(flaggedLines("narrow-store-selector", source)).toEqual(
+      markedLines(source),
+    );
   });
 });
 

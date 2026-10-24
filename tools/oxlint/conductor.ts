@@ -1,9 +1,27 @@
 // Conductor's own lint rules, loaded by .oxlintrc.json as a JS plugin.
+import type { RuleTester } from "oxlint/plugins-dev";
+
+// oxlint exports its rule and AST types only through RuleTester's signature.
+type Rule = Parameters<RuleTester["run"]>[1];
+type Visitor = ReturnType<NonNullable<Rule["create"]>>;
+type NodeOf<Name extends keyof Visitor> = Parameters<
+  NonNullable<Visitor[Name]>
+>[0];
+type CallExpression = NodeOf<"CallExpression">;
+type Node = CallExpression["parent"];
+type FunctionNode = Extract<
+  Node,
+  {
+    type:
+      "ArrowFunctionExpression" | "FunctionExpression" | "FunctionDeclaration";
+  }
+>;
+type ReturnArgument = Extract<Node, { type: "ReturnStatement" }>["argument"];
 
 const MOCK_METHODS = new Set(["mock", "doMock", "unstable_mockModule"]);
 
 // Our modules, and the IPC layer that stands in for our Rust code.
-function isOurCode(specifier) {
+function isOurCode(specifier: string) {
   return (
     specifier.startsWith(".") ||
     specifier.startsWith("@/") ||
@@ -11,13 +29,15 @@ function isOurCode(specifier) {
   );
 }
 
-function mockedSpecifier(node) {
+function mockedSpecifier(node: CallExpression) {
   const { callee } = node;
   if (callee.type !== "MemberExpression" || callee.computed) return null;
-  if (callee.object.type !== "Identifier" || callee.object.name !== "vi") return null;
+  if (callee.object.type !== "Identifier" || callee.object.name !== "vi")
+    return null;
   if (!MOCK_METHODS.has(callee.property.name)) return null;
   const [argument] = node.arguments;
-  if (argument?.type === "Literal" && typeof argument.value === "string") return argument.value;
+  if (argument?.type === "Literal" && typeof argument.value === "string")
+    return argument.value;
   return null;
 }
 
@@ -38,11 +58,15 @@ const noInternalMocking = {
       CallExpression(node) {
         const specifier = mockedSpecifier(node);
         if (specifier === null || !isOurCode(specifier)) return;
-        context.report({ node, messageId: "internalMock", data: { module: specifier } });
+        context.report({
+          node,
+          messageId: "internalMock",
+          data: { module: specifier },
+        });
       },
     };
   },
-};
+} satisfies Rule;
 
 // tauri-plugin-dialog replaces these with async versions. `window.confirm`
 // then returns a promise, which is always truthy, so a confirm guard never
@@ -64,13 +88,18 @@ const noWindowDialogs = {
     return {
       MemberExpression(node) {
         if (node.computed || node.object.type !== "Identifier") return;
-        if (node.object.name !== "window" && node.object.name !== "globalThis") return;
+        if (node.object.name !== "window" && node.object.name !== "globalThis")
+          return;
         if (!NATIVE_DIALOGS.has(node.property.name)) return;
-        context.report({ node, messageId: "windowDialog", data: { name: node.property.name } });
+        context.report({
+          node,
+          messageId: "windowDialog",
+          data: { name: node.property.name },
+        });
       },
     };
   },
-};
+} satisfies Rule;
 
 // Zustand compares a selector's result by identity, so a selector that returns
 // the whole store re-renders its component on every change to any field. One
@@ -94,16 +123,27 @@ const FRESH_METHODS = new Set([
   "from",
 ]);
 
-function isFunction(node) {
+// Walks reach plain objects too (spans, `loc`), so this checks the shape.
+function isNode(value: unknown): value is Node {
   return (
-    node?.type === "ArrowFunctionExpression" ||
-    node?.type === "FunctionExpression" ||
-    node?.type === "FunctionDeclaration"
+    typeof value === "object" &&
+    value !== null &&
+    "type" in value &&
+    typeof value.type === "string"
+  );
+}
+
+function isFunction(node: unknown): node is FunctionNode {
+  return (
+    isNode(node) &&
+    (node.type === "ArrowFunctionExpression" ||
+      node.type === "FunctionExpression" ||
+      node.type === "FunctionDeclaration")
   );
 }
 
 // Whether evaluating `node` can produce a value no earlier call produced.
-function buildsNewValue(node) {
+function buildsNewValue(node: Node | null | undefined): boolean {
   switch (node?.type) {
     case "ObjectExpression":
     case "ArrayExpression":
@@ -125,26 +165,33 @@ function buildsNewValue(node) {
 }
 
 // The `return` arguments of a block-bodied function, not of functions inside it.
-function returnedValues(node, values = []) {
-  if (!node || typeof node.type !== "string") return values;
+function returnedValues(node: unknown, values: ReturnArgument[] = []) {
+  if (!isNode(node)) return values;
   if (node.type === "ReturnStatement") values.push(node.argument);
   for (const [key, child] of Object.entries(node)) {
     if (key === "parent" || isFunction(child)) continue;
-    if (Array.isArray(child)) child.forEach((item) => returnedValues(item, values));
+    if (Array.isArray(child))
+      child.forEach((item) => returnedValues(item, values));
     else if (child && typeof child === "object") returnedValues(child, values);
   }
   return values;
 }
 
-function selectorProblem(selector) {
+function selectorProblem(
+  selector: CallExpression["arguments"][number] | undefined,
+) {
   if (!selector) return "wholeStore";
   if (!isFunction(selector)) return null;
   const [param] = selector.params;
   const results =
-    selector.body.type === "BlockStatement" ? returnedValues(selector.body) : [selector.body];
+    selector.body?.type === "BlockStatement"
+      ? returnedValues(selector.body)
+      : [selector.body];
   if (
     param?.type === "Identifier" &&
-    results.some((result) => result?.type === "Identifier" && result.name === param.name)
+    results.some(
+      (result) => result?.type === "Identifier" && result.name === param.name,
+    )
   ) {
     return "wholeStore";
   }
@@ -155,7 +202,8 @@ const narrowStoreSelector = {
   meta: {
     type: "problem",
     docs: {
-      description: "Store hooks select one stable value, so a change elsewhere does not re-render.",
+      description:
+        "Store hooks select one stable value, so a change elsewhere does not re-render.",
     },
     messages: {
       wholeStore:
@@ -167,13 +215,18 @@ const narrowStoreSelector = {
   create(context) {
     return {
       CallExpression(node) {
-        if (node.callee.type !== "Identifier" || !STORE_HOOK.test(node.callee.name)) return;
+        if (
+          node.callee.type !== "Identifier" ||
+          !STORE_HOOK.test(node.callee.name)
+        )
+          return;
         const messageId = selectorProblem(node.arguments[0]);
-        if (messageId) context.report({ node, messageId, data: { hook: node.callee.name } });
+        if (messageId)
+          context.report({ node, messageId, data: { hook: node.callee.name } });
       },
     };
   },
-};
+} satisfies Rule;
 
 // Each command call crosses IPC, so one per item turns a list into a train of
 // round trips. See "Keep IPC Small And Few" in the performance doc.
@@ -199,21 +252,28 @@ const LOOPS = new Set([
 // The parts of a loop that run once, unlike its body, test and update.
 const RUNS_ONCE = new Set(["init", "right"]);
 
-function isIterationCallback(fn) {
+function isIterationCallback(fn: Node) {
   const call = fn.parent;
   return (
     call?.type === "CallExpression" &&
-    call.arguments.includes(fn) &&
+    call.arguments.some((argument) => argument === fn) &&
     call.callee.type === "MemberExpression" &&
     !call.callee.computed &&
     ITERATION_METHODS.has(call.callee.property.name)
   );
 }
 
-function repeatsPerItem(node) {
-  for (let child = node, parent = node.parent; parent; child = parent, parent = parent.parent) {
+function repeatsPerItem(node: Node) {
+  for (
+    let child = node, parent = node.parent;
+    parent;
+    child = parent, parent = parent.parent
+  ) {
     if (LOOPS.has(parent.type)) {
-      if (!RUNS_ONCE.has(Object.keys(parent).find((key) => parent[key] === child))) return true;
+      const part = Object.entries(parent).find(
+        ([, value]) => value === child,
+      )?.[0];
+      if (!part || !RUNS_ONCE.has(part)) return true;
     }
     if (isFunction(parent)) return isIterationCallback(parent);
   }
@@ -243,12 +303,12 @@ const noIpcInLoop = {
         ) {
           return;
         }
-        const call = `${callee.object.name}.${callee.property.name ?? "…"}`;
+        const call = `${callee.object.name}.${"name" in callee.property ? callee.property.name : "…"}`;
         context.report({ node, messageId: "ipcInLoop", data: { call } });
       },
     };
   },
-};
+} satisfies Rule;
 
 export default {
   meta: { name: "conductor" },

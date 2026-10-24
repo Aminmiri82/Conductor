@@ -3,7 +3,7 @@
 // whose default export is `defineScenario({ ... })`.
 //
 // Scenario files import only this file and ./fixtures.ts, because
-// scripts/perf-harness.mjs imports them in Node to list them and write their
+// scripts/perf/harness.ts imports them in Node to list them and write their
 // fixtures. Everything that touches the app comes through `ctx`
 // (./runtime.ts).
 import type { useWorkspaceStore } from "@/features/workspace/workspaceStore";
@@ -48,7 +48,7 @@ export type ScenarioContext<Fixtures extends FixtureName> = {
 };
 
 export type Scenario<Fixtures extends FixtureName> = {
-  /** One line, shown by `node scripts/perf-harness.mjs list`. */
+  /** One line, shown by `node scripts/perf/harness.ts list`. */
   description: string;
   fixtures: readonly Fixtures[];
   /**
