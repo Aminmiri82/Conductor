@@ -199,13 +199,15 @@ macOS calls never ship.
 ### In CI
 
 The `harness` job in the [Perf workflow](../../.github/workflows/perf.yml)
-builds each PR and its base branch, runs the scenarios both have on one
-macOS runner alternating between the two builds (base, head, head, base, and
-so on, so drift over the job lands on both), and writes the comparison to the
-job's summary. The result files are uploaded as an artifact. It only reports:
-hosted runners are noisy, so a regression never fails it, but a scenario that
-no longer finishes does. A base branch from before scenarios existed is
-skipped, and the PR is measured alone.
+runs only on PRs labeled `needs perf job`, on each push and when the label is
+added, because it takes over half an hour. It builds the PR and its base
+branch, runs the scenarios both have on one macOS runner alternating between
+the two builds (base, head, head, base, and so on, so drift over the job
+lands on both), and writes the comparison to the job's summary and to one PR
+comment that each run updates. The result files are uploaded as an artifact.
+It only reports: hosted runners are noisy, so a regression never fails it,
+but a scenario that no longer finishes does. A base branch from before
+scenarios existed is skipped, and the PR is measured alone.
 
 ### Finding Out Why
 
@@ -231,8 +233,9 @@ says.
 
 ## Budgets In CI
 
-The [Perf workflow](../../.github/workflows/perf.yml) builds each PR and its
-base branch in the same job, measures both with
+On PRs labeled `needs perf job`, the
+[Perf workflow](../../.github/workflows/perf.yml) builds the PR and its base
+branch in the same job, measures both with
 [`perf/size.ts`](../../scripts/perf/size.ts), and fails when a metric in
 [`budgets.json`](../../perf/budgets.json) grows past its budget. Sizes are raw
 bytes, because the assets are embedded in the app and parsed from memory, so

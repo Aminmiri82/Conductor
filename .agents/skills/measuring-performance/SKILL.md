@@ -69,5 +69,5 @@ warnings, and say which scenarios you ran and how many runs. Report a
 regression even when it is deliberate; it needs Yara's sign-off (see
 [AGENTS.md](../../../AGENTS.md)). If you could not run the harness (not on a
 Mac, the build failed), say so plainly rather than estimating. In CI, the
-Perf workflow's `harness` job posts the same table in its summary, but it
-only reports.
+Perf workflow's `harness` job posts the same table in its summary and as a PR
+comment, but only on PRs labeled `needs perf job`, and it only reports.
