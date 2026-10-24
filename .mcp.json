@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "tauri": {
-      "command": "npx",
-      "args": ["-y", "@hypothesi/tauri-mcp-server@0.13.2"]
+      "command": "node",
+      "args": ["node_modules/@hypothesi/tauri-mcp-server/dist/index.js"]
     }
   }
 }

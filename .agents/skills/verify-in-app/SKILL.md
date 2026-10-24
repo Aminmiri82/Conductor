@@ -11,10 +11,12 @@ proof that a feature works, and this does not replace `pnpm check`.
 ## Which Tools Drive The App
 
 - **Codex:** use native computer use.
-- **Claude:** use the `tauri` MCP server from `.mcp.json` for webview actions.
-  Use native computer use for the menu bar or other native UI the bridge
-  cannot reach. The bridge is compiled only with the `mcp-bridge` feature
-  and listens on loopback.
+- **Claude:** use the `tauri` MCP server from `.mcp.json`. The bridge is
+  compiled only with the `mcp-bridge` feature and listens on loopback. It
+  reaches the webview, IPC, and window management; it does not reach native
+  UI: the menu bar, native file dialogs, and the title bar. To test a menu
+  action's effect, send its event with `ipc_emit_event`. A session picks up
+  `.mcp.json` changes only when it restarts.
 
 If neither is available, say so clearly and stop. Do not fall back to anything else.
 
@@ -56,9 +58,12 @@ This is a second guard; it does not make targeting the installed app safe.
 
 ## 2. Get Data In
 
-Seed collections through IPC when the scenario needs them:
-`ipc_execute_command` with `import_postman_collection` and
-`{"path": "<absolute path to the collection JSON>"}`, then reload the webview.
+Each run starts with empty data, because `agent:stop` removes it. Seed
+collections through IPC when the scenario needs them: `ipc_execute_command`
+with `import_postman_collection` and
+`{"path": "<absolute path to the collection JSON>"}`. Then reload the webview
+with `webview_execute_js` running `location.reload()` (it returns `null`) and
+take a fresh `webview_dom_snapshot`.
 Commands and arguments are in `src/bindings.ts`. Empty data is sufficient for
 checks such as menu placement or settings that do not depend on collections.
 
@@ -85,23 +90,40 @@ local fixture for update checks.
 
 ## 3. Drive And Observe
 
-With MCP, start `driver_session`, then use `webview_dom_snapshot` and its
-`[ref=eN]` handles. With native computer use, obtain the app state and use its
-accessibility elements. Refresh state after actions before reusing indexes.
-Observe the actual result: response text, dialog, focus, or changed layout.
-Shortcuts are in `src/app/hotkeys.ts`.
+With MCP, call `driver_session` with `action: "start"` and the `port` from the
+`bridge` that `agent:status` reports. Never rely on the default port; another
+Tauri app with a bridge may be listening there. Then call `driver_session`
+with `action: "status"` and confirm the identifier is
+`com.yaramiri.conductor.agent`. If it is anything else, stop the session and
+do not interact. After that, use `webview_dom_snapshot` and its `[ref=eN]`
+handles.
 
-Check frontend errors through the available app tools and Rust errors in the
-log reported by `agent:status`. Report tools or checks that were unavailable.
+With native computer use, obtain the app state and use its accessibility
+elements. Refresh state after actions before reusing indexes. Observe the
+actual result: response text, dialog, focus, or changed layout. Shortcuts are
+in `src/app/hotkeys.ts`.
+
+Response bodies are CodeMirror editors, which the DOM snapshot does not read.
+Read the text with `webview_execute_js` (the response editor's `.cm-content`
+`innerText`); it holds only rendered lines, so keep fixture responses small.
+Read the status and time as separate elements: in a parent's `innerText` they
+run together (`200` and `58 ms` become `20058 ms`).
+
+`webview_screenshot` captures only the webview. Keep `allowScreenCapture`
+false; true can raise a macOS screen-recording prompt. For frontend errors use
+`read_logs` with `source: "console"`; Rust errors go only to the log reported
+by `agent:status`. Report tools or checks that were unavailable.
 
 ## 4. Stop
 
 Leave the app running only if Yara wants to inspect it. Otherwise:
 
 ```bash
-pnpm agent:stop           # stops only the verified tracked PID; keeps data
-pnpm agent:stop --clean   # removes isolated data; required after copying real data
+pnpm agent:stop              # stops only the verified tracked PID, then removes isolated data
+pnpm agent:stop --no-clean   # keeps the data, use when needed
 ```
+
+Never pass `--no-clean` after `--copy-real-data`.
 
 Stop local fixture servers by their recorded PIDs. A stale PID is never
 permission to stop another process or kill by name.

@@ -43,7 +43,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring"] }
 specta = { version = "=2.0.0-rc.26", features = ["derive", "serde_json"] }
 tauri-specta = { version = "=2.0.0-rc.26", features = ["derive", "typescript"] }
 specta-typescript = "=0.0.13"
-# Keep in lockstep with @hypothesi/tauri-mcp-server in .mcp.json.
+# Keep in lockstep with @hypothesi/tauri-mcp-server in package.json; agent:start checks.
 tauri-plugin-mcp-bridge = { version = "=0.13.2", optional = true }
 tauri-plugin-updater = "=2.14.0"
 tauri-plugin-process = "=2.4.0"
