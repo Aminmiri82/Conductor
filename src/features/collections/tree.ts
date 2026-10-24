@@ -84,7 +84,7 @@ export function placementAfterRequest(
 ): TreePlacement {
   const node = requestId ? findRequestNode(tree, requestId) : undefined;
   return node
-    ? { parentId: node.parentId ?? null, position: node.position + 1 }
+    ? { parentId: node.parentId, position: node.position + 1 }
     : { parentId: null, position: tree.length };
 }
 
@@ -97,7 +97,7 @@ export function resolveDrop(
   target: DropTarget,
 ): TreePlacement | null {
   if (!target) return null;
-  const sourceParentId = source.parentId ?? null;
+  const sourceParentId = source.parentId;
 
   let parentId: string | null;
   let position: number;
@@ -116,7 +116,7 @@ export function resolveDrop(
       position = node.children.length;
       if (sourceParentId === node.id) position -= 1;
     } else {
-      parentId = node.parentId ?? null;
+      parentId = node.parentId;
       const insertAt =
         target.intent === "before" ? node.position : node.position + 1;
       position =

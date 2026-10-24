@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use rusqlite::{params, Connection};
-use serde_json::Value;
+use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::commands::{
@@ -97,6 +97,43 @@ pub fn variable(connection: &Connection, target: &VariableTarget, key: &str, val
         "",
     )
     .unwrap();
+}
+
+/// A Postman file shaped like the perf harness's `largeCollection` fixture
+/// (src/app/perf/fixtures.ts): 40 folders of 50 requests, half of them POSTs
+/// with a small JSON body. Keep the two in step, so the budgets here hold for
+/// what the harness measures.
+pub fn large_postman_collection() -> String {
+    let base = "http://127.0.0.1:8787";
+    let folder = |folder: usize| {
+        let requests = (0..50)
+            .map(|index| {
+                let mut request = json!({
+                    "method": if index % 2 == 1 { "POST" } else { "GET" },
+                    "header": [
+                        { "key": "Accept", "value": "application/json" },
+                        { "key": "X-Trace", "value": format!("{folder}-{index}") }
+                    ],
+                    "url": format!("{base}/folders/{folder}/items/{index}?page=1&limit=50"),
+                });
+                if index % 2 == 1 {
+                    request["body"] = json!({
+                        "mode": "raw",
+                        "raw": json!({ "folder": folder, "index": index, "note": "x".repeat(200) })
+                            .to_string(),
+                        "options": { "raw": { "language": "json" } }
+                    });
+                }
+                json!({ "name": format!("Request {folder}.{index}"), "request": request })
+            })
+            .collect::<Vec<_>>();
+        json!({ "name": format!("Folder {folder}"), "item": requests })
+    };
+    json!({
+        "info": { "name": "Perf harness" },
+        "item": (0..40).map(folder).collect::<Vec<_>>()
+    })
+    .to_string()
 }
 
 /// The state commands run against, on a database in its own temp directory

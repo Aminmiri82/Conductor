@@ -93,6 +93,7 @@ export function BodyEditor({
       <ScrollArea className="min-h-0 flex-1">
         {body.mode === "raw" ? (
           <Textarea
+            data-body-editor
             className="min-h-[420px] resize-none rounded-none border-0 bg-transparent p-3 font-mono text-xs leading-5 shadow-none focus-visible:ring-0"
             value={body.raw}
             spellCheck={false}

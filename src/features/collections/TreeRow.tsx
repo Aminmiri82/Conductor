@@ -39,14 +39,8 @@ type TreeRowProps = {
   onToggleOpen: (nodeId: string) => void;
   onOpenFolder: (nodeId: string) => void;
   onSelectRequest: (requestId: string) => Promise<void>;
-  onCreateRequest: (
-    parentId: string | null | undefined,
-    position: number,
-  ) => Promise<void>;
-  onCreateFolder: (
-    parentId: string | null | undefined,
-    position: number,
-  ) => Promise<void>;
+  onCreateRequest: (parentId: string | null, position: number) => Promise<void>;
+  onCreateFolder: (parentId: string | null, position: number) => Promise<void>;
   onDuplicateRequest: (requestId: string) => Promise<void>;
   onDeleteNode: (node: CollectionNode) => Promise<void>;
   onBeginDrag: (node: CollectionNode) => void;
@@ -168,7 +162,7 @@ export const TreeRow = memo(function TreeRow({
               if (renaming) return;
               if (isFolder) {
                 onToggleOpen(node.id);
-              } else if (node.requestId) {
+              } else {
                 void onSelectRequest(node.requestId);
               }
             }}

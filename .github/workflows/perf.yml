@@ -35,7 +35,7 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm build
-          node scripts/perf-size.mjs measure --out "$RUNNER_TEMP/head.json"
+          node scripts/perf/size.ts measure --out "$RUNNER_TEMP/head.json"
       - name: Measure the base branch
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -45,8 +45,113 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm build
           # The PR's script, so a base that predates it still gets measured.
-          node "$GITHUB_WORKSPACE/scripts/perf-size.mjs" measure --out "$RUNNER_TEMP/base.json"
+          node "$GITHUB_WORKSPACE/scripts/perf/size.ts" measure --out "$RUNNER_TEMP/base.json"
       - name: Compare against budgets
         env:
           PERF_OVERRIDE: ${{ contains(github.event.pull_request.labels.*.name, 'perf-regression-approved') && '1' || '0' }}
-        run: node scripts/perf-size.mjs compare "$RUNNER_TEMP/base.json" "$RUNNER_TEMP/head.json"
+        run: node scripts/perf/size.ts compare "$RUNNER_TEMP/base.json" "$RUNNER_TEMP/head.json"
+
+  harness:
+    # Runs the perf harness scenarios (src/app/perf/scenarios/) on the PR and
+    # its base, alternating on one runner, and writes the comparison to the
+    # step summary and a PR comment. Report only: a hosted runner's numbers
+    # are noisy, so a regression never fails this job. It fails when the
+    # harness breaks, such as a scenario that no longer finishes. Labels only
+    # matter to `size`.
+    if: github.event.action != 'labeled' && github.event.action != 'unlabeled'
+    runs-on: macos-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target/perf-harness
+          key: perf-harness
+      - run: pnpm install --frozen-lockfile
+      - name: Build the PR
+        run: |
+          node scripts/perf/harness.ts build \
+            --target-dir "$GITHUB_WORKSPACE/src-tauri/target/perf-harness" \
+            --app-out "$RUNNER_TEMP/head.app"
+      - name: Build the base branch
+        id: base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git worktree add "$RUNNER_TEMP/base" "$(git merge-base "$BASE_SHA" HEAD)"
+          if [ ! -d "$RUNNER_TEMP/base/src/app/perf/scenarios" ]; then
+            echo "The base branch predates perf scenarios, so the PR is measured alone."
+            echo "built=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          cd "$RUNNER_TEMP/base"
+          pnpm install --frozen-lockfile
+          # The PR's script, with the PR build's target dir so compiled
+          # dependencies are reused.
+          node "$GITHUB_WORKSPACE/scripts/perf/harness.ts" build --root . \
+            --target-dir "$GITHUB_WORKSPACE/src-tauri/target/perf-harness" \
+            --app-out "$RUNNER_TEMP/base.app"
+          echo "built=true" >> "$GITHUB_OUTPUT"
+      - name: Compare with the base branch
+        if: steps.base.outputs.built == 'true'
+        run: |
+          node scripts/perf/harness.ts ab \
+            --base "$RUNNER_TEMP/base.app" --head "$RUNNER_TEMP/head.app" \
+            --out-base "$RUNNER_TEMP/perf-base.json" --out-head "$RUNNER_TEMP/perf-head.json"
+          node scripts/perf/harness.ts compare --markdown \
+            "$RUNNER_TEMP/perf-base.json" "$RUNNER_TEMP/perf-head.json" > "$RUNNER_TEMP/perf-comparison.md"
+          cat "$RUNNER_TEMP/perf-comparison.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Comment the comparison on the PR
+        # A fork's token is read-only, and a failed post never fails the job.
+        # One comment per PR, found by its marker and edited on each push.
+        if: >-
+          steps.base.outputs.built == 'true' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          MARKER: "<!-- conductor-perf-harness -->"
+        run: |
+          comparison="$RUNNER_TEMP/perf-comparison.md"
+          body="$RUNNER_TEMP/perf-comment.md"
+          { echo "$MARKER"; cat "$comparison"; } > "$body"
+          # GitHub caps comments at 65,536 characters. Drop the "All metrics"
+          # table first, then cut at a line so no character is split.
+          if [ "$(wc -c < "$body")" -gt 65000 ]; then
+            {
+              echo "$MARKER"
+              sed '/^<details><summary>All metrics<\/summary>$/,$d' "$comparison" | head -c 64000 | sed '$d'
+              echo
+              echo "_Truncated to fit a comment. The full tables are in this run's step summary._"
+            } > "$body"
+          fi
+          id=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/comments" \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$MARKER\"))) | .id" | head -n 1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@"$body" > /dev/null
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F body=@"$body" > /dev/null
+          fi
+      - name: Measure the PR alone
+        if: steps.base.outputs.built != 'true'
+        run: |
+          node scripts/perf/harness.ts run --app "$RUNNER_TEMP/head.app" \
+            --runs 1 --warmup 0 --out "$RUNNER_TEMP/perf-head.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-harness
+          path: ${{ runner.temp }}/perf-*.json
+          if-no-files-found: ignore

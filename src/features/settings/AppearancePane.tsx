@@ -1,5 +1,5 @@
 import { Check } from "lucide-react";
-import type { AppTheme, UrlDisplayMode } from "@/features/types";
+import type { AppTheme } from "@/features/types";
 import { useWorkspaceUiStore } from "@/features/workspace/workspaceUiStore";
 import { SectionTitle, SettingRow, Segmented } from "./SettingsParts";
 
@@ -155,9 +155,7 @@ export function AppearancePane() {
             ["chip", "Chips"],
             ["hybrid", "Hybrid"],
           ]}
-          onChange={(value) =>
-            setWorkspacePreference("urlDisplayMode", value as UrlDisplayMode)
-          }
+          onChange={(value) => setWorkspacePreference("urlDisplayMode", value)}
         />
       </SettingRow>
     </div>

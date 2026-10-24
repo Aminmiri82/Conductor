@@ -2,7 +2,7 @@
 // draft. The platform builds run in parallel, so none of them may write it:
 // two jobs rewriting the same file would drop a platform from the updater.
 //
-//   node scripts/updater-json.mjs <release.json> <signature dir> > latest.json
+//   node scripts/release/updater-json.ts <release.json> <signature dir> > latest.json
 //
 // release.json is `gh api repos/{owner}/{repo}/releases/{id}`; the signature
 // dir holds the draft's downloaded *.sig files.
@@ -23,19 +23,22 @@ const PLATFORMS = [
   ["linux-x86_64-deb", ".deb"],
 ];
 
-/**
- * @param {{ version: string, notes: string, pubDate: string,
- *   assets: { name: string, url: string }[],
- *   signatureFor: (assetName: string) => string }} release
- */
+type Asset = { name: string; url: string };
+
 export function buildUpdaterJson({
   version,
   notes,
   pubDate,
   assets,
   signatureFor,
+}: {
+  version: string;
+  notes: string;
+  pubDate: string;
+  assets: Asset[];
+  signatureFor: (assetName: string) => string;
 }) {
-  const platforms = {};
+  const platforms: Record<string, { signature: string; url: string }> = {};
   for (const [platform, suffix] of PLATFORMS) {
     const matches = assets.filter((asset) => asset.name.endsWith(suffix));
     if (matches.length !== 1) {
@@ -54,7 +57,8 @@ export function buildUpdaterJson({
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const [releasePath, signatureDir] = process.argv.slice(2);
-  const release = JSON.parse(readFileSync(releasePath, "utf8"));
+  const release: { tag_name: string; body: string | null; assets: Asset[] } =
+    JSON.parse(readFileSync(releasePath, "utf8"));
   const manifest = buildUpdaterJson({
     version: release.tag_name.replace(/^app-v/, ""),
     notes: release.body ?? "",

@@ -10,7 +10,8 @@ reading every page is not required.
 ## Architecture
 
 - [Performance](./01-architecture/01-performance.md): Why speed and low memory
-  outrank features, and the rules that keep Conductor fast.
+  outrank features, the rules that keep Conductor fast, and the perf harness
+  that measures memory and CPU.
 - [IPC And Generated Types](./01-architecture/02-ipc-and-types.md): How the
   frontend calls Rust, how the TypeScript types are generated, and how to add
   a command.

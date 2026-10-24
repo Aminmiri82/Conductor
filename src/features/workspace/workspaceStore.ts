@@ -54,6 +54,9 @@ type WorkspaceState = {
   sidebarAutoHidePending: boolean;
   saving: boolean;
   sendingRequestIds: ReadonlySet<string>;
+  // False until the first `loadCollections` finishes, even if it failed. The
+  // perf harness counts startup until then.
+  collectionsLoaded: boolean;
   error?: string;
   // A folder made by ⌘⇧N, for the sidebar to open in rename once it shows.
   pendingRenameId?: string;
@@ -67,7 +70,7 @@ type WorkspaceState = {
   importEnvironment: (
     collectionId: string,
     contents: string,
-    fileName?: string | null,
+    fileName: string,
   ) => Promise<void>;
   selectCollection: (collectionId: string) => Promise<void>;
   selectEnvironment: (
@@ -76,13 +79,10 @@ type WorkspaceState = {
   ) => Promise<void>;
   selectRequest: (requestId: string) => Promise<void>;
   closeRequestTab: (requestId: string) => Promise<void>;
-  createRequestIn: (
-    parentId: string | null | undefined,
-    position: number,
-  ) => Promise<void>;
+  createRequestIn: (parentId: string | null, position: number) => Promise<void>;
   // Resolves to the new folder's node id, so the sidebar can start renaming it.
   createFolderIn: (
-    parentId: string | null | undefined,
+    parentId: string | null,
     position: number,
   ) => Promise<string | undefined>;
   renameFolder: (nodeId: string, name: string) => Promise<void>;
@@ -93,7 +93,7 @@ type WorkspaceState = {
   deleteNode: (node: CollectionNode) => Promise<void>;
   moveNode: (
     node: CollectionNode,
-    parentId: string | null | undefined,
+    parentId: string | null,
     position: number,
   ) => Promise<void>;
   updateRequest: (patch: Partial<RequestDetail>) => void;
@@ -114,6 +114,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   sidebarAutoHidePending: true,
   saving: false,
   sendingRequestIds: new Set(),
+  collectionsLoaded: false,
 
   loadCollections: async () => {
     set({ error: undefined });
@@ -141,6 +142,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     } catch (error) {
       set({ error: String(error) });
     }
+    set({ collectionsLoaded: true });
   },
 
   loadEnvironments: async () => {
@@ -315,7 +317,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       );
       const node: CollectionNode = {
         id: result.nodeId,
-        parentId: parentId ?? null,
+        parentId,
         position,
         kind: "request",
         name,
@@ -323,7 +325,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         method: "GET",
       };
       set((state) => ({
-        tree: insertNodeAt(state.tree, parentId ?? null, position, node),
+        tree: insertNodeAt(state.tree, parentId, position, node),
       }));
       await get().selectRequest(result.requestId);
     } catch (error) {
@@ -345,14 +347,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       );
       const node: CollectionNode = {
         id: nodeId,
-        parentId: parentId ?? null,
+        parentId,
         position,
         kind: "folder",
         name,
         children: [],
       };
       set((state) => ({
-        tree: insertNodeAt(state.tree, parentId ?? null, position, node),
+        tree: insertNodeAt(state.tree, parentId, position, node),
       }));
       return nodeId;
     } catch (error) {
@@ -411,7 +413,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         set((state) => ({
           tree: insertNodeAt(
             state.tree,
-            sourceNode.parentId ?? null,
+            sourceNode.parentId,
             sourceNode.position + 1,
             node,
           ),
@@ -454,7 +456,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     try {
       await api.moveNode(node.id, parentId, position);
       set((state) => ({
-        tree: moveNodeInTree(state.tree, node, parentId ?? null, position),
+        tree: moveNodeInTree(state.tree, node, parentId, position),
       }));
       // The new parent may change the request's inherited auth.
       await get().resolveActiveRequest();

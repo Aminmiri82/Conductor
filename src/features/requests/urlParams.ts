@@ -111,15 +111,13 @@ function sameRowsOr(previous: KeyValue[], next: KeyValue[]): KeyValue[] {
 }
 
 export function buildQueryString(rows: KeyValue[]): string {
-  const parts: string[] = [];
-  for (const row of rows) {
-    if (!row.key) continue;
-    if (row.enabled === false) continue;
-    parts.push(
-      `${encodeQueryComponent(row.key)}=${encodeQueryComponent(row.value)}`,
-    );
-  }
-  return parts.join("&");
+  return rows
+    .filter((row) => row.key && row.enabled !== false)
+    .map(
+      (row) =>
+        `${encodeQueryComponent(row.key)}=${encodeQueryComponent(row.value)}`,
+    )
+    .join("&");
 }
 
 export function replaceQueryInUrl(url: string, queryString: string): string {

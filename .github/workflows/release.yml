@@ -87,7 +87,7 @@ jobs:
       - name: Check release versions
         env:
           RELEASE_TAG: ${{ inputs.release-tag }}
-        run: node scripts/check-release-version.mjs
+        run: node scripts/release/check-version.ts
       - name: Build release draft
         uses: tauri-apps/tauri-action@v1
         env:
@@ -113,15 +113,15 @@ jobs:
           RELEASE_TAG: ${{ inputs.release-tag }}
         run: |
           release=src-tauri/target/aarch64-apple-darwin/release
-          node scripts/perf-size.mjs measure --binary "$release/conductor" \
+          node scripts/perf/size.ts measure --binary "$release/conductor" \
             --dmg "$(ls "$release"/bundle/dmg/*.dmg | head -n 1)" --out perf-size.json
           gh release upload "$RELEASE_TAG" perf-size.json --clobber
           previous=$(gh release list --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName')
           if [ -n "$previous" ] && gh release download "$previous" --pattern perf-size.json --output previous-perf-size.json; then
-            node scripts/perf-size.mjs compare previous-perf-size.json perf-size.json
+            node scripts/perf/size.ts compare previous-perf-size.json perf-size.json
           else
             echo "No perf-size.json on the previous release yet; this release starts the baseline."
-            node scripts/perf-size.mjs compare perf-size.json perf-size.json
+            node scripts/perf/size.ts compare perf-size.json perf-size.json
           fi
 
   windows:
@@ -229,6 +229,6 @@ jobs:
               gh api -H "Accept: application/octet-stream" \
                 "repos/$GITHUB_REPOSITORY/releases/assets/$id" > "sigs/$name"
             done
-          node scripts/updater-json.mjs release.json sigs > latest.json
+          node scripts/release/updater-json.ts release.json sigs > latest.json
           jq '{version, platforms: (.platforms | keys)}' latest.json
           gh release upload "$RELEASE_TAG" latest.json --clobber

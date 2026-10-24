@@ -84,11 +84,12 @@ pub(crate) async fn send(
     }
     builder = builder.headers(headers);
 
-    let auth_to_apply = auth::effective_auth(
-        input.request.auth.as_ref(),
-        resolved.inherited_auth.as_ref(),
-    );
-    builder = auth::apply_auth(builder, auth_to_apply.as_ref(), &variables)?;
+    let auth_to_apply = input
+        .request
+        .auth
+        .as_ref()
+        .or(resolved.inherited_auth.as_ref());
+    builder = auth::apply_auth(builder, auth_to_apply, &variables)?;
 
     if let Some(body) = resolved.body.as_ref() {
         builder = body::apply_body(builder, body).await?;
@@ -300,6 +301,66 @@ mod tests {
             environment_id: Some(environment_id.to_string()),
         };
         tauri::async_runtime::block_on(send(&app.state, input)).unwrap()
+    }
+
+    // A perf budget (see "Budgets In Tests" in
+    // docs/01-architecture/01-performance.md): the JSON the webview parses for
+    // a 1 MB minified JSON response, about 5% over the 1,848,959 bytes
+    // measured. The body crosses pretty-printed and escaped inside a string,
+    // so it is about 1.85 times the response; raise this only when the
+    // growth is deliberate.
+    const LARGE_JSON_RESPONSE_IPC_BYTES_BUDGET: usize = 1_940_000;
+
+    #[test]
+    fn a_large_json_response_reaches_the_webview_within_its_payload_budget() {
+        // Shaped like scripts/echo/echo-server.ts's `_json` responses, which the
+        // perf harness sends.
+        let items = (0..)
+            .map(|id| {
+                json!({
+                    "id": id,
+                    "name": format!("Item {id}"),
+                    "email": format!("user{id}@example.com"),
+                    "active": id % 3 != 0,
+                    "tags": ["alpha", "beta", format!("tag-{}", id % 17)],
+                    "score": (id * 7919) % 1000,
+                })
+                .to_string()
+            })
+            .scan(2, |length, item| {
+                (*length < 1_000_000).then(|| {
+                    *length += item.len() + 1;
+                    item
+                })
+            })
+            .collect::<Vec<_>>();
+        let response = format!("[{}]", items.join(","));
+        let server = TestServer::replying(200, "application/json", response);
+        let app = TestApp::new();
+        let (collection, environment, request_id) = seed_request(&app, json!(null));
+
+        let result = send_now(
+            &app,
+            json!({
+                "id": request_id,
+                "collectionId": collection,
+                "name": "Large response",
+                "method": "GET",
+                "url": format!("{}/large", server.url),
+                "headers": [],
+                "query": [],
+                "pathParams": [],
+            }),
+            &environment,
+        );
+
+        assert_eq!(result.body_format, ResponseBodyFormat::Json);
+        let bytes = serde_json::to_vec(&result).unwrap().len();
+        assert!(
+            bytes <= LARGE_JSON_RESPONSE_IPC_BYTES_BUDGET,
+            "a {} byte JSON response is {bytes} bytes of JSON for the webview, over the budget of {LARGE_JSON_RESPONSE_IPC_BYTES_BUDGET}",
+            result.body_bytes,
+        );
     }
 
     #[test]

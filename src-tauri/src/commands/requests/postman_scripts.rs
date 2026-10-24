@@ -87,8 +87,6 @@ fn resolve_script_expression<'a>(
 
     match current {
         Value::String(value) => Some(value.clone()),
-        Value::Number(value) => Some(value.to_string()),
-        Value::Bool(value) => Some(value.to_string()),
         _ => Some(current.to_string()),
     }
 }

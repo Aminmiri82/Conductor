@@ -10,6 +10,7 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+*.tsbuildinfo
 *.local
 
 postman-collection-example/
@@ -28,5 +29,4 @@ postman-collection-example/
 *.sw?
 .cursor/
 
-# Agent app runs (scripts/agent-app.sh)
 .agent-app/

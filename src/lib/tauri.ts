@@ -17,9 +17,8 @@ export const api = {
   importEnvironment: (
     collectionId: string,
     contents: string,
-    fileName?: string | null,
-  ) =>
-    commands.importPostmanEnvironment(collectionId, contents, fileName ?? null),
+    fileName: string,
+  ) => commands.importPostmanEnvironment(collectionId, contents, fileName),
   // Workspace UI state is opaque JSON to Rust; the store normalizes it on load.
   getWorkspaceState: (key: string) =>
     commands.getWorkspaceState(key) as Promise<WorkspaceUiState | null>,
@@ -34,46 +33,31 @@ export const api = {
   getRequest: commands.getRequest,
   createRequest: (
     collectionId: string,
-    parentId: string | null | undefined,
+    parentId: string | null,
     position: number,
     name: string,
-  ) =>
-    commands.createRequest({
-      collectionId,
-      parentId: parentId ?? null,
-      position,
-      name,
-    }),
+  ) => commands.createRequest({ collectionId, parentId, position, name }),
   createFolder: (
     collectionId: string,
-    parentId: string | null | undefined,
+    parentId: string | null,
     position: number,
     name: string,
-  ) =>
-    commands.createFolder({
-      collectionId,
-      parentId: parentId ?? null,
-      position,
-      name,
-    }),
+  ) => commands.createFolder({ collectionId, parentId, position, name }),
   duplicateRequest: (requestId: string) =>
     commands.duplicateRequest({ requestId }),
   deleteNode: commands.deleteNode,
   renameFolder: commands.renameFolder,
   listCollectionStats: commands.listCollectionStats,
-  moveNode: (
-    nodeId: string,
-    parentId: string | null | undefined,
-    position: number,
-  ) => commands.moveNode({ nodeId, parentId: parentId ?? null, position }),
+  moveNode: (nodeId: string, parentId: string | null, position: number) =>
+    commands.moveNode({ nodeId, parentId, position }),
   saveTextFile: (path: string, contents: string) =>
     commands.saveTextFile({ path, contents }),
   saveResponseBody: (historyId: string, path: string) =>
     commands.saveResponseBody({ historyId, path }),
   saveRequest: commands.saveRequest,
-  resolveRequest: (request: RequestDetail, environmentId?: string | null) =>
-    commands.resolveRequest(request, environmentId ?? null),
-  sendRequest: (request: RequestDetail, environmentId?: string | null) =>
+  resolveRequest: (request: RequestDetail, environmentId: string | null) =>
+    commands.resolveRequest(request, environmentId),
+  sendRequest: (request: RequestDetail, environmentId: string | null) =>
     commands.sendRequest({ request, environmentId }),
   listVariables: commands.listVariables,
   applyVariableChanges: commands.applyVariableChanges,

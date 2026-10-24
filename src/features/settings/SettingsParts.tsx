@@ -96,7 +96,6 @@ type ListDrawerItem = {
   aside?: ReactNode;
 };
 
-// The list beside a settings page's detail: pick one item, or add one.
 // A right-click action on a drawer row. It runs once the menu has closed, so
 // focus can move (to a name field, a prompt) without the menu taking it back.
 type ListDrawerAction = {
@@ -106,6 +105,7 @@ type ListDrawerAction = {
   run: (id: string) => void;
 };
 
+// The list beside a settings page's detail: pick one item, or add one.
 export function ListDrawer({
   title,
   items,

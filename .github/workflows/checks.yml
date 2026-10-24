@@ -38,7 +38,10 @@ jobs:
             echo "::error::A release PR should only bump versions, but it also changes: $unexpected"
             exit 1
           fi
-      - run: node scripts/check-release-version.mjs
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - run: node scripts/release/check-version.ts
 
   check:
     if: ${{ !startsWith(github.head_ref || github.ref_name, 'release-please--') }}
@@ -65,7 +68,7 @@ jobs:
           # Saving takes about a minute and only main's caches reach other PRs.
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: pnpm install --frozen-lockfile
-      - run: node scripts/check-release-version.mjs
+      - run: node scripts/release/check-version.ts
       - run: pnpm check
       - run: git diff --exit-code -- src-tauri/Cargo.lock src/bindings.ts
 

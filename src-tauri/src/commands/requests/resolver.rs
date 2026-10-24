@@ -5,7 +5,6 @@ use crate::commands::models::{
     RequestBody, RequestDetail,
 };
 
-use super::auth;
 use crate::commands::variables::VariableContext;
 
 pub(super) struct ResolvedRequest {
@@ -77,8 +76,7 @@ pub(super) fn resolve_request_with_context(
         .as_ref()
         .map(|body| resolve_body(body, variables, &mut references));
 
-    let auth_to_resolve = auth::effective_auth(request.auth.as_ref(), inherited_auth.as_ref());
-    if let Some(auth) = auth_to_resolve.as_ref() {
+    if let Some(auth) = request.auth.as_ref().or(inherited_auth.as_ref()) {
         let used_fields: &[&Option<String>] = match auth.auth_type {
             AuthType::Bearer => &[&auth.token],
             AuthType::Basic => &[&auth.username, &auth.password],
@@ -142,7 +140,7 @@ fn apply_path_params(
     }
 }
 fn replace_path_param(url: &str, key: &str, value: &str) -> String {
-    let needle: String = format!(":{}", key);
+    let needle = format!(":{key}");
     let mut out = String::with_capacity(url.len() + value.len());
     let mut rest = url;
 
@@ -155,13 +153,8 @@ fn replace_path_param(url: &str, key: &str, value: &str) -> String {
             .chars()
             .next()
             .is_none_or(|ch| matches!(ch, '/' | '?' | '#' | '&'));
-        if boundary {
-            out.push_str(value);
-            rest = after;
-        } else {
-            out.push_str(&needle);
-            rest = after;
-        }
+        out.push_str(if boundary { value } else { &needle });
+        rest = after;
     }
 
     out.push_str(rest);

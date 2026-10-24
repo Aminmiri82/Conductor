@@ -14,7 +14,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const stateDir = join(root, ".agent-app");
 const stateFile = join(stateDir, "run.json");
 const dataDir = join(stateDir, "data");
@@ -27,25 +27,37 @@ const executable = join(bundle, "Contents/MacOS/conductor");
 const identifier = "com.yaramiri.conductor.agent";
 const [command, option] = process.argv.slice(2);
 
-function run(file, args) {
+// What `start` records in .agent-app/run.json to recognize its own process.
+type State = {
+  pid: number;
+  startedAt: string;
+  executable: string;
+  bundle: string;
+  identifier: string;
+  dataDir: string;
+  version: string;
+  log: string;
+};
+
+function run(file: string, args: string[]) {
   return execFileSync(file, args, { cwd: root, encoding: "utf8" }).trim();
 }
 
-function alive(pid) {
+function alive(pid: number) {
   try {
     process.kill(pid, 0);
     return true;
   } catch (error) {
-    if (error.code === "ESRCH") return false;
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
     throw error;
   }
 }
 
-function startedAt(pid) {
+function startedAt(pid: number) {
   return run("ps", ["-p", String(pid), "-o", "lstart="]);
 }
 
-function bundleValue(key) {
+function bundleValue(key: string) {
   return run("/usr/libexec/PlistBuddy", [
     "-c",
     `Print :${key}`,
@@ -53,7 +65,7 @@ function bundleValue(key) {
   ]);
 }
 
-function readState() {
+function readState(): State {
   if (!existsSync(stateFile))
     throw new Error(
       "No tracked agent. Run pnpm agent:start; do not launch an app by name.",
@@ -61,21 +73,21 @@ function readState() {
   return JSON.parse(readFileSync(stateFile, "utf8"));
 }
 
-function checkOtherAgents(expectedPid) {
+function checkOtherAgents(expectedPid?: number) {
   const agents = run("ps", ["-axo", "pid=,comm="])
     .split("\n")
     .map((line) => line.trim().match(/^(\d+)\s+(.+)$/))
     .filter((match) =>
       match?.[2].endsWith("/Conductor Agent.app/Contents/MacOS/conductor"),
     );
-  if (agents.some((match) => Number(match[1]) !== expectedPid)) {
+  if (agents.some((match) => Number(match![1]) !== expectedPid)) {
     throw new Error(
       "Another Conductor Agent bundle is running. Refusing an ambiguous computer-use target; stop its own tracked run first.",
     );
   }
 }
 
-function checkProcess(state) {
+function checkProcess(state: State) {
   if (!alive(state.pid))
     throw new Error(
       "The tracked agent has exited. Run pnpm agent:stop, then pnpm agent:start.",
@@ -92,7 +104,7 @@ function checkProcess(state) {
   }
 }
 
-function inspect(state) {
+function inspect(state: State) {
   checkProcess(state);
   checkOtherAgents(state.pid);
   if (
@@ -164,7 +176,7 @@ async function start() {
     throw new Error("Agent data directory must not be a symlink.");
   if (option === "--copy-real-data") {
     const source = join(
-      process.env.HOME,
+      process.env.HOME!,
       "Library/Application Support/com.yaramiri.conductor/conductor.sqlite3",
     );
     for (const suffix of ["", "-shm", "-wal"])
@@ -178,7 +190,7 @@ async function start() {
     );
   }
   console.log("Building a fresh Conductor Agent.app with bundled frontend...");
-  await new Promise((resolveBuild, reject) => {
+  await new Promise<void>((resolveBuild, reject) => {
     const build = spawn(
       "pnpm",
       [
@@ -203,7 +215,7 @@ async function start() {
   });
   if (bundleValue("CFBundleIdentifier") !== identifier)
     throw new Error("Build produced the wrong app identifier.");
-  const version = JSON.parse(
+  const version: string = JSON.parse(
     readFileSync(join(root, "src-tauri/tauri.conf.json"), "utf8"),
   ).version;
   if (bundleValue("CFBundleShortVersionString") !== version)
@@ -222,9 +234,9 @@ async function start() {
     child.once("error", reject);
   });
   child.unref();
-  const state = {
-    pid: child.pid,
-    startedAt: startedAt(child.pid),
+  const state: State = {
+    pid: child.pid!,
+    startedAt: startedAt(child.pid!),
     executable,
     bundle,
     identifier,
@@ -235,7 +247,7 @@ async function start() {
   writeFileSync(stateFile, JSON.stringify(state, null, 2) + "\n", {
     mode: 0o600,
   });
-  let lastError;
+  let lastError: Error | undefined;
   for (let attempt = 0; attempt < 100; attempt++) {
     if (!alive(state.pid)) break;
     try {
@@ -245,7 +257,7 @@ async function start() {
       );
       return;
     } catch (error) {
-      lastError = error;
+      lastError = error as Error;
     }
     await delay(200);
   }
@@ -265,7 +277,7 @@ try {
       !(command === "stop" && option === "--clean"))
   ) {
     throw new Error(
-      "Usage: agent-app.mjs start [--copy-real-data] | status | stop [--clean]",
+      "Usage: agent-app.ts start [--copy-real-data] | status | stop [--clean]",
     );
   }
   if (existsSync(stateDir) && lstatSync(stateDir).isSymbolicLink())
@@ -279,6 +291,6 @@ try {
       rmSync(stateDir, { recursive: true, force: true });
   }
 } catch (error) {
-  console.error(error.message);
+  console.error((error as Error).message);
   process.exitCode = 1;
 }

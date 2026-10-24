@@ -44,7 +44,7 @@ existing tests at that level.
   internals.
 - Mock our own code or the database. Only true external boundaries may be
   faked, such as the HTTP target of a send. Lint rejects `vi.mock` of our
-  modules and of `@tauri-apps/api` (`tools/oxlint/conductor.mjs`).
+  modules and of `@tauri-apps/api` (`tools/oxlint/conductor.ts`).
 - Touch the network. Tests that send start a local server inside the test.
 - Write snapshot tests, component render tests, or tests of framework
   behavior (serde renames, Zustand storing values).

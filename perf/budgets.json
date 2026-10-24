@@ -1,5 +1,5 @@
 {
-  "$comment": "Read by scripts/perf-size.mjs. Raw bytes for sizes. Raising a budget needs Yara's sign-off in the PR description. Metrics not listed here are reported but never fail.",
+  "$comment": "Read by scripts/perf/size.ts. Raw bytes for sizes. Raising a budget needs Yara's sign-off in the PR description. Metrics not listed here are reported but never fail.",
   "metrics": {
     "js/entry": { "max": 480000, "maxGrowthPercent": 2 },
     "js/total": { "maxGrowthPercent": 5 },

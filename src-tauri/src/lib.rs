@@ -1,10 +1,14 @@
 #[cfg(any(test, feature = "mcp-bridge"))]
 mod agent_data_dir;
+#[cfg(any(test, all(feature = "perf-harness", target_os = "macos")))]
+mod alloc_counter;
 #[cfg(test)]
 mod bindings;
 mod commands;
 #[cfg(test)]
 mod fixtures;
+#[cfg(all(feature = "perf-harness", target_os = "macos"))]
+mod perf_harness;
 mod storage;
 #[cfg(test)]
 mod test_server;
@@ -29,6 +33,10 @@ use tauri::{
     Manager,
 };
 use tauri_specta::Event;
+
+#[cfg(any(test, all(feature = "perf-harness", target_os = "macos")))]
+#[global_allocator]
+static ALLOCATOR: alloc_counter::CountingAllocator = alloc_counter::CountingAllocator;
 
 pub struct AppState {
     database: Database,
@@ -129,6 +137,8 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(all(feature = "perf-harness", target_os = "macos"))]
+    perf_harness::mark_start();
     let specta = specta_builder();
     let invoke_handler = specta.invoke_handler();
 
@@ -172,6 +182,8 @@ pub fn run() {
                 binary_bodies: BinaryBodies::default(),
             });
             app.set_menu(build_app_menu(app.handle())?)?;
+            #[cfg(all(feature = "perf-harness", target_os = "macos"))]
+            perf_harness::listen(app.handle());
             Ok(())
         })
         .on_menu_event(|app, event| {

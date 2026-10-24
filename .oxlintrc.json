@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["typescript", "react"],
-  "jsPlugins": ["./tools/oxlint/conductor.mjs"],
+  "jsPlugins": ["./tools/oxlint/conductor.ts"],
   "categories": {
     "correctness": "off"
   },
@@ -101,7 +101,33 @@
     "react/rules-of-hooks": "error",
     "react/exhaustive-deps": "error",
     "conductor/no-internal-mocking": "error",
-    "conductor/no-window-dialogs": "error"
+    "conductor/no-window-dialogs": "error",
+    "conductor/narrow-store-selector": "error",
+    "conductor/no-ipc-in-loop": "error",
+    "no-restricted-imports": [
+      "error",
+      {
+        "paths": [
+          {
+            "name": "@tauri-apps/plugin-updater",
+            "allowTypeImports": true,
+            "message": "Not needed at startup. Import it only in AboutPane.tsx, which loads with Settings."
+          },
+          {
+            "name": "@tauri-apps/plugin-process",
+            "allowTypeImports": true,
+            "message": "Not needed at startup. Import it only in AboutPane.tsx, which loads with Settings."
+          }
+        ],
+        "patterns": [
+          {
+            "group": ["@codemirror/*", "@lezer/*"],
+            "allowTypeImports": true,
+            "message": "The editor stays out of the main chunk. Import it only in ResponseViewer.tsx, which loads lazily."
+          }
+        ]
+      }
+    ]
   },
   "overrides": [
     {
@@ -127,6 +153,45 @@
         "prefer-const": "error",
         "prefer-rest-params": "error",
         "prefer-spread": "error"
+      }
+    },
+    {
+      "files": ["src/features/requests/ResponseViewer.tsx"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "@tauri-apps/plugin-updater",
+                "allowTypeImports": true,
+                "message": "Not needed at startup. Import it only in AboutPane.tsx, which loads with Settings."
+              },
+              {
+                "name": "@tauri-apps/plugin-process",
+                "allowTypeImports": true,
+                "message": "Not needed at startup. Import it only in AboutPane.tsx, which loads with Settings."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/features/settings/AboutPane.tsx"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["@codemirror/*", "@lezer/*"],
+                "allowTypeImports": true,
+                "message": "The editor stays out of the main chunk. Import it only in ResponseViewer.tsx, which loads lazily."
+              }
+            ]
+          }
+        ]
       }
     },
     {

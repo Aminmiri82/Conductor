@@ -539,6 +539,45 @@ mod tests {
         assert_eq!(names(children), ["List orders"]);
     }
 
+    // Perf budgets for the harness's 2,000-request import (see "Budgets In
+    // Tests" in docs/01-architecture/01-performance.md). They are ceilings
+    // about 5% over what was measured, which is the same on every run; raise
+    // one only when the growth is deliberate, and say so in the change.
+    // Measured: 3,229,130 bytes of heap and 436,788 bytes of JSON.
+    const LARGE_IMPORT_HEAP_PEAK_BUDGET: usize = 3_400_000;
+    const LARGE_IMPORT_IPC_BYTES_BUDGET: usize = 460_000;
+
+    fn import_large_collection() -> (ImportedCollection, usize) {
+        let app = crate::fixtures::TestApp::new();
+        let path = std::env::temp_dir().join(format!("conductor-import-{}.json", Uuid::new_v4()));
+        std::fs::write(&path, crate::fixtures::large_postman_collection()).unwrap();
+        let (imported, peak) = crate::alloc_counter::peak_while(|| import_file(&app.state, &path));
+        std::fs::remove_file(&path).unwrap();
+        (imported.unwrap(), peak)
+    }
+
+    #[test]
+    fn importing_two_thousand_requests_stays_within_its_rust_heap_budget() {
+        let (_, peak) = import_large_collection();
+
+        assert!(
+            peak <= LARGE_IMPORT_HEAP_PEAK_BUDGET,
+            "importing 2,000 requests held {peak} bytes of Rust heap at once, over the budget of {LARGE_IMPORT_HEAP_PEAK_BUDGET}"
+        );
+    }
+
+    #[test]
+    fn importing_two_thousand_requests_sends_the_sidebar_a_payload_within_budget() {
+        let (imported, _) = import_large_collection();
+
+        // What Tauri serializes for the webview to parse.
+        let bytes = serde_json::to_vec(&imported).unwrap().len();
+        assert!(
+            bytes <= LARGE_IMPORT_IPC_BYTES_BUDGET,
+            "the import result is {bytes} bytes of JSON, over the budget of {LARGE_IMPORT_IPC_BYTES_BUDGET}"
+        );
+    }
+
     fn imported(collection: Value) -> (Connection, String) {
         let mut connection = crate::storage::test_connection();
         let collection_id = import(&mut connection, collection);

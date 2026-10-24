@@ -173,7 +173,7 @@ export function getWorkspaceUiState(): WorkspaceUiState {
 }
 
 function normalizeWorkspaceUiState(
-  value: WorkspaceUiState | null | undefined,
+  value: WorkspaceUiState | null,
 ): WorkspaceUiState {
   if (!value || typeof value !== "object") return DEFAULT_WORKSPACE_UI_STATE;
   return {
