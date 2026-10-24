@@ -20,6 +20,9 @@ tauri-build = { version = "2", features = [] }
 [features]
 # Lets AI agents drive the webview over MCP. Enabled for isolated agent builds.
 mcp-bridge = ["dep:tauri-plugin-mcp-bridge"]
+# The perf harness behind `pnpm perf:run`: counts the Rust heap and records
+# memory and CPU at each scenario checkpoint. macOS only, never shipped.
+perf-harness = []
 
 [dependencies]
 tauri = { version = "2", features = [] }

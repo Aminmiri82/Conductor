@@ -20,8 +20,8 @@ needs Yara's sign-off before it lands.
   responses are normal, not edge cases.
 
 Only what Conductor ships has budgets so far: bundle chunks and dependency
-counts (see [Budgets In CI](#budgets-in-ci)). For startup, typing, and memory,
-compare before and after for anything performance-sensitive (see
+counts (see [Budgets In CI](#budgets-in-ci)). For startup, typing, memory,
+and CPU, compare before and after for anything performance-sensitive (see
 [Measuring](#measuring)).
 
 ## Rules
@@ -77,9 +77,8 @@ dependency needs a reason that is stated in the change description.
 
 Dev builds are unoptimized, so measure release builds for memory and startup:
 
-- Build with `pnpm tauri build --bundles app --config '{"bundle":{"macOS":{"signingIdentity":"-"}}}'`,
-  launch it with a throwaway `CONDUCTOR_DATA_DIR`, and read its memory
-  (`ps -o rss= -p <pid>`) at idle and after opening a large collection.
+- For memory, CPU, startup, and step timings, run `pnpm perf:run` (see
+  [Perf Harness](#perf-harness)).
 - `pnpm build` prints frontend chunk sizes; a jump in the main chunk means
   something is no longer lazy.
 - For Rust hot paths (import, resolution, sending), time the operation before
@@ -87,6 +86,89 @@ Dev builds are unoptimized, so measure release builds for memory and startup:
 
 Report the numbers in the change description, including when a change made
 something slower on purpose.
+
+## Perf Harness
+
+The perf harness runs Conductor through a fixed scenario and measures each
+step. It is macOS only.
+
+Two things make Conductor hard to measure by hand. First, its memory and CPU
+are split across several processes, and the Rust process is usually the
+smallest. WebKit runs the webview (React, the stores, CodeMirror, response
+bodies on screen) in its own WebContent process, plus a Networking and a GPU
+process. Their parent is launchd, not Conductor, so `ps -p <pid>` on the app
+misses them. Second, memory should be counted as **footprint**, which is what
+Activity Monitor shows as Memory, not RSS: RSS counts shared pages and leaves
+out compressed ones.
+
+### `pnpm perf:run`
+
+[`perf-harness.mjs`](../../scripts/perf-harness.mjs) builds a release app
+with the `perf-harness` Cargo feature. The build is called Conductor Perf
+Harness and has its own identifier and target directory, so it never touches
+the installed app. It launches that app through LaunchServices on a throwaway
+data directory against the local [echo server](../../scripts/echo-server.mjs).
+The webview runs [`perfScenario.ts`](../../src/app/perfScenario.ts): start,
+stay idle for 15 seconds, import a 2,000-request collection, open 20 tabs,
+receive a 10 MB JSON response, close every tab, then stay idle for 15 seconds
+again. After each step, [`perf_harness.rs`](../../src-tauri/src/perf_harness.rs)
+records:
+
+- for the app process and each WebKit process macOS holds the app
+  responsible for (found by pid, never by name): footprint, CPU time, and
+  wakeups;
+- the live Rust heap, and its peak since the previous checkpoint, from a
+  counting allocator. The peak shows what a step such as the import needed at
+  its worst.
+
+The scenario also times each step until its result has painted, and startup
+from process start to the first painted frame.
+
+It prints the median of three runs as two tables, one row per step:
+
+- **Memory** per process at the checkpoint, what the step added, and the Rust
+  heap. The line under the table is what is still held at the end compared
+  with the start, which is where leaks show.
+- **CPU** time per process for each step, the step's duration, and wakeups
+  per second across all processes. During the idle steps, CPU and wakeups
+  should be close to zero (see [Low idle memory](#what-fast-means-here)).
+
+The `±` columns are half the spread across runs. Treat a change smaller than
+that as noise. Use `--runs` to change the count, `--skip-build` to reuse the
+last build, and `--out <file>` to save the result. To see a change's effect,
+save a result before and after it and run
+`node scripts/perf-harness.mjs compare before.json after.json`. Nothing here
+fails a check yet, because the numbers move between runs.
+
+A step you want to measure belongs in the scenario. Wrap it in `step()`,
+which drives it through the stores as a click would, times it, and records a
+checkpoint.
+
+Only `perf-harness` builds contain any of this. The scenario's chunk is
+dropped from every other build, and the counting allocator and the private
+macOS calls never ship.
+
+### Finding Out Why
+
+The harness shows which process grew or worked, and in which step. To find
+out what is responsible:
+
+- **Webview memory and CPU.** Run `pnpm tauri dev`, open Web Inspector
+  (right-click > Inspect Element), and use the Timelines tab. JavaScript
+  Allocations with heap snapshots before and after a step shows what is still
+  reachable, such as a response body kept by a closed tab. The JavaScript &
+  Events instrument shows where a slow step spends its time. WebKit has no
+  `performance.memory`.
+- **Rust CPU.** `sample <pid> 10` records stacks for 10 seconds while you
+  repeat the slow step. It ships with macOS.
+- **Any process's memory.** `footprint -p <pid>` breaks memory down by
+  category, and `--sample 1` tracks it over time. `vmmap --summary <pid>` shows
+  regions, `heap <pid>` shows malloc objects by class, and `leaks <pid>` finds
+  unreachable allocations. These tools ship with macOS. Instruments needs the
+  full Xcode.
+
+Use pids from a build you started yourself, as [AGENTS.md](../../AGENTS.md)
+says.
 
 ## Budgets In CI
 

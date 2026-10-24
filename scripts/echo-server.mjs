@@ -9,6 +9,7 @@
 //   _status=404   reply with that status
 //   _delay=3000   wait that many milliseconds first (loading and cancel states)
 //   _bytes=4096   reply with that many bytes of binary download instead
+//   _json=1000000 reply with a JSON array of about that many bytes instead
 //
 // --routes adds endpoints for one verification without editing this file.
 // The module's default export is `async (request, response, body) => handled`,
@@ -70,6 +71,26 @@ const server = createServer(async (request, response) => {
       "content-disposition": 'attachment; filename="echo.bin"',
     });
     response.end(bytes);
+    return;
+  }
+
+  if (knobs.has("_json")) {
+    const size = Number(knobs.get("_json"));
+    const items = [];
+    for (let id = 0, length = 2; length < size; id++) {
+      const item = JSON.stringify({
+        id,
+        name: `Item ${id}`,
+        email: `user${id}@example.com`,
+        active: id % 3 !== 0,
+        tags: ["alpha", "beta", `tag-${id % 17}`],
+        score: (id * 7919) % 1000,
+      });
+      items.push(item);
+      length += item.length + 1;
+    }
+    response.writeHead(status, { "content-type": "application/json" });
+    response.end(`[${items.join(",")}]`);
     return;
   }
 
