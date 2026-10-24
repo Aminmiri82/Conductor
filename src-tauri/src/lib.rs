@@ -1,5 +1,7 @@
 #[cfg(any(test, feature = "mcp-bridge"))]
 mod agent_data_dir;
+#[cfg(any(test, all(feature = "perf-harness", target_os = "macos")))]
+mod alloc_counter;
 #[cfg(test)]
 mod bindings;
 mod commands;
@@ -32,9 +34,9 @@ use tauri::{
 };
 use tauri_specta::Event;
 
-#[cfg(all(feature = "perf-harness", target_os = "macos"))]
+#[cfg(any(test, all(feature = "perf-harness", target_os = "macos")))]
 #[global_allocator]
-static ALLOCATOR: perf_harness::CountingAllocator = perf_harness::CountingAllocator;
+static ALLOCATOR: alloc_counter::CountingAllocator = alloc_counter::CountingAllocator;
 
 pub struct AppState {
     database: Database,

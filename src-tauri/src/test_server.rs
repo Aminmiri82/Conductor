@@ -32,7 +32,8 @@ pub struct TestServer {
 }
 
 impl TestServer {
-    pub fn replying(status: u16, content_type: &'static str, reply: &'static str) -> Self {
+    pub fn replying(status: u16, content_type: &'static str, reply: impl Into<Bytes>) -> Self {
+        let reply: Bytes = reply.into();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind test server");
         listener
             .set_nonblocking(true)
@@ -45,8 +46,10 @@ impl TestServer {
             let listener = tokio::net::TcpListener::from_std(listener).expect("tokio listener");
             while let Ok((stream, _)) = listener.accept().await {
                 let log = log.clone();
+                let reply = reply.clone();
                 let service = service_fn(move |request: Request<Incoming>| {
                     let log = log.clone();
+                    let reply = reply.clone();
                     async move {
                         let (parts, body) = request.into_parts();
                         let body = body.collect().await.map(|body| body.to_bytes());
@@ -59,7 +62,7 @@ impl TestServer {
                         let response = Response::builder()
                             .status(status)
                             .header("content-type", content_type)
-                            .body(Full::new(Bytes::from_static(reply.as_bytes())))
+                            .body(Full::new(reply))
                             .expect("valid response");
                         Ok::<_, Infallible>(response)
                     }

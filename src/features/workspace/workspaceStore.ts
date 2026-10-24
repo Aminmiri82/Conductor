@@ -54,6 +54,9 @@ type WorkspaceState = {
   sidebarAutoHidePending: boolean;
   saving: boolean;
   sendingRequestIds: ReadonlySet<string>;
+  // False until the first `loadCollections` finishes, even if it failed. The
+  // perf harness counts startup until then.
+  collectionsLoaded: boolean;
   error?: string;
   // A folder made by ⌘⇧N, for the sidebar to open in rename once it shows.
   pendingRenameId?: string;
@@ -111,6 +114,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   sidebarAutoHidePending: true,
   saving: false,
   sendingRequestIds: new Set(),
+  collectionsLoaded: false,
 
   loadCollections: async () => {
     set({ error: undefined });
@@ -138,6 +142,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     } catch (error) {
       set({ error: String(error) });
     }
+    set({ collectionsLoaded: true });
   },
 
   loadEnvironments: async () => {

@@ -1,8 +1,8 @@
 //! The perf harness behind `pnpm perf:run` (scripts/perf-harness.mjs). Only
 //! built with the `perf-harness` feature, on macOS, and never shipped.
 //!
-//! The webview runs a scenario (src/app/perfScenario.ts) and emits a
-//! checkpoint event after each step. Each checkpoint records the Rust heap
+//! The webview runs one scenario (src/app/perf/) and emits a checkpoint event
+//! after each step. Each checkpoint records the Rust heap
 //! (current, and peak since the previous checkpoint) and, for every process
 //! macOS holds this app responsible for (the app plus its WebKit WebContent,
 //! Networking, and GPU processes), its memory footprint, CPU time, and
@@ -12,64 +12,24 @@
 //! The events are plain strings rather than typed specta events so nothing
 //! here reaches the generated bindings or a normal build.
 
-use std::alloc::{GlobalAlloc, Layout, System};
+use std::collections::BTreeMap;
 use std::ffi::{c_char, c_int, c_void, CStr};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
 use std::time::Instant;
 
 use serde::Serialize;
+use serde_json::Value;
 use tauri::{AppHandle, Emitter, Listener};
 
-/// Counts live heap bytes and the high-water mark. Atomics only, so the
-/// overhead is a few instructions per allocation.
-pub struct CountingAllocator;
+use crate::alloc_counter;
 
-static HEAP_BYTES: AtomicUsize = AtomicUsize::new(0);
-static HEAP_PEAK: AtomicUsize = AtomicUsize::new(0);
-
-fn grew(bytes: usize) {
-    let now = HEAP_BYTES.fetch_add(bytes, Ordering::Relaxed) + bytes;
-    HEAP_PEAK.fetch_max(now, Ordering::Relaxed);
-}
-
-unsafe impl GlobalAlloc for CountingAllocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let pointer = System.alloc(layout);
-        if !pointer.is_null() {
-            grew(layout.size());
-        }
-        pointer
-    }
-
-    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        let pointer = System.alloc_zeroed(layout);
-        if !pointer.is_null() {
-            grew(layout.size());
-        }
-        pointer
-    }
-
-    unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
-        System.dealloc(pointer, layout);
-        HEAP_BYTES.fetch_sub(layout.size(), Ordering::Relaxed);
-    }
-
-    unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        let moved = System.realloc(pointer, layout, new_size);
-        if !moved.is_null() {
-            if new_size >= layout.size() {
-                grew(new_size - layout.size());
-            } else {
-                HEAP_BYTES.fetch_sub(layout.size() - new_size, Ordering::Relaxed);
-            }
-        }
-        moved
-    }
-}
+/// Bumped when the events or output lines change shape, so the script can
+/// refuse an app built from a commit that speaks a different version (CI
+/// builds the base branch and runs it with the PR's script).
+const PROTOCOL: u32 = 1;
 
 static STARTED: OnceLock<Instant> = OnceLock::new();
 
@@ -144,6 +104,8 @@ struct Checkpoint {
     /// step in between needed at its worst.
     rust_heap_peak: usize,
     processes: Vec<ProcessUsage>,
+    /// What the scenario measured itself, such as keystroke latency.
+    metrics: BTreeMap<String, f64>,
 }
 
 fn usage(pid: c_int, timebase: &MachTimebase) -> Option<ProcessUsage> {
@@ -223,6 +185,7 @@ fn append(out: &PathBuf, line: &impl Serialize) {
 struct CheckpointEvent {
     label: String,
     step_ms: f64,
+    metrics: BTreeMap<String, f64>,
 }
 
 fn since_start_ms() -> f64 {
@@ -235,28 +198,28 @@ fn checkpoint(event: CheckpointEvent) -> Checkpoint {
         label: event.label,
         step_ms: event.step_ms,
         at_ms: since_start_ms(),
-        rust_heap: HEAP_BYTES.load(Ordering::Relaxed),
-        rust_heap_peak: HEAP_PEAK.swap(HEAP_BYTES.load(Ordering::Relaxed), Ordering::Relaxed),
+        rust_heap: alloc_counter::live(),
+        rust_heap_peak: alloc_counter::take_peak(),
         processes: own_processes(),
+        metrics: event.metrics,
     }
 }
 
-#[derive(Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct ScenarioConfig {
-    collection_path: Option<String>,
-}
-
 /// Answers the scenario's events. Configured by the environment that
-/// scripts/perf-harness.mjs launches the app with.
+/// scripts/perf-harness.mjs launches the app with. `CONDUCTOR_PERF_CONFIG`
+/// is the scenario's config, passed to the webview as is.
 pub fn listen(app: &AppHandle) {
     let Some(out) = std::env::var_os("CONDUCTOR_PERF_OUT").map(PathBuf::from) else {
         return;
     };
-    append(&out, &serde_json::json!({ "pid": std::process::id() }));
-    let config = ScenarioConfig {
-        collection_path: std::env::var("CONDUCTOR_PERF_COLLECTION").ok(),
-    };
+    append(
+        &out,
+        &serde_json::json!({ "pid": std::process::id(), "protocol": PROTOCOL }),
+    );
+    let config = std::env::var("CONDUCTOR_PERF_CONFIG")
+        .ok()
+        .and_then(|config| serde_json::from_str::<Value>(&config).ok())
+        .unwrap_or(Value::Null);
 
     let handle = app.clone();
     app.listen_any("perf:hello", move |_| {

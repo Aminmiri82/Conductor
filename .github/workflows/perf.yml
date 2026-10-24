@@ -50,3 +50,71 @@ jobs:
         env:
           PERF_OVERRIDE: ${{ contains(github.event.pull_request.labels.*.name, 'perf-regression-approved') && '1' || '0' }}
         run: node scripts/perf-size.mjs compare "$RUNNER_TEMP/base.json" "$RUNNER_TEMP/head.json"
+
+  harness:
+    # Runs the perf harness scenarios (src/app/perf/scenarios/) on the PR and
+    # its base, alternating on one runner, and writes the comparison to the
+    # step summary. Report only: a hosted runner's numbers are noisy, so a
+    # regression never fails this job. It fails when the harness breaks, such
+    # as a scenario that no longer finishes. Labels only matter to `size`.
+    if: github.event.action != 'labeled' && github.event.action != 'unlabeled'
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target/perf-harness
+          key: perf-harness
+      - run: pnpm install --frozen-lockfile
+      - name: Build the PR
+        run: |
+          node scripts/perf-harness.mjs build \
+            --target-dir "$GITHUB_WORKSPACE/src-tauri/target/perf-harness" \
+            --app-out "$RUNNER_TEMP/head.app"
+      - name: Build the base branch
+        id: base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git worktree add "$RUNNER_TEMP/base" "$(git merge-base "$BASE_SHA" HEAD)"
+          if [ ! -d "$RUNNER_TEMP/base/src/app/perf/scenarios" ]; then
+            echo "The base branch predates perf scenarios, so the PR is measured alone."
+            echo "built=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          cd "$RUNNER_TEMP/base"
+          pnpm install --frozen-lockfile
+          # The PR's script, with the PR build's target dir so compiled
+          # dependencies are reused.
+          node "$GITHUB_WORKSPACE/scripts/perf-harness.mjs" build --root . \
+            --target-dir "$GITHUB_WORKSPACE/src-tauri/target/perf-harness" \
+            --app-out "$RUNNER_TEMP/base.app"
+          echo "built=true" >> "$GITHUB_OUTPUT"
+      - name: Compare with the base branch
+        if: steps.base.outputs.built == 'true'
+        run: |
+          node scripts/perf-harness.mjs ab \
+            --base "$RUNNER_TEMP/base.app" --head "$RUNNER_TEMP/head.app" \
+            --out-base "$RUNNER_TEMP/perf-base.json" --out-head "$RUNNER_TEMP/perf-head.json"
+          node scripts/perf-harness.mjs compare --markdown \
+            "$RUNNER_TEMP/perf-base.json" "$RUNNER_TEMP/perf-head.json" >> "$GITHUB_STEP_SUMMARY"
+      - name: Measure the PR alone
+        if: steps.base.outputs.built != 'true'
+        run: |
+          node scripts/perf-harness.mjs run --app "$RUNNER_TEMP/head.app" \
+            --runs 1 --warmup 0 --out "$RUNNER_TEMP/perf-head.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-harness
+          path: ${{ runner.temp }}/perf-*.json
+          if-no-files-found: ignore

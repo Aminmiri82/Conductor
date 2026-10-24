@@ -14,6 +14,7 @@ It's a Tauri 2 desktop app with a Rust + SQLite backend and a React + Zustand fr
 Use [the docs index](docs/index.md) to find the page for your task; unrelated pages are not prerequisites. Setup is in [README.md](README.md).
 - Adding or revising tests: the [writing-tests skill](.agents/skills/writing-tests/SKILL.md).
 - Confirming a visual change, or any change when user asks: the [verify-in-app skill](.agents/skills/verify-in-app/SKILL.md).
+- Measuring a change's speed or memory, or adding a perf scenario: the [measuring-performance skill](.agents/skills/measuring-performance/SKILL.md).
 
 ## Where Code Lives
 

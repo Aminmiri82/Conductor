@@ -1,78 +1,323 @@
-// The perf harness: measures Conductor's memory and CPU through a fixed
-// scenario, on macOS. See docs/01-architecture/01-performance.md#perf-harness.
+// The perf harness: measures Conductor's memory, CPU, and responsiveness
+// through scripted scenarios, on macOS. See
+// docs/01-architecture/01-performance.md#perf-harness.
 //
-//   node scripts/perf-harness.mjs run [--runs 3] [--out file] [--skip-build]
-//   node scripts/perf-harness.mjs compare <before.json> <after.json>
+//   node scripts/perf-harness.mjs run [--scenario name]... [--runs 5]
+//       [--warmup 1] [--quick] [--out file] [--skip-build]
+//   node scripts/perf-harness.mjs list
+//   node scripts/perf-harness.mjs compare <before.json> <after.json> [--markdown]
+//
+// CI only (the Perf workflow's harness job):
+//   node scripts/perf-harness.mjs build [--root dir] [--target-dir dir] --app-out <path.app>
+//   node scripts/perf-harness.mjs run --app <path.app> [...run options]
+//   node scripts/perf-harness.mjs ab --base <a.app> --head <b.app>
+//       --out-base <file> --out-head <file> [--scenario name]... [--runs 5]
 //
 // `run` builds a release app with the `perf-harness` feature (its own name,
 // identifier, and target dir, so it never touches the real app or its data),
-// then launches it on a throwaway data directory against a local echo server.
-// The webview runs src/app/perfScenario.ts and the app records a checkpoint
-// after each step. Numbers are the median across runs.
+// then launches it once per scenario and run, each on a throwaway data
+// directory against a local echo server. Scenarios live in
+// src/app/perf/scenarios/. A warm-up run is measured and thrown away, and
+// every result is saved under src-tauri/target/perf-harness/results/.
 //
-// `compare` only reports: memory and timings move between runs, so there
-// are no budgets yet.
+// `ab` runs two builds alternately on one machine (base, head, head, base,
+// ...), so drift and heat land on both sides. `compare` calls a change real
+// only when the runs separate (see results.mjs); nothing here fails a check.
 import { execFileSync, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   existsSync,
+  lstatSync,
+  readlinkSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import {
+  ROLES,
+  SCHEMA,
+  comparisonMarkdown,
+  comparisonText,
+  mb,
+  medians,
+  ms,
+  signed,
+  spread,
+  textTable,
+  toMetrics,
+  valuesOf,
+} from "./perf-harness/results.mjs";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const targetDir = join(root, "src-tauri/target/perf-harness");
+// Must match PROTOCOL in src-tauri/src/perf_harness.rs.
+const PROTOCOL = 1;
+const here = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const productName = "Conductor Perf Harness";
-const bundle = join(targetDir, `release/bundle/macos/${productName}.app`);
-const executable = join(bundle, "Contents/MacOS/conductor");
-const SCENARIO_TIMEOUT_MS = 3 * 60_000;
-const COLLECTION = { folders: 40, requestsPerFolder: 50 };
-const LARGE_RESPONSE_BYTES = 10_000_000;
-const ROLES = ["app", "WebContent", "Networking", "GPU", "other"];
+const SCENARIO_TIMEOUT_MS = 5 * 60_000;
+const SETTINGS = { settleMs: 3000, idleMs: 15_000 };
+const QUICK_SETTINGS = { settleMs: 500, idleMs: 3000 };
+// What goes into a build, so editing docs or this script does not make the
+// last build look stale.
+const APP_SOURCES = [
+  "src",
+  "src-tauri",
+  "index.html",
+  "package.json",
+  "pnpm-lock.yaml",
+  "vite.config.ts",
+  "tsconfig.json",
+];
 
 const [command, ...rest] = process.argv.slice(2);
 const { values: options, positionals } = parseArgs({
   args: rest,
   allowPositionals: true,
   options: {
-    runs: { type: "string", default: "3" },
+    scenario: { type: "string", multiple: true },
+    runs: { type: "string" },
+    warmup: { type: "string" },
+    quick: { type: "boolean", default: false },
     out: { type: "string" },
     "skip-build": { type: "boolean", default: false },
+    root: { type: "string" },
+    "app-out": { type: "string" },
+    "target-dir": { type: "string" },
+    app: { type: "string" },
+    base: { type: "string" },
+    head: { type: "string" },
+    "out-base": { type: "string" },
+    "out-head": { type: "string" },
+    markdown: { type: "boolean", default: false },
   },
 });
 
-if (process.platform !== "darwin") {
+const commands = { run, build, ab, list, compare };
+if (!commands[command]) {
+  console.error(
+    "usage: perf-harness.mjs run|list|compare|build|ab (see the header comment)",
+  );
+  process.exit(2);
+}
+if (["run", "build", "ab"].includes(command) && process.platform !== "darwin") {
   console.error("The perf harness measures macOS only.");
   process.exit(2);
 }
-if (command === "run") await run();
-else if (command === "compare") compare(...positionals);
-else {
-  console.error("usage: perf-harness.mjs run|compare (see the header comment)");
-  process.exit(2);
+try {
+  await commands[command]();
+} catch (error) {
+  console.error(`perf-harness: ${error.message}`);
+  process.exit(1);
 }
 
 async function run() {
-  if (!options["skip-build"]) await build();
-  const runs = [];
-  for (let index = 0; index < Number(options.runs); index++) {
-    console.log(`Run ${index + 1} of ${options.runs}...`);
-    runs.push(await measureOnce());
+  let app;
+  if (options.app) {
+    // A build from `build --app-out`, measured as it is.
+    app = appAt(resolve(options.app));
+  } else {
+    app = defaultApp(here);
+    if (!options["skip-build"]) await buildApp(here, app);
+    warnIfStale(app);
   }
-  const metrics = median(runs);
-  report(metrics, runs);
-  const json = `${JSON.stringify(metrics, null, 2)}\n`;
-  if (options.out) writeFileSync(options.out, json);
+  const scenarios = selectScenarios(await loadScenarios(app.stamp.root));
+  const settings = settingsFromOptions();
+  warnAboutPower();
+  const runs = [];
+  for (let index = -settings.warmup; index < settings.runs; index++) {
+    const label =
+      index < 0 ? "Warm-up run" : `Run ${index + 1} of ${settings.runs}`;
+    runs.push(await measureRun(app, scenarios, settings, label));
+  }
+  const result = makeResult(app, settings, runs.slice(settings.warmup));
+  report(result, scenarios);
+  const out =
+    options.out ??
+    join(
+      here,
+      "src-tauri/target/perf-harness/results",
+      `${fileStamp()}-${app.stamp.sha.slice(0, 7)}.json`,
+    );
+  save(out, result);
+  console.log(`\nSaved ${out}`);
 }
 
 async function build() {
-  console.log(`Building ${productName}.app (release, perf-harness)...`);
+  const root = resolve(options.root ?? here);
+  if (!options["app-out"]) throw new Error("build needs --app-out <path.app>");
+  const app = defaultApp(root);
+  await buildApp(root, app);
+  const out = resolve(options["app-out"]);
+  rmSync(out, { recursive: true, force: true });
+  execFileSync("ditto", [app.bundle, out]);
+  writeFileSync(stampPath(out), readFileSync(stampPath(app.bundle)));
+  console.log(`Copied the build to ${out}`);
+}
+
+async function ab() {
+  for (const name of ["base", "head", "out-base", "out-head"])
+    if (!options[name]) throw new Error(`ab needs --${name}`);
+  const sides = await Promise.all(
+    [options.base, options.head].map(async (bundle) => {
+      const app = appAt(resolve(bundle));
+      return { app, scenarios: await loadScenarios(app.stamp.root) };
+    }),
+  );
+  // Only scenarios both builds have can be compared.
+  const common = sides[0].scenarios.filter(({ name }) =>
+    sides[1].scenarios.some((other) => other.name === name),
+  );
+  const selected = selectScenarios(common);
+  for (const side of sides)
+    side.scenarios = selected.map(({ name }) =>
+      side.scenarios.find((scenario) => scenario.name === name),
+    );
+  const settings = settingsFromOptions();
+  warnAboutPower();
+  const runs = [[], []];
+  for (let index = -settings.warmup; index < settings.runs; index++) {
+    // base, head, head, base, ...: drift over the job lands on both.
+    const order = index % 2 === 0 ? [0, 1] : [1, 0];
+    for (const side of order) {
+      const label = `${side ? "Head" : "Base"} ${index < 0 ? "warm-up" : `run ${index + 1} of ${settings.runs}`}`;
+      runs[side].push(
+        await measureRun(
+          sides[side].app,
+          sides[side].scenarios,
+          settings,
+          label,
+        ),
+      );
+    }
+  }
+  const results = sides.map(({ app }, side) =>
+    makeResult(app, settings, runs[side].slice(settings.warmup)),
+  );
+  save(resolve(options["out-base"]), results[0]);
+  save(resolve(options["out-head"]), results[1]);
+  console.log(`\n${comparisonText(...results)}`);
+}
+
+async function list() {
+  for (const { name, description } of await loadScenarios(here))
+    console.log(`${name.padEnd(28)} ${description}`);
+}
+
+function compare() {
+  const [beforePath, afterPath] = positionals;
+  if (!beforePath || !afterPath)
+    throw new Error("compare needs <before.json> <after.json>");
+  const [before, after] = [beforePath, afterPath].map(load);
+  if (options.markdown) console.log(comparisonMarkdown(before, after));
+  else console.log(comparisonText(before, after));
+}
+
+// Imports each scenario file in Node (it strips the types), which is why
+// scenario files import only ../scenario.ts and ../fixtures.ts.
+async function loadScenarios(root) {
+  const directory = join(root, "src/app/perf/scenarios");
+  const files = readdirSync(directory)
+    .filter((file) => file.endsWith(".ts"))
+    .sort();
+  const { fixtures } = await import(
+    pathToFileURL(join(root, "src/app/perf/fixtures.ts")).href
+  );
+  return Promise.all(
+    files.map(async (file) => {
+      const name = basename(file, ".ts");
+      let scenario;
+      try {
+        ({ default: scenario } = await import(
+          pathToFileURL(join(directory, file)).href
+        ));
+      } catch (error) {
+        throw new Error(
+          `could not import scenario ${name} (${error.message}). Scenario files may import only ../scenario.ts and ../fixtures.ts.`,
+          { cause: error },
+        );
+      }
+      if (typeof scenario?.run !== "function")
+        throw new Error(
+          `scenario ${name} must default-export defineScenario({ ... })`,
+        );
+      return {
+        name,
+        description: scenario.description,
+        fixtures: scenario.fixtures,
+        prepares: typeof scenario.prepare === "function",
+        generators: fixtures,
+      };
+    }),
+  );
+}
+
+function selectScenarios(available) {
+  const wanted = (options.scenario ?? []).flatMap((value) => value.split(","));
+  if (!wanted.length) return available;
+  return wanted.map((name) => {
+    const scenario = available.find((candidate) => candidate.name === name);
+    if (!scenario)
+      throw new Error(
+        `no scenario named ${name}; there are ${available.map(({ name }) => name).join(", ")}`,
+      );
+    return scenario;
+  });
+}
+
+function settingsFromOptions() {
+  const count = (name, fallback) => {
+    const value = Number(options[name] ?? fallback);
+    if (!Number.isInteger(value) || value < 0)
+      throw new Error(`--${name} must be a whole number`);
+    return value;
+  };
+  const quick = options.quick;
+  const settings = {
+    ...(quick ? QUICK_SETTINGS : SETTINGS),
+    quick,
+    runs: count("runs", quick ? 1 : 5),
+    warmup: count("warmup", quick ? 0 : 1),
+  };
+  if (!settings.runs) throw new Error("--runs must be at least 1");
+  return settings;
+}
+
+// --target-dir lets CI build the base branch into the PR's target dir, so
+// compiled dependencies are reused.
+function defaultApp(root) {
+  const targetDir = options["target-dir"]
+    ? resolve(options["target-dir"])
+    : join(root, "src-tauri/target/perf-harness");
+  return {
+    root,
+    targetDir,
+    bundle: join(targetDir, `release/bundle/macos/${productName}.app`),
+  };
+}
+
+function appAt(bundle) {
+  if (!existsSync(stampPath(bundle)))
+    throw new Error(`${bundle} has no build stamp; build it with this script`);
+  return {
+    bundle,
+    stamp: JSON.parse(readFileSync(stampPath(bundle), "utf8")),
+  };
+}
+
+function stampPath(bundle) {
+  return `${bundle}.build.json`;
+}
+
+async function buildApp(root, app) {
+  console.log(
+    `Building ${productName}.app (release, perf-harness) from ${root}...`,
+  );
   const config = {
     productName,
     identifier: "com.yaramiri.conductor.perfharness",
@@ -97,6 +342,8 @@ async function build() {
     },
     bundle: { macOS: { signingIdentity: "-" } },
   };
+  // Stamped before building, so it describes the sources the build read.
+  const stamp = sourceStamp(root);
   await exec(
     "pnpm",
     [
@@ -110,16 +357,103 @@ async function build() {
       JSON.stringify(config),
     ],
     // VITE_PERF_HARNESS reaches `pnpm build` through beforeBuildCommand.
-    { CARGO_TARGET_DIR: targetDir, VITE_PERF_HARNESS: "1" },
+    {
+      cwd: root,
+      env: { CARGO_TARGET_DIR: app.targetDir, VITE_PERF_HARNESS: "1" },
+    },
   );
+  writeFileSync(
+    stampPath(app.bundle),
+    `${JSON.stringify({ ...stamp, builtAt: new Date().toISOString() }, null, 2)}\n`,
+  );
+  app.stamp = stamp;
 }
 
-async function measureOnce() {
+/**
+ * What a build was made from: the commit, whether the tree was dirty, a hash
+ * of uncommitted changes to the app's sources (so a stale build can be
+ * noticed), and a hash of each scenario with the files it shares, so
+ * `compare` can tell when the scenario itself changed.
+ */
+function sourceStamp(root) {
+  const git = (...args) =>
+    execFileSync("git", ["-C", root, ...args], { encoding: "utf8" });
+  const changes = createHash("sha256");
+  changes.update(git("diff", "HEAD", "--binary", "--", ...APP_SOURCES));
+  const untracked = git(
+    "ls-files",
+    "--others",
+    "--exclude-standard",
+    "-z",
+    "--",
+    ...APP_SOURCES,
+  )
+    .split("\0")
+    .filter(Boolean);
+  for (const file of untracked) {
+    const path = join(root, file);
+    changes.update(file);
+    // A symlink is hashed as where it points; it may point at a directory.
+    changes.update(
+      lstatSync(path).isSymbolicLink()
+        ? readlinkSync(path)
+        : readFileSync(path),
+    );
+  }
+  const hashOf = (...files) => {
+    const hash = createHash("sha256");
+    for (const file of files) hash.update(readFileSync(join(root, file)));
+    return hash.digest("hex").slice(0, 16);
+  };
+  const shared = [
+    "src/app/perf/fixtures.ts",
+    "src/app/perf/runtime.ts",
+    "src/app/perf/scenario.ts",
+  ];
+  const scenarioHashes = Object.fromEntries(
+    readdirSync(join(root, "src/app/perf/scenarios"))
+      .filter((file) => file.endsWith(".ts"))
+      .map((file) => [
+        basename(file, ".ts"),
+        hashOf(`src/app/perf/scenarios/${file}`, ...shared),
+      ]),
+  );
+  return {
+    root,
+    sha: git("rev-parse", "HEAD").trim(),
+    dirty: git("status", "--porcelain").trim() !== "",
+    changesHash: changes.digest("hex").slice(0, 16),
+    scenarioHashes,
+  };
+}
+
+// With --skip-build the last build is reused; say so when the tree moved on.
+function warnIfStale(app) {
+  const built = appAt(app.bundle).stamp;
+  app.stamp = built;
+  const now = sourceStamp(app.root);
+  if (built.sha !== now.sha || built.changesHash !== now.changesHash)
+    console.warn(
+      `warning: the build is from ${built.sha.slice(0, 7)}${built.dirty ? " with uncommitted changes" : ""}, and the sources have changed since. Run without --skip-build to measure them.`,
+    );
+}
+
+/** One launch (two for a scenario with `prepare`) per scenario. */
+async function measureRun(app, scenarios, settings, label) {
+  const metrics = {};
+  for (const scenario of scenarios) {
+    console.log(`${label}: ${scenario.name}...`);
+    Object.assign(metrics, await measureScenario(app, scenario, settings));
+  }
+  return metrics;
+}
+
+async function measureScenario(app, scenario, settings) {
   const work = mkdtempSync(join(tmpdir(), "conductor-perf-"));
   const port = await freePort();
   const echo = spawn(
     process.execPath,
-    [join(root, "scripts/echo-server.mjs"), "--port", String(port)],
+    [join(here, "scripts/echo-server.mjs"), "--port", String(port)],
     { stdio: ["ignore", "pipe", "inherit"] },
   );
   try {
@@ -128,27 +462,46 @@ async function measureOnce() {
       echo.once("exit", () => fail(new Error("echo server exited")));
     });
     echo.stdout.resume();
-    const collectionPath = join(work, "collection.json");
-    writeFileSync(collectionPath, generateCollection(port));
-    const out = join(work, "checkpoints.jsonl");
-    return toMetrics(
-      await launch(out, join(work, "app.log"), {
-        CONDUCTOR_DATA_DIR: join(work, "data"),
-        CONDUCTOR_PERF_OUT: out,
-        CONDUCTOR_PERF_COLLECTION: collectionPath,
-      }),
-    );
+    const env = { echoUrl: `http://127.0.0.1:${port}` };
+    const fixtures = {};
+    for (const name of scenario.fixtures) {
+      const { file, info } = scenario.generators[name](env);
+      const path = join(work, `${name}.json`);
+      writeFileSync(path, file);
+      fixtures[name] = { ...info, path };
+    }
+    const config = (phase) => ({
+      scenario: scenario.name,
+      phase,
+      settleMs: settings.settleMs,
+      idleMs: settings.idleMs,
+      fixtures,
+    });
+    const data = join(work, "data");
+    if (scenario.prepares)
+      await launch(app, work, "prepare", data, config("prepare"));
+    const output = await launch(app, work, "measure", data, config("measure"));
+    if (!output.checkpoints.length)
+      throw new Error(`scenario ${scenario.name} recorded no checkpoints`);
+    return toMetrics(scenario.name, output);
   } finally {
     echo.kill();
     rmSync(work, { recursive: true, force: true });
   }
 }
 
-// Launches the app this script built and waits for the scenario to quit it.
-// It goes through LaunchServices (`open`) rather than spawn: started from a
-// shell, macOS holds the terminal responsible for the app and its WebKit
-// processes, so the app could not find them. Returns the app's output lines.
-async function launch(out, log, env) {
+// Launches the app and waits for the scenario to quit it. It goes through
+// LaunchServices (`open`) rather than spawn: started from a shell, macOS
+// holds the terminal responsible for the app and its WebKit processes, so
+// the app could not find them.
+async function launch(app, work, phase, data, config) {
+  const out = join(work, `${phase}.jsonl`);
+  const log = join(work, `${phase}.log`);
+  const env = {
+    CONDUCTOR_DATA_DIR: data,
+    CONDUCTOR_PERF_OUT: out,
+    CONDUCTOR_PERF_CONFIG: JSON.stringify(config),
+  };
   const opener = spawn(
     "open",
     [
@@ -162,11 +515,11 @@ async function launch(out, log, env) {
         "--env",
         `${key}=${value}`,
       ]),
-      bundle,
+      app.bundle,
     ],
     { stdio: "inherit" },
   );
-  const timer = setTimeout(stopHungApp, SCENARIO_TIMEOUT_MS, out);
+  const timer = setTimeout(stopHungApp, SCENARIO_TIMEOUT_MS, app, out);
   await new Promise((done, fail) => {
     opener.once("error", fail);
     opener.once("exit", done);
@@ -178,11 +531,16 @@ async function launch(out, log, env) {
         .split("\n")
         .map((line) => JSON.parse(line))
     : [];
+  if (!lines.length)
+    throw new Error(`the app wrote nothing; its output:\n${readLog(log)}`);
+  if (lines[0].protocol !== PROTOCOL)
+    throw new Error(
+      `the app speaks perf protocol ${lines[0].protocol ?? "0"} and this script ${PROTOCOL}; build both from compatible commits`,
+    );
   const failure = lines.find((line) => "error" in line);
-  if (failure) throw new Error(`scenario failed: ${failure.error}`);
+  if (failure)
+    throw new Error(`${config.scenario} (${phase}) failed: ${failure.error}`);
   const checkpoints = lines.filter((line) => "label" in line);
-  if (!checkpoints.length)
-    throw new Error(`no checkpoints recorded; app output:\n${readLog(log)}`);
   if (
     !checkpoints.every(({ processes }) =>
       processes.some(({ name }) => name.endsWith("WebContent")),
@@ -196,8 +554,8 @@ async function launch(out, log, env) {
 }
 
 // Stops only the pid the app reported in this run's output, and only if it
-// is still the profiling build.
-function stopHungApp(out) {
+// is still this build.
+function stopHungApp(app, out) {
   console.error("Scenario timed out; stopping the app this run started.");
   const pid = existsSync(out)
     ? JSON.parse(readFileSync(out, "utf8").split("\n")[0]).pid
@@ -207,7 +565,8 @@ function stopHungApp(out) {
     const command = execFileSync("ps", ["-p", String(pid), "-o", "comm="], {
       encoding: "utf8",
     }).trim();
-    if (command === executable) process.kill(pid, "SIGKILL");
+    if (command === join(app.bundle, "Contents/MacOS/conductor"))
+      process.kill(pid, "SIGKILL");
   } catch {
     // Already gone.
   }
@@ -217,231 +576,158 @@ function readLog(log) {
   return existsSync(log) ? readFileSync(log, "utf8").slice(-4000) : "";
 }
 
-function generateCollection(port) {
-  const base = `http://127.0.0.1:${port}`;
-  const item = [
-    // First, so the scenario finds it at the top of the tree.
-    {
-      name: "Large response",
-      request: {
-        method: "GET",
-        url: `${base}/large?_json=${LARGE_RESPONSE_BYTES}`,
-      },
-    },
-  ];
-  for (let folder = 0; folder < COLLECTION.folders; folder++) {
-    const requests = [];
-    for (let index = 0; index < COLLECTION.requestsPerFolder; index++) {
-      requests.push({
-        name: `Request ${folder}.${index}`,
-        request: {
-          method: index % 2 ? "POST" : "GET",
-          header: [
-            { key: "Accept", value: "application/json" },
-            { key: "X-Trace", value: `${folder}-${index}` },
-          ],
-          url: `${base}/folders/${folder}/items/${index}?page=1&limit=50`,
-          ...(index % 2 && {
-            body: {
-              mode: "raw",
-              raw: JSON.stringify({ folder, index, note: "x".repeat(200) }),
-              options: { raw: { language: "json" } },
-            },
-          }),
-        },
-      });
+function machine() {
+  const read = (file, ...args) => {
+    try {
+      return execFileSync(file, args, { encoding: "utf8" }).trim();
+    } catch {
+      return "";
     }
-    item.push({ name: `Folder ${folder}`, item: requests });
-  }
-  return JSON.stringify({
-    info: {
-      name: "Perf harness",
-      schema:
-        "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    },
-    item,
-  });
-}
-
-// The app process is listed first. WebKit may run several WebContent
-// processes, which are summed; macOS helpers it attributes to the app go
-// under `other`.
-function roleOf(name, index) {
-  if (index === 0) return "app";
-  return ROLES.find((role) => name.endsWith(`.${role}`)) ?? "other";
-}
-
-// Flat metric names, so runs can be combined and compared name by name:
-//   startup                      ms from process start to first paint
-//   <step>/time                  ms until the step's result painted
-//   <step>/memory/<role|total>   footprint bytes at the checkpoint
-//   <step>/rust-heap(-peak)      bytes
-//   <step>/cpu/<role|total>      ms of CPU since the previous checkpoint
-//   <step>/wakeups-per-second    all processes, since the previous checkpoint
-function toMetrics({ startupMs, checkpoints }) {
-  const metrics = { startup: startupMs };
-  const previous = new Map();
-  let previousAt = 0;
-  for (const checkpoint of checkpoints) {
-    const { label, stepMs, atMs, rustHeap, rustHeapPeak, processes } =
-      checkpoint;
-    const add = (name, value) =>
-      (metrics[`${label}/${name}`] =
-        (metrics[`${label}/${name}`] ?? 0) + value);
-    metrics[`${label}/time`] = stepMs;
-    let wakeups = 0;
-    processes.forEach(
-      ({ pid, name, footprint, cpuNs, wakeups: total }, index) => {
-        const role = roleOf(name, index);
-        // Per pid, so a process that exits between checkpoints is not a
-        // negative delta.
-        const before = previous.get(pid) ?? { cpuNs: 0, wakeups: 0 };
-        add(`memory/${role}`, footprint);
-        add("memory/total", footprint);
-        add(`cpu/${role}`, (cpuNs - before.cpuNs) / 1e6);
-        add("cpu/total", (cpuNs - before.cpuNs) / 1e6);
-        wakeups += total - before.wakeups;
-        previous.set(pid, { cpuNs, wakeups: total });
-      },
-    );
-    metrics[`${label}/wakeups-per-second`] =
-      wakeups / ((atMs - previousAt) / 1000);
-    metrics[`${label}/rust-heap`] = rustHeap;
-    metrics[`${label}/rust-heap-peak`] = rustHeapPeak;
-    previousAt = atMs;
-  }
-  return metrics;
-}
-
-function median(runs) {
-  const names = [...new Set(runs.flatMap(Object.keys))];
-  return Object.fromEntries(
-    names.map((name) => {
-      const values = runs.map((run) => run[name] ?? 0).sort((a, b) => a - b);
-      return [name, values[Math.floor(values.length / 2)]];
-    }),
-  );
-}
-
-function report(metrics, runs) {
-  const steps = [
-    ...new Set(
-      Object.keys(metrics)
-        .filter((name) => name.endsWith("/time"))
-        .map((name) => name.slice(0, -"/time".length)),
-    ),
-  ];
-  // Half the spread across runs: a change smaller than this is noise.
-  const spread = (name) => {
-    const values = runs.map((run) => run[name] ?? 0);
-    return (Math.max(...values) - Math.min(...values)) / 2;
   };
-  const value = (step, name) => metrics[`${step}/${name}`] ?? 0;
-
-  console.log(
-    `\nStartup: ${ms(metrics.startup)} from process start to first paint (±${ms(spread("startup"))})`,
-  );
-
-  console.log("\nMemory at each checkpoint, MB");
-  table(
-    ["step", ...ROLES, "total", "±", "change", "Rust heap", "Rust peak"],
-    steps.map((step, index) => [
-      step,
-      ...ROLES.map((role) => mbNumber(value(step, `memory/${role}`))),
-      mbNumber(value(step, "memory/total")),
-      mbNumber(spread(`${step}/memory/total`)),
-      index
-        ? signed(
-            mbNumber(
-              value(step, "memory/total") -
-                value(steps[index - 1], "memory/total"),
-            ),
-          )
-        : "",
-      mbNumber(value(step, "rust-heap")),
-      mbNumber(value(step, "rust-heap-peak")),
-    ]),
-  );
-  const first = steps[0];
-  const last = steps.at(-1);
-  console.log(
-    `Still held at the end, compared with ${first}: ${signed(
-      mbNumber(value(last, "memory/total") - value(first, "memory/total")),
-    )} MB`,
-  );
-
-  console.log(
-    "\nCPU per step (ms of CPU time since the previous checkpoint, settle time included)",
-  );
-  table(
-    ["step", "step ms", "±", ...ROLES, "total", "wakeups/s"],
-    steps.map((step) => [
-      step,
-      value(step, "time").toFixed(0),
-      spread(`${step}/time`).toFixed(0),
-      ...ROLES.map((role) => value(step, `cpu/${role}`).toFixed(0)),
-      value(step, "cpu/total").toFixed(0),
-      value(step, "wakeups-per-second").toFixed(1),
-    ]),
-  );
+  const battery = read("pmset", "-g", "batt");
+  return {
+    macOS: read("sw_vers", "-productVersion"),
+    chip: read("sysctl", "-n", "machdep.cpu.brand_string"),
+    memoryBytes: Number(read("sysctl", "-n", "hw.memsize")),
+    power: battery.includes("'Battery Power'") ? "battery" : "ac",
+    lowPower: /lowpowermode\s+1/.test(read("pmset", "-g")),
+  };
 }
 
-function compare(beforePath, afterPath) {
-  if (!beforePath || !afterPath)
-    throw new Error("compare needs <before.json> <after.json>");
-  const before = JSON.parse(readFileSync(beforePath, "utf8"));
-  const after = JSON.parse(readFileSync(afterPath, "utf8"));
-  const rows = [];
-  for (const name of new Set([...Object.keys(before), ...Object.keys(after)])) {
-    const [a, b] = [before[name], after[name]];
-    const format = formatterFor(name);
-    rows.push([
-      name,
-      a === undefined ? "new" : format(a),
-      b === undefined ? "removed" : format(b),
-      a === undefined || b === undefined
-        ? ""
-        : `${signed(format(b - a))}${a ? ` (${signed(((b - a) / a) * 100, 1)}%)` : ""}`,
-    ]);
+function warnAboutPower() {
+  const { power, lowPower } = machine();
+  if (power === "battery")
+    console.warn(
+      "warning: on battery power; macOS may slow the CPU. Plug in for numbers you compare.",
+    );
+  if (lowPower)
+    console.warn(
+      "warning: Low Power Mode is on, which slows the CPU. Turn it off for numbers you compare.",
+    );
+}
+
+function makeResult(app, settings, runs) {
+  return {
+    schema: SCHEMA,
+    meta: {
+      app: app.stamp,
+      machine: machine(),
+      settings,
+      date: new Date().toISOString(),
+    },
+    runs,
+    median: medians(runs),
+  };
+}
+
+function save(path, result) {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(result, null, 2)}\n`);
+}
+
+function load(path) {
+  const result = JSON.parse(readFileSync(path, "utf8"));
+  if (result.schema !== SCHEMA)
+    throw new Error(
+      `${path} is a result file of schema ${result.schema ?? "0"}, and this script reads ${SCHEMA}; measure it again`,
+    );
+  return result;
+}
+
+function report({ median: metrics, runs }, scenarios) {
+  const value = (name) => metrics[name] ?? 0;
+  const noise = (name) => spread(valuesOf(runs, name));
+  for (const { name: scenario } of scenarios) {
+    const prefix = `${scenario}/`;
+    const steps = [
+      ...new Set(
+        Object.keys(metrics)
+          .filter((name) => name.startsWith(prefix) && name.endsWith("/time"))
+          .map((name) => name.slice(prefix.length, -"/time".length)),
+      ),
+    ];
+    const at = (step, name) => value(`${prefix}${step}/${name}`);
+    console.log(`\n== ${scenario} ==`);
+    console.log(
+      `Startup: ${ms(value(`${prefix}startup`))} from process start until the first load painted (±${ms(noise(`${prefix}startup`))})`,
+    );
+
+    console.log("\nMemory at each checkpoint, MB");
+    console.log(
+      textTable(
+        ["step", ...ROLES, "total", "±", "change", "Rust heap", "Rust peak"],
+        steps.map((step, index) => [
+          step,
+          ...ROLES.map((role) => mb(at(step, `memory/${role}`))),
+          mb(at(step, "memory/total")),
+          mb(noise(`${prefix}${step}/memory/total`)),
+          index
+            ? signed(
+                mb(
+                  at(step, "memory/total") -
+                    at(steps[index - 1], "memory/total"),
+                ),
+              )
+            : "",
+          mb(at(step, "rust-heap")),
+          mb(at(step, "rust-heap-peak")),
+        ]),
+      ),
+    );
+    console.log(
+      `Still held at the end, compared with ${steps[0]}: ${signed(
+        mb(at(steps.at(-1), "memory/total") - at(steps[0], "memory/total")),
+      )} MB`,
+    );
+
+    console.log(
+      "\nCPU per step (ms of CPU time since the previous checkpoint, settle time included)",
+    );
+    console.log(
+      textTable(
+        ["step", ...ROLES, "total", "wakeups/s"],
+        steps.map((step) => [
+          step,
+          ...ROLES.map((role) => at(step, `cpu/${role}`).toFixed(0)),
+          at(step, "cpu/total").toFixed(0),
+          at(step, "wakeups-per-second").toFixed(1),
+        ]),
+      ),
+    );
+
+    console.log(
+      "\nResponsiveness per step, ms (keystrokes only for typing steps)",
+    );
+    const typed = (step) => `${prefix}${step}/keystroke-p50` in metrics;
+    console.log(
+      textTable(
+        [
+          "step",
+          "step ms",
+          "±",
+          "longest frame",
+          "key p50",
+          "key p95",
+          "key max",
+        ],
+        steps.map((step) => [
+          step,
+          at(step, "time").toFixed(0),
+          noise(`${prefix}${step}/time`).toFixed(0),
+          `${prefix}${step}/longest-frame` in metrics
+            ? at(step, "longest-frame").toFixed(0)
+            : "",
+          typed(step) ? at(step, "keystroke-p50").toFixed(1) : "",
+          typed(step) ? at(step, "keystroke-p95").toFixed(1) : "",
+          typed(step) ? at(step, "keystroke-max").toFixed(1) : "",
+        ]),
+      ),
+    );
   }
-  table(["metric", "before", "after", "change"], rows);
 }
 
-function formatterFor(name) {
-  if (name.includes("/memory/") || name.includes("rust-heap"))
-    return (bytes) => `${mbNumber(bytes)} MB`;
-  if (name.endsWith("wakeups-per-second")) return (rate) => rate.toFixed(1);
-  return ms;
-}
-
-function table(headers, rows) {
-  const widths = headers.map((header, column) =>
-    Math.max(header.length, ...rows.map((row) => String(row[column]).length)),
-  );
-  const line = (cells) =>
-    cells
-      .map((cell, column) =>
-        column
-          ? String(cell).padStart(widths[column])
-          : String(cell).padEnd(widths[column]),
-      )
-      .join("  ");
-  console.log(line(headers));
-  for (const row of rows) console.log(line(row));
-}
-
-function mbNumber(bytes) {
-  return (bytes / 1024 / 1024).toFixed(1);
-}
-
-function ms(value) {
-  return `${Number(value).toFixed(0)} ms`;
-}
-
-// Adds a + to a positive number or a formatted one such as "12 ms".
-function signed(value, digits) {
-  const text = digits === undefined ? String(value) : value.toFixed(digits);
-  return parseFloat(text) > 0 ? `+${text}` : text;
+function fileStamp() {
+  return new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
 }
 
 function freePort() {
@@ -455,10 +741,10 @@ function freePort() {
   });
 }
 
-function exec(file, args, env) {
+function exec(file, args, { cwd, env }) {
   return new Promise((done, fail) => {
     const child = spawn(file, args, {
-      cwd: root,
+      cwd,
       stdio: "inherit",
       env: { ...process.env, ...env },
     });

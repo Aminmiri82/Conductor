@@ -19,10 +19,11 @@ needs Yara's sign-off before it lands.
 - **Large collections stay smooth.** Hundreds of requests and multi-megabyte
   responses are normal, not edge cases.
 
-Only what Conductor ships has budgets so far: bundle chunks and dependency
-counts (see [Budgets In CI](#budgets-in-ci)). For startup, typing, memory,
-and CPU, compare before and after for anything performance-sensitive (see
-[Measuring](#measuring)).
+Budgets that fail a check cover what Conductor ships (bundle chunks and
+dependency counts) and a few numbers that come out the same on every run, such
+as the Rust heap an import needs (see [Budgets In CI](#budgets-in-ci)). For
+startup, typing, memory, and CPU, which move between runs, compare before and
+after for anything performance-sensitive (see [Measuring](#measuring)).
 
 ## Rules
 
@@ -77,8 +78,8 @@ dependency needs a reason that is stated in the change description.
 
 Dev builds are unoptimized, so measure release builds for memory and startup:
 
-- For memory, CPU, startup, and step timings, run `pnpm perf:run` (see
-  [Perf Harness](#perf-harness)).
+- For memory, CPU, startup, typing latency, and step timings, run
+  `pnpm perf:run` (see [Perf Harness](#perf-harness)).
 - `pnpm build` prints frontend chunk sizes; a jump in the main chunk means
   something is no longer lazy.
 - For Rust hot paths (import, resolution, sending), time the operation before
@@ -106,13 +107,11 @@ out compressed ones.
 [`perf-harness.mjs`](../../scripts/perf-harness.mjs) builds a release app
 with the `perf-harness` Cargo feature. The build is called Conductor Perf
 Harness and has its own identifier and target directory, so it never touches
-the installed app. It launches that app through LaunchServices on a throwaway
-data directory against the local [echo server](../../scripts/echo-server.mjs).
-The webview runs [`perfScenario.ts`](../../src/app/perfScenario.ts): start,
-stay idle for 15 seconds, import a 2,000-request collection, open 20 tabs,
-receive a 10 MB JSON response, close every tab, then stay idle for 15 seconds
-again. After each step, [`perf_harness.rs`](../../src-tauri/src/perf_harness.rs)
-records:
+the installed app. For each scenario and run, it launches that app through
+LaunchServices on a throwaway data directory against the local
+[echo server](../../scripts/echo-server.mjs). The webview runs the scenario,
+and after each step [`perf_harness.rs`](../../src-tauri/src/perf_harness.rs)
+records a checkpoint:
 
 - for the app process and each WebKit process macOS holds the app
   responsible for (found by pid, never by name): footprint, CPU time, and
@@ -121,32 +120,92 @@ records:
   counting allocator. The peak shows what a step such as the import needed at
   its worst.
 
-The scenario also times each step until its result has painted, and startup
-from process start to the first painted frame.
+The webview adds the step's time until its result painted, the longest gap
+between frames during it (jank you would see), and for typing steps the
+latency of each keystroke. Startup is from process start until the first
+load of collections has finished and painted. Every launch starts with a
+`started` checkpoint; its CPU and wakeups include the launch.
 
-It prints the median of three runs as two tables, one row per step:
+```bash
+pnpm perf:run                                  # every scenario, 5 runs each
+pnpm perf:run --scenario typing                # only some (repeat, or a,b)
+pnpm perf:run --quick                          # 1 run, short waits: checks a scenario works
+pnpm perf:list                                 # the scenarios and what they do
+pnpm perf:compare before.json after.json
+```
 
-- **Memory** per process at the checkpoint, what the step added, and the Rust
-  heap. The line under the table is what is still held at the end compared
-  with the start, which is where leaks show.
-- **CPU** time per process for each step, the step's duration, and wakeups
-  per second across all processes. During the idle steps, CPU and wakeups
-  should be close to zero (see [Low idle memory](#what-fast-means-here)).
+A full run of every scenario takes about 15 minutes after the build; use
+`--scenario` for the ones a change can affect. Before the measured runs, one
+warm-up run is measured and thrown away, because the first launch of a new
+build pays for macOS registering it (`--warmup` changes this). It warns when
+the Mac is on battery or in Low Power Mode, which slow the CPU.
 
-The `±` columns are half the spread across runs. Treat a change smaller than
-that as noise. Use `--runs` to change the count, `--skip-build` to reuse the
-last build, and `--out <file>` to save the result. To see a change's effect,
-save a result before and after it and run
-`node scripts/perf-harness.mjs compare before.json after.json`. Nothing here
-fails a check yet, because the numbers move between runs.
+It prints, per scenario, the median across runs in three tables:
 
-A step you want to measure belongs in the scenario. Wrap it in `step()`,
-which drives it through the stores as a click would, times it, and records a
-checkpoint.
+- **Memory** per process at each checkpoint, what the step added, and the
+  Rust heap. The line under the table is what is still held at the end
+  compared with the start, which is where leaks show.
+- **CPU** time per process for each step and wakeups per second across all
+  processes. During idle steps, CPU and wakeups should be close to zero (see
+  [Low idle memory](#what-fast-means-here)).
+- **Responsiveness**: the step's time, its longest frame, and keystroke
+  latency at the median, 95th percentile, and worst.
 
-Only `perf-harness` builds contain any of this. The scenario's chunk is
+Each result is saved under `src-tauri/target/perf-harness/results/` (or
+`--out <file>`) with every run, not just the median, and with what it was
+measured on: the commit and whether the tree was dirty, the Mac, the power
+state, and the settings. `--skip-build` reuses the last build and warns when
+the sources have changed since it was made.
+
+To see a change's effect, save a result before and after it and run
+`compare`. It marks a metric as changed only when every run on one side beat
+every run on the other, and that ordering is unlikely by chance (p < 0.05,
+which takes at least 4 runs a side; the default 5 gives p = 0.008). Everything
+else is noise, however far apart the medians look. It also warns when the two
+files are not comparable: different Macs or settings, battery power, too few
+runs, or a scenario that itself changed between the builds.
+
+### Scenarios And Fixtures
+
+A scenario is one file in
+[`src/app/perf/scenarios/`](../../src/app/perf/scenarios/), and its file name
+is what `--scenario` selects. It default-exports
+`defineScenario({ description, fixtures, prepare?, run })` from
+[`scenario.ts`](../../src/app/perf/scenario.ts), which documents everything
+`ctx` offers: `step()` and `idle()` record checkpoints, `type()` types into a
+field and returns keystroke latency, and `workspace()` reaches the stores as a
+click would. A step can return numbers of its own, recorded under its name.
+`prepare` runs in an unmeasured launch first, on the same data, for a
+scenario that measures starting with data, such as
+[`startup-large-collection`](../../src/app/perf/scenarios/startup-large-collection.ts).
+
+Fixtures are the files a scenario needs, such as a Postman collection. Each
+is a generator in [`fixtures.ts`](../../src/app/perf/fixtures.ts) that gets
+the echo server's URL and returns the file's contents and an `info` object;
+the scenario lists the fixture by name and reads `info` and the file's `path`
+with `ctx.fixture(name)`. The script generates them in Node before launching,
+so building a fixture never counts toward the app's memory.
+
+Scenario files may import only `scenario.ts` and `fixtures.ts`, and both must
+stay free of runtime imports. The script imports them in Node, which strips
+TypeScript types but cannot resolve `@/` paths, to list scenarios and write
+their fixtures. `pnpm check` runs `list`, so a scenario that breaks this rule
+fails there with the reason.
+
+Only `perf-harness` builds contain any of this. The scenario chunks are
 dropped from every other build, and the counting allocator and the private
 macOS calls never ship.
+
+### In CI
+
+The `harness` job in the [Perf workflow](../../.github/workflows/perf.yml)
+builds each PR and its base branch, runs the scenarios both have on one
+macOS runner alternating between the two builds (base, head, head, base, and
+so on, so drift over the job lands on both), and writes the comparison to the
+job's summary. The result files are uploaded as an artifact. It only reports:
+hosted runners are noisy, so a regression never fails it, but a scenario that
+no longer finishes does. A base branch from before scenarios existed is
+skipped, and the PR is measured alone.
 
 ### Finding Out Why
 
@@ -190,3 +249,25 @@ with the last published release. That comparison only reports.
 
 Run it locally with `pnpm perf:size`, which builds the frontend and prints the
 measurements.
+
+### Budgets In Tests
+
+Some costs come out the same on every run, so ordinary tests can hold them
+to a budget, and `cargo test` fails when one grows. Each is a ceiling about 5%
+over what was measured, with the measured value in a comment beside it. Raise
+one only when the growth is deliberate, and say so in the change.
+
+- The Rust heap peak of importing the harness's 2,000-request collection, and
+  the size of the JSON the import sends the sidebar
+  ([`import.rs`](../../src-tauri/src/commands/collections/import.rs)).
+  `large_postman_collection` in [`fixtures.rs`](../../src-tauri/src/fixtures.rs)
+  builds the same collection as the harness's `largeCollection` fixture.
+- The size of the JSON the webview parses for a 1 MB JSON response
+  ([`sender.rs`](../../src-tauri/src/commands/requests/sender.rs)).
+
+The heap is counted per thread by the counting allocator
+([`alloc_counter.rs`](../../src-tauri/src/alloc_counter.rs)), so tests running
+in parallel do not count, and SQLite's own allocations never do. A new budget
+belongs here when a number is deterministic and a regression in it would cost
+users memory or time; timings and footprints are not, and stay in the
+harness.
