@@ -169,6 +169,47 @@ mod tests {
         assert_eq!(environments, 2);
     }
 
+    /// The path a real start takes: a database file left by an earlier
+    /// build is upgraded by `Database::open`, and a later start keeps it.
+    #[test]
+    fn an_old_database_file_is_upgraded_on_open_and_survives_a_restart() {
+        let directory =
+            std::env::temp_dir().join(format!("conductor-old-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let old = shared_environments_database(3);
+        old.execute_batch(
+            "INSERT INTO collections (id, name, created_at, updated_at) VALUES ('a', 'A', '', '');
+             INSERT INTO environments (id, name, created_at, updated_at) VALUES ('e', 'E', '', '');
+             INSERT INTO variables
+                 (scope, environment_id, key, current_value, created_at, updated_at)
+             VALUES ('environment', 'e', 'k', 'v', '', '');",
+        )
+        .unwrap();
+        old.execute(
+            "VACUUM INTO ?",
+            [directory.join("conductor.sqlite3").to_str().unwrap()],
+        )
+        .unwrap();
+
+        let rows = || {
+            crate::storage::Database::open(&directory)
+                .unwrap()
+                .with_read_connection(|connection| {
+                    Ok(connection.query_row(
+                        "SELECT environments.collection_id, variables.key, variables.current_value
+                         FROM environments JOIN variables ON variables.environment_id = environments.id",
+                        [],
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)),
+                    )?)
+                })
+                .unwrap()
+        };
+        let expected = ("a".to_string(), "k".to_string(), "v".to_string());
+        assert_eq!(rows(), expected);
+        assert_eq!(rows(), expected);
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+
     #[test]
     fn a_migrated_environment_is_deleted_with_its_collection() {
         let connection = shared_environments_database(1);

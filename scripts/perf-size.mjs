@@ -46,8 +46,19 @@ function measure() {
   const add = (name, bytes) => (metrics[name] = (metrics[name] ?? 0) + bytes);
   const assets = join(options.dist, "assets");
   const html = readFileSync(join(options.dist, "index.html"), "utf8");
-  const entry = html.match(/<script[^>]+src="\/assets\/([^"]+\.js)"/)?.[1];
-  if (!entry) throw new Error(`no entry script in ${options.dist}/index.html`);
+  // `js/entry` is everything that loads at startup: the entry script plus the
+  // chunks index.html modulepreloads. Rolldown splits shared code out of the
+  // entry, so counting the entry script alone would let startup code escape
+  // the budget.
+  const startup = new Set(
+    [
+      ...html.matchAll(
+        /<(?:script[^>]+src|link[^>]+rel="modulepreload"[^>]+href)="\/assets\/([^"]+\.js)"/g,
+      ),
+    ].map((match) => match[1]),
+  );
+  if (!startup.size)
+    throw new Error(`no entry script in ${options.dist}/index.html`);
 
   for (const file of readdirSync(assets)) {
     const bytes = statSync(join(assets, file)).size;
@@ -57,7 +68,7 @@ function measure() {
     if (file.endsWith(".js")) {
       add("js/total", bytes);
       add(
-        file === entry ? "js/entry" : `js/lazy/${name.replace(/\.js$/, "")}`,
+        startup.has(file) ? "js/entry" : `js/lazy/${name.replace(/\.js$/, "")}`,
         bytes,
       );
     } else if (file.endsWith(".css")) add("css/total", bytes);
