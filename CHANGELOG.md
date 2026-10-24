@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.14](https://github.com/Aminmiri82/Conductor/compare/app-v0.1.13...app-v0.1.14) (2026-10-24)
+
+
+### Features
+
+* **settings:** add collection profiles and redesign settings UI ([dd927a0](https://github.com/Aminmiri82/Conductor/commit/dd927a09d4cc74841f6f7677b0328fdd9e791b03))
+
+
+### Fixes
+
+* build the About menu metadata only on macOS ([#28](https://github.com/Aminmiri82/Conductor/issues/28)) ([ad5059e](https://github.com/Aminmiri82/Conductor/commit/ad5059ed5e6691cc52534ec04ed2fdfc27b6d0b0))
+* **deps:** update TLS, SQLite and build dependencies for security fixes ([#29](https://github.com/Aminmiri82/Conductor/issues/29)) ([d21bf9f](https://github.com/Aminmiri82/Conductor/commit/d21bf9f6988daebeee616a68bc635faed821a551))
+* **settings:** improve variables table layout and controls ([6eaae26](https://github.com/Aminmiri82/Conductor/commit/6eaae26c939237139c24962b3e347fa47a5116ba))
+* **settings:** preserve selection and cancel edits safely ([28ad6b9](https://github.com/Aminmiri82/Conductor/commit/28ad6b9b6413c5ff72ec63ae1313d24b194e5ec3))
+
 ## [0.1.13](https://github.com/Aminmiri82/Conductor/compare/app-v0.1.12...app-v0.1.13) (2026-10-23)
 
 
