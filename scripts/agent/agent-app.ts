@@ -155,8 +155,26 @@ async function stop() {
   console.log("Stopped the tracked agent.");
 }
 
+function checkBridgeVersions() {
+  const server: string = JSON.parse(
+    readFileSync(
+      join(root, "node_modules/@hypothesi/tauri-mcp-server/package.json"),
+      "utf8",
+    ),
+  ).version;
+  const plugin = readFileSync(join(root, "src-tauri/Cargo.lock"), "utf8").match(
+    /name = "tauri-plugin-mcp-bridge"\nversion = "([^"]+)"/,
+  )?.[1];
+  if (server !== plugin)
+    throw new Error(
+      `@hypothesi/tauri-mcp-server ${server} does not match tauri-plugin-mcp-bridge ${plugin}. Pin both to the same version.`,
+    );
+  console.log(`MCP server and bridge versions match (${server}).`);
+}
+
 async function start() {
   checkOtherAgents();
+  checkBridgeVersions();
   if (existsSync(stateFile))
     throw new Error(
       "An agent run is already recorded. Use pnpm agent:status or pnpm agent:stop first.",
@@ -186,7 +204,7 @@ async function start() {
       `VACUUM INTO '${join(dataDir, "conductor.sqlite3").replaceAll("'", "''")}'`,
     ]);
     console.log(
-      "Copied real data into the isolated directory. Use pnpm agent:stop --clean when finished.",
+      "Copied real data into the isolated directory. pnpm agent:stop removes it; do not pass --no-clean.",
     );
   }
   console.log("Building a fresh Conductor Agent.app with bundled frontend...");
@@ -274,10 +292,10 @@ try {
     !["start", "stop", "status"].includes(command) ||
     (option &&
       !(command === "start" && option === "--copy-real-data") &&
-      !(command === "stop" && option === "--clean"))
+      !(command === "stop" && option === "--no-clean"))
   ) {
     throw new Error(
-      "Usage: agent-app.ts start [--copy-real-data] | status | stop [--clean]",
+      "Usage: agent-app.ts start [--copy-real-data] | status | stop [--no-clean]",
     );
   }
   if (existsSync(stateDir) && lstatSync(stateDir).isSymbolicLink())
@@ -287,8 +305,12 @@ try {
     console.log(JSON.stringify(inspect(readState()), null, 2));
   if (command === "stop") {
     await stop();
-    if (option === "--clean")
-      rmSync(stateDir, { recursive: true, force: true });
+    // Each run starts from empty data unless the caller keeps it on purpose.
+    if (option !== "--no-clean") {
+      checkOtherAgents();
+      rmSync(dataDir, { recursive: true, force: true });
+      console.log("Removed the isolated data.");
+    }
   }
 } catch (error) {
   console.error((error as Error).message);

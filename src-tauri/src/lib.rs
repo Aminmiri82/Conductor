@@ -147,7 +147,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build());
 
-    // Agent automation bridge (`pnpm dev:agent`). Never in normal or release builds.
+    // Agent automation bridge (`pnpm agent:start`). Never in normal or release builds.
     #[cfg(feature = "mcp-bridge")]
     let builder = builder.plugin(
         tauri_plugin_mcp_bridge::Builder::new()
