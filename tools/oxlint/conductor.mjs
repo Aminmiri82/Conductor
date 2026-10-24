@@ -72,10 +72,190 @@ const noWindowDialogs = {
   },
 };
 
+// Zustand compares a selector's result by identity, so a selector that returns
+// the whole store re-renders its component on every change to any field. One
+// that builds a new object or array is worse: in Zustand 5 each render sees a
+// "changed" value, and React re-renders in a loop. See "Frontend State And
+// Rendering" in docs/01-architecture/01-performance.md.
+const STORE_HOOK = /^use[A-Z]\w*Store$/;
+const FRESH_METHODS = new Set([
+  "map",
+  "filter",
+  "flatMap",
+  "slice",
+  "concat",
+  "toSorted",
+  "toReversed",
+  "toSpliced",
+  "keys",
+  "values",
+  "entries",
+  "fromEntries",
+  "from",
+]);
+
+function isFunction(node) {
+  return (
+    node?.type === "ArrowFunctionExpression" ||
+    node?.type === "FunctionExpression" ||
+    node?.type === "FunctionDeclaration"
+  );
+}
+
+// Whether evaluating `node` can produce a value no earlier call produced.
+function buildsNewValue(node) {
+  switch (node?.type) {
+    case "ObjectExpression":
+    case "ArrayExpression":
+    case "NewExpression":
+      return true;
+    case "ConditionalExpression":
+      return buildsNewValue(node.consequent) || buildsNewValue(node.alternate);
+    case "LogicalExpression":
+      return buildsNewValue(node.left) || buildsNewValue(node.right);
+    case "CallExpression":
+      return (
+        node.callee.type === "MemberExpression" &&
+        !node.callee.computed &&
+        FRESH_METHODS.has(node.callee.property.name)
+      );
+    default:
+      return false;
+  }
+}
+
+// The `return` arguments of a block-bodied function, not of functions inside it.
+function returnedValues(node, values = []) {
+  if (!node || typeof node.type !== "string") return values;
+  if (node.type === "ReturnStatement") values.push(node.argument);
+  for (const [key, child] of Object.entries(node)) {
+    if (key === "parent" || isFunction(child)) continue;
+    if (Array.isArray(child)) child.forEach((item) => returnedValues(item, values));
+    else if (child && typeof child === "object") returnedValues(child, values);
+  }
+  return values;
+}
+
+function selectorProblem(selector) {
+  if (!selector) return "wholeStore";
+  if (!isFunction(selector)) return null;
+  const [param] = selector.params;
+  const results =
+    selector.body.type === "BlockStatement" ? returnedValues(selector.body) : [selector.body];
+  if (
+    param?.type === "Identifier" &&
+    results.some((result) => result?.type === "Identifier" && result.name === param.name)
+  ) {
+    return "wholeStore";
+  }
+  return results.some(buildsNewValue) ? "newValue" : null;
+}
+
+const narrowStoreSelector = {
+  meta: {
+    type: "problem",
+    docs: {
+      description: "Store hooks select one stable value, so a change elsewhere does not re-render.",
+    },
+    messages: {
+      wholeStore:
+        "`{{hook}}` re-renders on every store change without a selector. Select only the field this component reads.",
+      newValue:
+        "This `{{hook}}` selector builds a new value on every call, so it re-renders on every store change. Select the fields separately, or wrap the selector in `useShallow`.",
+    },
+  },
+  create(context) {
+    return {
+      CallExpression(node) {
+        if (node.callee.type !== "Identifier" || !STORE_HOOK.test(node.callee.name)) return;
+        const messageId = selectorProblem(node.arguments[0]);
+        if (messageId) context.report({ node, messageId, data: { hook: node.callee.name } });
+      },
+    };
+  },
+};
+
+// Each command call crosses IPC, so one per item turns a list into a train of
+// round trips. See "Keep IPC Small And Few" in the performance doc.
+const IPC_OBJECTS = new Set(["api", "commands"]);
+const ITERATION_METHODS = new Set([
+  "forEach",
+  "map",
+  "flatMap",
+  "filter",
+  "reduce",
+  "some",
+  "every",
+  "find",
+  "findIndex",
+]);
+const LOOPS = new Set([
+  "ForStatement",
+  "ForInStatement",
+  "ForOfStatement",
+  "WhileStatement",
+  "DoWhileStatement",
+]);
+// The parts of a loop that run once, unlike its body, test and update.
+const RUNS_ONCE = new Set(["init", "right"]);
+
+function isIterationCallback(fn) {
+  const call = fn.parent;
+  return (
+    call?.type === "CallExpression" &&
+    call.arguments.includes(fn) &&
+    call.callee.type === "MemberExpression" &&
+    !call.callee.computed &&
+    ITERATION_METHODS.has(call.callee.property.name)
+  );
+}
+
+function repeatsPerItem(node) {
+  for (let child = node, parent = node.parent; parent; child = parent, parent = parent.parent) {
+    if (LOOPS.has(parent.type)) {
+      if (!RUNS_ONCE.has(Object.keys(parent).find((key) => parent[key] === child))) return true;
+    }
+    if (isFunction(parent)) return isIterationCallback(parent);
+  }
+  return false;
+}
+
+const noIpcInLoop = {
+  meta: {
+    type: "problem",
+    docs: {
+      description: "Commands are called once per action, not once per item.",
+    },
+    messages: {
+      ipcInLoop:
+        "`{{call}}` runs once per item, a round trip across IPC each time. Add a Rust command that does the whole batch.",
+    },
+  },
+  create(context) {
+    return {
+      CallExpression(node) {
+        const { callee } = node;
+        if (
+          callee.type !== "MemberExpression" ||
+          callee.object.type !== "Identifier" ||
+          !IPC_OBJECTS.has(callee.object.name) ||
+          !repeatsPerItem(node)
+        ) {
+          return;
+        }
+        const call = `${callee.object.name}.${callee.property.name ?? "…"}`;
+        context.report({ node, messageId: "ipcInLoop", data: { call } });
+      },
+    };
+  },
+};
+
 export default {
   meta: { name: "conductor" },
   rules: {
     "no-internal-mocking": noInternalMocking,
     "no-window-dialogs": noWindowDialogs,
+    "narrow-store-selector": narrowStoreSelector,
+    "no-ipc-in-loop": noIpcInLoop,
   },
 };

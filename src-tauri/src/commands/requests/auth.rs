@@ -37,27 +37,15 @@ pub(super) fn inherited_auth_for_request(
         parent_id = next_parent_id;
     }
 
-    let collection_auth: Option<Option<String>> = connection
+    let collection_auth: Option<String> = connection
         .query_row(
             "SELECT auth_json FROM collections WHERE id = ?",
             params![request.collection_id],
             |row| row.get(0),
         )
-        .optional()?;
-
-    if let Some(auth_json) = collection_auth {
-        if let Some(auth) = auth_json.as_deref().and_then(parse_json_optional) {
-            return Ok(Some(auth));
-        }
-    }
-
-    Ok(None)
-}
-pub(super) fn effective_auth(
-    request_auth: Option<&AuthConfig>,
-    inherited_auth: Option<&AuthConfig>,
-) -> Option<AuthConfig> {
-    request_auth.or(inherited_auth).cloned()
+        .optional()?
+        .flatten();
+    Ok(collection_auth.as_deref().and_then(parse_json_optional))
 }
 pub(super) fn apply_auth(
     mut builder: reqwest::RequestBuilder,

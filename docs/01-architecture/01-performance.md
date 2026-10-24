@@ -41,6 +41,9 @@ Every command call serializes JSON across the webview boundary.
 - Do not call commands in a loop. Add a command that does the batch in Rust.
 - Do not round-trip data the frontend already has just to reformat it.
 
+Lint (`conductor/no-ipc-in-loop`) rejects an `api` or `commands` call inside a
+loop or an array callback such as `map`.
+
 ### SQLite
 
 - Reads use the pooled read-only connections so they never queue behind the
@@ -58,6 +61,11 @@ Every command call serializes JSON across the webview boundary.
 - Heavy UI, such as code editors, loads lazily so it stays out of the main
   chunk.
 - Persistence is debounced, never written on every change.
+
+Lint enforces the first and third: `conductor/narrow-store-selector` rejects a
+store hook with no selector, or one that returns the whole store or a new
+object or array, and `no-restricted-imports` keeps CodeMirror and the updater
+plugins out of every file but the lazily loaded one that uses them.
 
 ### Dependencies
 

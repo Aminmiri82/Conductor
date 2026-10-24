@@ -75,8 +75,14 @@ pub(super) async fn apply_body(
     }
     Ok(builder)
 }
-pub(super) fn default_content_type(body: &RequestBody) -> Option<HeaderValue> {
-    match body.mode {
+pub(super) fn insert_default_content_type(
+    headers: &mut reqwest::header::HeaderMap,
+    body: &RequestBody,
+) {
+    if headers.contains_key(CONTENT_TYPE) {
+        return;
+    }
+    let content_type = match body.mode {
         BodyMode::Raw if body.raw_language.as_deref() == Some("json") => {
             Some(HeaderValue::from_static("application/json"))
         }
@@ -88,6 +94,9 @@ pub(super) fn default_content_type(body: &RequestBody) -> Option<HeaderValue> {
             .filter(|content_type| !content_type.is_empty())
             .and_then(|content_type| HeaderValue::from_str(content_type).ok()),
         _ => None,
+    };
+    if let Some(content_type) = content_type {
+        headers.insert(CONTENT_TYPE, content_type);
     }
 }
 pub(super) fn graphql_payload(graphql: Option<&GraphqlBody>) -> Result<Value, String> {
@@ -121,17 +130,6 @@ pub(super) fn strip_file_paths(body: &mut RequestBody) {
     }
     if let Some(file) = &mut body.file {
         file.path = None;
-    }
-}
-
-pub(super) fn insert_default_content_type(
-    headers: &mut reqwest::header::HeaderMap,
-    body: &RequestBody,
-) {
-    if !headers.contains_key(CONTENT_TYPE) {
-        if let Some(content_type) = default_content_type(body) {
-            headers.insert(CONTENT_TYPE, content_type);
-        }
     }
 }
 

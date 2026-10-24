@@ -84,11 +84,12 @@ pub(crate) async fn send(
     }
     builder = builder.headers(headers);
 
-    let auth_to_apply = auth::effective_auth(
-        input.request.auth.as_ref(),
-        resolved.inherited_auth.as_ref(),
-    );
-    builder = auth::apply_auth(builder, auth_to_apply.as_ref(), &variables)?;
+    let auth_to_apply = input
+        .request
+        .auth
+        .as_ref()
+        .or(resolved.inherited_auth.as_ref());
+    builder = auth::apply_auth(builder, auth_to_apply, &variables)?;
 
     if let Some(body) = resolved.body.as_ref() {
         builder = body::apply_body(builder, body).await?;

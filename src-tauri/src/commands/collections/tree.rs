@@ -234,15 +234,9 @@ pub(crate) fn reparent_node(
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
 
-    if kind == "folder" {
-        let invalid_target = input.parent_id.as_deref() == Some(input.node_id.as_str())
-            || input
-                .parent_id
-                .as_deref()
-                .map(|parent_id| is_descendant(&tx, parent_id, &input.node_id))
-                .transpose()?
-                .unwrap_or(false);
-        if invalid_target {
+    // `is_descendant` counts the folder itself, so this also refuses a move into itself.
+    if let Some(parent_id) = input.parent_id.as_deref().filter(|_| kind == "folder") {
+        if is_descendant(&tx, parent_id, &input.node_id)? {
             return Err(StorageError::InvalidTreeMove);
         }
     }

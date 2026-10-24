@@ -155,7 +155,7 @@ export function CollectionSidebar() {
 
   // A new folder opens straight into rename, since it starts as "New Folder".
   const createFolderAndRename = useCallback(
-    async (parentId: string | null | undefined, position: number) => {
+    async (parentId: string | null, position: number) => {
       const nodeId = await createFolderIn(parentId, position);
       if (!nodeId) return;
       if (parentId) openFolder(parentId);
