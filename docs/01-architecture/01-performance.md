@@ -214,7 +214,7 @@ scenarios existed is skipped, and the PR is measured alone.
 The harness shows which process grew or worked, and in which step. To find
 out what is responsible:
 
-- **Webview memory and CPU.** Run `pnpm tauri dev`, open Web Inspector
+- **Webview memory and CPU.** Run `pnpm app:dev`, open Web Inspector
   (right-click > Inspect Element), and use the Timelines tab. JavaScript
   Allocations with heap snapshots before and after a step shows what is still
   reachable, such as a response body kept by a closed tab. The JavaScript &

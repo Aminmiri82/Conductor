@@ -381,7 +381,16 @@ async function buildApp(root: string, app: LocalApp) {
         dangerousInsecureTransportProtocol: true,
       },
     },
-    bundle: { macOS: { signingIdentity: "-" } },
+    bundle: {
+      icon: [
+        "icons/perf/128x128@2x.png",
+        "icons/perf/32x32.png",
+        "icons/perf/128x128.png",
+        "icons/perf/icon.icns",
+        "icons/perf/icon.ico",
+      ],
+      macOS: { signingIdentity: "-" },
+    },
   };
   // Stamped before building, so it describes the sources the build read.
   const stamp = sourceStamp(root);

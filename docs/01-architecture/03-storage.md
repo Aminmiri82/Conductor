@@ -14,12 +14,12 @@ touches installed collections or secrets. [`lib.rs`](../../src-tauri/src/lib.rs)
 picks the directory. On macOS:
 
 - Release: `~/Library/Application Support/com.yaramiri.conductor/`
-- Debug, including `pnpm tauri dev`: `~/Library/Application Support/com.yaramiri.conductor.dev/`
+- Debug, including `pnpm app:dev`: `~/Library/Application Support/com.yaramiri.conductor.dev/`
 
 Set `CONDUCTOR_DATA_DIR` to point any run somewhere else:
 
 ```bash
-CONDUCTOR_DATA_DIR="$(mktemp -d)" pnpm tauri dev
+CONDUCTOR_DATA_DIR="$(mktemp -d)" pnpm app:dev
 ```
 
 Agents use `pnpm agent:start`, which does this for them (see the

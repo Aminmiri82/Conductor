@@ -23,6 +23,13 @@
     }
   },
   "bundle": {
+    "icon": [
+      "icons/agent/128x128@2x.png",
+      "icons/agent/32x32.png",
+      "icons/agent/128x128.png",
+      "icons/agent/icon.icns",
+      "icons/agent/icon.ico"
+    ],
     "macOS": {
       "signingIdentity": "-"
     }
