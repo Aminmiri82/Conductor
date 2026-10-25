@@ -14,9 +14,10 @@ mod storage;
 mod test_server;
 
 use commands::collections::{
-    create_collection, create_folder, delete_collection, delete_node, get_collection_profile,
-    get_collection_tree, import_postman_collection, list_collection_stats, list_collections,
-    move_node, rename_collection, rename_folder,
+    create_collection, create_folder, delete_collection, delete_node, export_postman_collection,
+    get_collection_profile, get_collection_tree, import_postman_collection, list_collection_stats,
+    list_collections, move_node, pick_and_import_postman_collection, rename_collection,
+    rename_folder,
 };
 use commands::requests::{
     create_request, duplicate_request, get_request, resolve_request, save_request,
@@ -106,6 +107,7 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             duplicate_environment,
             delete_node,
             duplicate_request,
+            export_postman_collection,
             get_collection_profile,
             get_collection_tree,
             get_request,
@@ -115,6 +117,7 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             list_collections,
             list_environments,
             list_variables,
+            pick_and_import_postman_collection,
             rename_collection,
             rename_environment,
             rename_folder,

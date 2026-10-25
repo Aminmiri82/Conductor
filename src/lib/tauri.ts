@@ -26,6 +26,8 @@ export const api = {
     commands.setWorkspaceState(key, value),
   getCollectionTree: commands.getCollectionTree,
   importPostmanCollection: commands.importPostmanCollection,
+  pickAndImportPostmanCollection: commands.pickAndImportPostmanCollection,
+  exportPostmanCollection: commands.exportPostmanCollection,
   createCollection: commands.createCollection,
   deleteCollection: commands.deleteCollection,
   renameCollection: commands.renameCollection,
