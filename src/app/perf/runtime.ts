@@ -17,6 +17,7 @@ type Config = {
    * freed pages. JS garbage collection cannot be forced from a page. */
   settleMs: number;
   idleMs: number;
+  longIdleMs: number;
   fixtures: Record<string, unknown>;
 };
 
@@ -29,6 +30,8 @@ const RESERVED_METRICS = new Set([
 ]);
 const KEYSTROKE_INTERVAL_MS = 50;
 const FIND_TIMEOUT_MS = 2000;
+// Hiding or showing the app takes a few hundred ms; this is far past that.
+const VISIBILITY_TIMEOUT_MS = 10_000;
 
 const scenarios = import.meta.glob<{ default: Scenario<FixtureName> }>(
   "./scenarios/*.ts",
@@ -69,6 +72,24 @@ function afterNextPaint() {
       channel.port2.postMessage(null);
     }),
   );
+}
+
+/** Resolves once the page is hidden or visible, as macOS reports it. */
+function visibility(state: DocumentVisibilityState) {
+  return new Promise<void>((resolve, reject) => {
+    if (document.visibilityState === state) return resolve();
+    const timer = setTimeout(() => {
+      document.removeEventListener("visibilitychange", changed);
+      reject(new Error(`the page did not become ${state}`));
+    }, VISIBILITY_TIMEOUT_MS);
+    const changed = () => {
+      if (document.visibilityState !== state) return;
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", changed);
+      resolve();
+    };
+    document.addEventListener("visibilitychange", changed);
+  });
 }
 
 /** The longest gap between frames until `stop`, which is jank on screen. */
@@ -168,6 +189,9 @@ function context(config: Config): ScenarioContext<FixtureName> {
       const started = performance.now();
       const metrics = (await action()) ?? {};
       throwStoreError(label);
+      // A hidden page draws no frames, so painted() would never resolve.
+      if (document.visibilityState === "hidden")
+        throw new Error(`step "${label}" ended in the background`);
       await painted();
       const stepMs = performance.now() - started;
       metrics["longest-frame"] = stopFrames();
@@ -176,10 +200,23 @@ function context(config: Config): ScenarioContext<FixtureName> {
     },
 
     // No frame tracking here: its callbacks would be the CPU being measured.
-    idle: async (label) => {
+    // A hidden page's timers are throttled, so a background idle can run
+    // past its length; the checkpoint records how long it really took.
+    idle: async (label, { long = false } = {}) => {
       const started = performance.now();
-      await wait(config.idleMs);
+      await wait(long ? config.longIdleMs : config.idleMs);
       if (measuring) await checkpoint(label, performance.now() - started, {});
+    },
+
+    background: async () => {
+      await emit("perf:background");
+      await visibility("hidden");
+    },
+
+    foreground: async () => {
+      await emit("perf:foreground");
+      await visibility("visible");
+      await painted();
     },
 
     requestId: (name) => {

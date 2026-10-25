@@ -3,7 +3,8 @@
 // docs/01-architecture/01-performance.md#perf-harness.
 //
 //   node scripts/perf/harness.ts run [--scenario name]... [--runs 5]
-//       [--warmup 1] [--quick] [--out file] [--skip-build]
+//       [--warmup 1] [--quick] [--long-idle-ms 600000] [--out file]
+//       [--skip-build]
 //   node scripts/perf/harness.ts list
 //   node scripts/perf/harness.ts compare <before.json> <after.json> [--markdown]
 //
@@ -12,6 +13,7 @@
 //   node scripts/perf/harness.ts run --app <path.app> [...run options]
 //   node scripts/perf/harness.ts ab --base <a.app> --head <b.app>
 //       --out-base <file> --out-head <file> [--scenario name]... [--runs 5]
+//       [--long-idle-ms 600000]
 //
 // `run` builds a release app with the `perf-harness` feature (its own name,
 // identifier, and target dir, so it never touches the real app or its data),
@@ -34,6 +36,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
@@ -67,9 +70,11 @@ import {
 const PROTOCOL = 1;
 const here = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const productName = "Conductor Perf Harness";
+// How long a launch may record nothing, on top of one long idle, before it
+// counts as hung.
 const SCENARIO_TIMEOUT_MS = 5 * 60_000;
-const SETTINGS = { settleMs: 3000, idleMs: 15_000 };
-const QUICK_SETTINGS = { settleMs: 500, idleMs: 3000 };
+const SETTINGS = { settleMs: 3000, idleMs: 15_000, longIdleMs: 10 * 60_000 };
+const QUICK_SETTINGS = { settleMs: 500, idleMs: 3000, longIdleMs: 3000 };
 // What goes into a build, so editing docs or this script does not make the
 // last build look stale.
 const APP_SOURCES = [
@@ -91,6 +96,7 @@ const { values: options, positionals } = parseArgs({
     runs: { type: "string" },
     warmup: { type: "string" },
     quick: { type: "boolean", default: false },
+    "long-idle-ms": { type: "string" },
     out: { type: "string" },
     "skip-build": { type: "boolean", default: false },
     root: { type: "string" },
@@ -115,6 +121,8 @@ type LocalApp = {
   stamp?: Stamp;
 };
 type LoadedScenario = Awaited<ReturnType<typeof loadScenarios>>[number];
+// What this script measures with; a result file's `Settings` may be older.
+type RunSettings = ReturnType<typeof settingsFromOptions>;
 // The parts of a scenario module the harness reads. Not `Scenario` from
 // scenario.ts, whose `ctx` type would pull the app's stores into this
 // program; loadScenarios checks the module at runtime instead.
@@ -312,15 +320,21 @@ function selectScenarios(available: LoadedScenario[]) {
 }
 
 function settingsFromOptions() {
-  const count = (name: "runs" | "warmup", fallback: number) => {
+  const count = (
+    name: "runs" | "warmup" | "long-idle-ms",
+    fallback: number,
+  ) => {
     const value = Number(options[name] ?? fallback);
     if (!Number.isInteger(value) || value < 0)
       throw new Error(`--${name} must be a whole number`);
     return value;
   };
   const quick = options.quick;
+  const defaults = quick ? QUICK_SETTINGS : SETTINGS;
   const settings = {
-    ...(quick ? QUICK_SETTINGS : SETTINGS),
+    ...defaults,
+    // Set it on its own to iterate on short idles and confirm at full length.
+    longIdleMs: count("long-idle-ms", defaults.longIdleMs),
     quick,
     runs: count("runs", quick ? 1 : 5),
     warmup: count("warmup", quick ? 0 : 1),
@@ -492,7 +506,7 @@ function warnIfStale(app: LocalApp): asserts app is LocalApp & App {
 async function measureRun(
   app: App,
   scenarios: LoadedScenario[],
-  settings: Settings,
+  settings: RunSettings,
   label: string,
 ) {
   const metrics: Metrics = {};
@@ -506,7 +520,7 @@ async function measureRun(
 async function measureScenario(
   app: App,
   scenario: LoadedScenario,
-  settings: Settings,
+  settings: RunSettings,
 ) {
   const work = mkdtempSync(join(tmpdir(), "conductor-perf-"));
   const port = await freePort();
@@ -534,12 +548,20 @@ async function measureScenario(
       phase,
       settleMs: settings.settleMs,
       idleMs: settings.idleMs,
+      longIdleMs: settings.longIdleMs,
       fixtures,
     });
     const data = join(work, "data");
     if (scenario.prepares)
-      await launch(app, work, "prepare", data, config("prepare"));
-    const output = await launch(app, work, "measure", data, config("measure"));
+      await launch(app, work, "prepare", data, config("prepare"), settings);
+    const output = await launch(
+      app,
+      work,
+      "measure",
+      data,
+      config("measure"),
+      settings,
+    );
     if (!output.checkpoints.length)
       throw new Error(`scenario ${scenario.name} recorded no checkpoints`);
     return toMetrics(scenario.name, output);
@@ -559,6 +581,7 @@ async function launch(
   phase: "prepare" | "measure",
   data: string,
   config: { scenario: string },
+  settings: RunSettings,
 ) {
   const out = join(work, `${phase}.jsonl`);
   const log = join(work, `${phase}.log`);
@@ -584,12 +607,16 @@ async function launch(
     ],
     { stdio: "inherit" },
   );
-  const timer = setTimeout(stopHungApp, SCENARIO_TIMEOUT_MS, app, out);
+  const watchdog = watchForHang(
+    app,
+    out,
+    SCENARIO_TIMEOUT_MS + settings.longIdleMs,
+  );
   await new Promise((done, fail) => {
     opener.once("error", fail);
     opener.once("exit", done);
   });
-  clearTimeout(timer);
+  clearInterval(watchdog);
   const lines = existsSync(out)
     ? readFileSync(out, "utf8")
         .trim()
@@ -617,6 +644,25 @@ async function launch(
     startupMs: lines.find((line) => "startupMs" in line)?.startupMs,
     checkpoints,
   };
+}
+
+// A scenario of many long idles runs for as long as they add up to, so a
+// hang is a launch that recorded nothing for `limitMs`, not one that ran
+// long. Every checkpoint appends a line to `out`.
+function watchForHang(app: App, out: string, limitMs: number) {
+  let size = 0;
+  let progressed = Date.now();
+  const watchdog = setInterval(() => {
+    const now = existsSync(out) ? statSync(out).size : 0;
+    if (now !== size) {
+      size = now;
+      progressed = Date.now();
+    } else if (Date.now() - progressed > limitMs) {
+      clearInterval(watchdog);
+      stopHungApp(app, out);
+    }
+  }, 5000);
+  return watchdog;
 }
 
 // Stops only the pid the app reported in this run's output, and only if it

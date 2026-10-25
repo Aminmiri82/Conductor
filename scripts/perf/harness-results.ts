@@ -48,6 +48,7 @@ export type Machine = {
 export type Settings = {
   settleMs: number;
   idleMs: number;
+  longIdleMs?: number;
   quick: boolean;
   runs: number;
   warmup: number;
@@ -237,8 +238,12 @@ export function comparisonWarnings(before: Result, after: Result) {
       warnings.push(
         `They ran on different machines (${key}: ${machine(before)[key]} vs ${machine(after)[key]}).`,
       );
-  for (const key of ["settleMs", "idleMs"] as const)
-    if (before.meta.settings[key] !== after.meta.settings[key])
+  for (const key of ["settleMs", "idleMs", "longIdleMs"] as const)
+    if (
+      key in before.meta.settings &&
+      key in after.meta.settings &&
+      before.meta.settings[key] !== after.meta.settings[key]
+    )
       warnings.push(
         `They used different ${key} (${before.meta.settings[key]} vs ${after.meta.settings[key]}).`,
       );

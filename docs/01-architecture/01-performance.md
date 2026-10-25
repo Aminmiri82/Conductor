@@ -130,6 +130,7 @@ load of collections has finished and painted. Every launch starts with a
 pnpm perf:run                                  # every scenario, 5 runs each
 pnpm perf:run --scenario typing                # only some (repeat, or a,b)
 pnpm perf:run --quick                          # 1 run, short waits: checks a scenario works
+pnpm perf:run --long-idle-ms 60000             # shorter long idles, for quick iterations
 pnpm perf:list                                 # the scenarios and what they do
 pnpm perf:compare before.json after.json
 ```
@@ -139,6 +140,13 @@ A full run of every scenario takes about 15 minutes after the build; use
 warm-up run is measured and thrown away, because the first launch of a new
 build pays for macOS registering it (`--warmup` changes this). It warns when
 the Mac is on battery or in Low Power Mode, which slow the CPU.
+
+A scenario's long idles (see below) last 10 minutes by default, so a scenario
+with two of them takes over 20 minutes a run. `--long-idle-ms` shortens them
+to iterate faster. Confirm a result at full length before trusting it, since
+garbage collection and App Nap may not have happened yet in a short one.
+`compare` warns when the two files used different lengths. A launch counts as
+hung once it records nothing for 5 minutes plus one long idle.
 
 It prints, per scenario, the median across runs in three tables:
 
@@ -174,7 +182,11 @@ is what `--scenario` selects. It default-exports
 [`scenario.ts`](../../src/app/perf/scenario.ts), which documents everything
 `ctx` offers: `step()` and `idle()` record checkpoints, `type()` types into a
 field and returns keystroke latency, and `workspace()` reaches the stores as a
-click would. A step can return numbers of its own, recorded under its name.
+click would. `idle(label, { long: true })` waits `--long-idle-ms` instead of
+the usual 15 seconds. `background()` hides the app, as Cmd-H does, so WebKit
+hides the page and macOS can App Nap it, and `foreground()` brings it back.
+Together they measure a user leaving Conductor for another app and coming
+back. A step fails while the app is hidden, because nothing paints there. A step can return numbers of its own, recorded under its name.
 `prepare` runs in an unmeasured launch first, on the same data, for a
 scenario that measures starting with data, such as
 [`startup-large-collection`](../../src/app/perf/scenarios/startup-large-collection.ts).
