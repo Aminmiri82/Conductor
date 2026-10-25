@@ -63,6 +63,9 @@ type WorkspaceState = {
   loadCollections: () => Promise<void>;
   loadEnvironments: () => Promise<void>;
   importCollection: (path: string) => Promise<void>;
+  // Undefined when the user cancels. Rejects instead of setting `error`, so
+  // each caller shows the failure where the user is looking.
+  pickAndImportCollection: () => Promise<CollectionSummary | undefined>;
   // The new collection's id, or undefined when it could not be created.
   createCollection: (name: string) => Promise<string | undefined>;
   deleteCollection: (collectionId: string) => Promise<void>;
@@ -162,6 +165,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     } catch (error) {
       set({ error: String(error) });
     }
+  },
+
+  pickAndImportCollection: async () => {
+    const imported = await api.pickAndImportPostmanCollection();
+    if (!imported) return undefined;
+    await showNewCollection(imported);
+    return imported.collections.find(
+      (collection) => collection.id === imported.collectionId,
+    );
   },
 
   createCollection: async (name) => {

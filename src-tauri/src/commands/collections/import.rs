@@ -11,8 +11,8 @@ use serde_json::Value;
 use tauri::State;
 use uuid::Uuid;
 
-use super::read_collections;
 use super::tree::{read_tree, sort_order_at};
+use super::{postman_file_dialog, read_collections};
 use crate::commands::{
     error::CommandError,
     models::{
@@ -31,6 +31,8 @@ use crate::storage::{
 use crate::AppState;
 
 /// Reads the file at `path` in Rust, so a large collection never crosses IPC.
+/// The app imports through `pick_and_import_postman_collection`; this one is
+/// for the perf harness and agents, which seed data from a known path.
 #[tauri::command(async)]
 #[specta::specta]
 pub fn import_postman_collection(
@@ -38,6 +40,20 @@ pub fn import_postman_collection(
     state: State<'_, AppState>,
 ) -> Result<ImportedCollection, CommandError> {
     import_file(&state, Path::new(&path))
+}
+
+/// `None` when the user cancels the dialog.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn pick_and_import_postman_collection(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+) -> Result<Option<ImportedCollection>, CommandError> {
+    let Some(picked) = postman_file_dialog(&window).blocking_pick_file() else {
+        return Ok(None);
+    };
+    let path = picked.into_path().map_err(CommandError::msg)?;
+    import_file(&state, &path).map(Some)
 }
 
 fn import_file(state: &AppState, path: &Path) -> Result<ImportedCollection, CommandError> {
@@ -58,7 +74,7 @@ fn import_file(state: &AppState, path: &Path) -> Result<ImportedCollection, Comm
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
-struct PostmanCollection {
+pub(super) struct PostmanCollection {
     #[serde(deserialize_with = "null_default")]
     info: PostmanInfo,
     #[serde(deserialize_with = "lenient_list")]
@@ -118,13 +134,16 @@ struct PostmanUrl {
     raw: String,
     #[serde(deserialize_with = "lenient_list")]
     query: Vec<PostmanParam>,
+    /// Path variables (`:id`).
+    #[serde(deserialize_with = "lenient_list")]
+    variable: Vec<PostmanParam>,
 }
 
 impl FromText for PostmanUrl {
     fn from_text(raw: &str) -> Self {
         Self {
             raw: raw.to_string(),
-            query: Vec::new(),
+            ..Self::default()
         }
     }
 }
@@ -240,7 +259,7 @@ struct PostmanVariable {
 }
 
 /// Returns the new collection's id.
-fn store_collection(
+pub(super) fn store_collection(
     connection: &mut Connection,
     collection: &PostmanCollection,
     now: &str,
@@ -320,6 +339,7 @@ fn store_items(
             let (pre_request_script, test_script) = scripts(&item.event)?;
             let url = request.url.as_ref();
             let query = url.map(|url| key_values(&url.query)).unwrap_or_default();
+            let path_params = url.map(|url| key_values(&url.variable)).unwrap_or_default();
             let body = request
                 .body
                 .as_ref()
@@ -333,6 +353,7 @@ fn store_items(
                     url: url.map(|url| url.raw.as_str()).unwrap_or_default(),
                     headers_json: &serde_json::to_string(&key_values(&request.header))?,
                     query_json: &serde_json::to_string(&query)?,
+                    path_params_json: &serde_json::to_string(&path_params)?,
                     auth_json: auth_json(request.auth.as_ref())?.as_deref(),
                     body_json: body.as_deref(),
                     pre_request_script_json: pre_request_script.as_deref(),

@@ -1,4 +1,4 @@
-import { confirm, open } from "@tauri-apps/plugin-dialog";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import {
   lazy,
   Suspense,
@@ -60,7 +60,11 @@ export function CollectionSidebar() {
   const activeRequestId = useWorkspaceStore((state) => state.activeRequestId);
   const selectCollection = useWorkspaceStore((state) => state.selectCollection);
   const selectRequest = useWorkspaceStore((state) => state.selectRequest);
-  const importCollection = useWorkspaceStore((state) => state.importCollection);
+  const pickAndImportCollection = useWorkspaceStore(
+    (state) => state.pickAndImportCollection,
+  );
+  const setError = useWorkspaceStore((state) => state.setError);
+  const clearError = useWorkspaceStore((state) => state.clearError);
   const createRequestIn = useWorkspaceStore((state) => state.createRequestIn);
   const createFolderIn = useWorkspaceStore((state) => state.createFolderIn);
   const renameFolder = useWorkspaceStore((state) => state.renameFolder);
@@ -222,10 +226,12 @@ export function CollectionSidebar() {
   }
 
   async function pickCollectionFile() {
-    const path = await open({
-      filters: [{ name: "Postman collection", extensions: ["json"] }],
-    });
-    if (path) await importCollection(path);
+    clearError();
+    try {
+      await pickAndImportCollection();
+    } catch (error) {
+      setError(error);
+    }
   }
 
   const performDrop = useCallback(async () => {

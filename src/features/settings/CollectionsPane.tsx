@@ -1,6 +1,20 @@
-import { type ReactNode, useEffect, useState } from "react";
-import { Library, Plus, Trash2 } from "lucide-react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  ChevronDown,
+  Download,
+  Library,
+  Plus,
+  Trash2,
+  Upload,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuShortcut,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import type {
   CollectionProfile,
@@ -11,6 +25,7 @@ import type {
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { api } from "@/lib/tauri";
 import {
+  drawerAction,
   EditableTitle,
   ListDrawer,
   panelFrame as frame,
@@ -26,6 +41,9 @@ export function CollectionsPane() {
   const deleteCollection = useWorkspaceStore((state) => state.deleteCollection);
   const renameCollection = useWorkspaceStore((state) => state.renameCollection);
   const createCollection = useWorkspaceStore((state) => state.createCollection);
+  const pickAndImportCollection = useWorkspaceStore(
+    (state) => state.pickAndImportCollection,
+  );
   const setError = useWorkspaceStore((state) => state.setError);
   const [stats, setStats] = useState<Map<string, CollectionStats>>(
     () => new Map(),
@@ -39,6 +57,12 @@ export function CollectionsPane() {
     collections[0];
   const [renaming, setRenaming] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // The last import or export, shown here because the error banner is hidden
+  // behind the Settings dialog.
+  const [fileStatus, setFileStatus] = useState<{
+    failed: boolean;
+    text: string;
+  } | null>(null);
 
   // Counts are read only while this page is open, and again whenever the
   // collection list changes.
@@ -81,6 +105,108 @@ export function CollectionsPane() {
     startRename();
   }
 
+  async function importAndSelect() {
+    setFileStatus(null);
+    try {
+      const imported = await pickAndImportCollection();
+      if (!imported) return;
+      select(imported.id);
+      setFileStatus({ failed: false, text: `Imported “${imported.name}”` });
+    } catch (error) {
+      setFileStatus({ failed: true, text: `Import failed: ${String(error)}` });
+    }
+  }
+
+  async function exportCollection(
+    collection: CollectionSummary,
+    includeEnvironments: boolean,
+  ) {
+    setFileStatus(null);
+    try {
+      const fileName = await api.exportPostmanCollection(
+        collection.id,
+        includeEnvironments,
+      );
+      if (!fileName) return;
+      setFileStatus({
+        failed: false,
+        text: includeEnvironments
+          ? `Exported ${fileName} and its environments`
+          : `Exported ${fileName}`,
+      });
+    } catch (error) {
+      setFileStatus({ failed: true, text: `Export failed: ${String(error)}` });
+    }
+  }
+
+  function askDelete() {
+    setConfirmingDelete(true);
+    setRenaming(false);
+  }
+
+  // While this pane is open, ⌘N makes a collection instead of a request, ⌘⇧N
+  // and ⌘D do nothing rather than act on the hidden workspace (see
+  // hotkeys.ts), and ⌘I, ⌘E and ⌘⌫ are handled here. Read through a ref so
+  // the listeners see the current selection.
+  const shortcuts = {
+    new: () => void createAndRename(),
+    import: () => void importAndSelect(),
+    export: () => {
+      if (selected) void exportCollection(selected, false);
+    },
+    remove: () => {
+      if (selected) askDelete();
+    },
+  };
+  const shortcutsRef = useRef(shortcuts);
+  useEffect(() => {
+    shortcutsRef.current = shortcuts;
+  });
+  useEffect(() => {
+    function onNew(event: Event) {
+      event.preventDefault();
+      shortcutsRef.current.new();
+    }
+    function claim(event: Event) {
+      event.preventDefault();
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (!(event.metaKey || event.ctrlKey) || event.shiftKey) return;
+      // In a text field (the rename) these keep their editing meaning, such
+      // as Ctrl+E for line end and ⌘⌫ for delete to line start.
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable || target.matches("input, textarea"))
+      ) {
+        return;
+      }
+      const key = event.key.toLowerCase();
+      if (key === "i") {
+        event.preventDefault();
+        shortcutsRef.current.import();
+      }
+      if (key === "e") {
+        event.preventDefault();
+        shortcutsRef.current.export();
+      }
+      if (key === "backspace" || key === "delete") {
+        event.preventDefault();
+        shortcutsRef.current.remove();
+      }
+    }
+    window.addEventListener("conductor:new", onNew);
+    window.addEventListener("conductor:new-folder", claim);
+    window.addEventListener("conductor:duplicate", claim);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("conductor:new", onNew);
+      window.removeEventListener("conductor:new-folder", claim);
+      window.removeEventListener("conductor:duplicate", claim);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, []);
+
   return (
     <div>
       <SectionTitle
@@ -91,6 +217,18 @@ export function CollectionsPane() {
             : undefined
         }
       />
+      {fileStatus ? (
+        <div
+          className={cn(
+            "-mt-1 mb-3 truncate text-xs",
+            fileStatus.failed ? "text-destructive" : "text-[var(--app-dim)]",
+          )}
+          role="status"
+          title={fileStatus.text}
+        >
+          {fileStatus.text}
+        </div>
+      ) : null}
       {selected ? (
         <div
           className={cn(
@@ -112,8 +250,20 @@ export function CollectionsPane() {
               }))}
               selectedId={selected.id}
               onSelect={select}
-              createTitle="New collection"
+              createTitle="New collection (⌘N)"
               onCreate={() => void createAndRename()}
+              actions={
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className={drawerAction}
+                  title="Import Postman collection (⌘I)"
+                  aria-label="Import collection"
+                  onClick={() => void importAndSelect()}
+                >
+                  <Upload className="size-3.5" />
+                </Button>
+              }
             />
           ) : null}
           <CollectionDetail
@@ -124,18 +274,21 @@ export function CollectionsPane() {
             confirmingDelete={confirmingDelete}
             onStartRename={startRename}
             onFinishRename={(name) => finishRename(selected, name)}
-            onAskDelete={() => {
-              setConfirmingDelete(true);
-              setRenaming(false);
-            }}
+            onAskDelete={askDelete}
             onCancelDelete={() => setConfirmingDelete(false)}
             onDelete={() => {
               setConfirmingDelete(false);
               void deleteCollection(selected.id);
             }}
-            // With one collection there is no list, so its + moves here.
+            onExport={(includeEnvironments) =>
+              void exportCollection(selected, includeEnvironments)
+            }
+            // With one collection there is no list, so its buttons move here.
             onCreate={
               collections.length > 1 ? undefined : () => void createAndRename()
+            }
+            onImport={
+              collections.length > 1 ? undefined : () => void importAndSelect()
             }
           />
         </div>
@@ -147,16 +300,28 @@ export function CollectionsPane() {
           <Library className="size-5 text-[var(--app-dim)]" />
           <div className="mt-3 text-sm font-medium">No collections yet</div>
           <div className="mt-1 text-xs text-[var(--app-dim)]">
-            Create one here, or import a Postman file from the sidebar.
+            Create one, or import a Postman collection.
           </div>
-          <Button
-            variant="ghost"
-            className="mt-4 h-8 gap-1.5 border border-[var(--app-line)] px-2.5 text-xs text-[var(--app-dim)]"
-            onClick={() => void createAndRename()}
-          >
-            <Plus className="size-3.5" />
-            New collection
-          </Button>
+          <div className="mt-4 flex gap-2">
+            <Button
+              variant="ghost"
+              className="h-8 gap-1.5 border border-[var(--app-line)] px-2.5 text-xs text-[var(--app-dim)]"
+              title="New collection (⌘N)"
+              onClick={() => void createAndRename()}
+            >
+              <Plus className="size-3.5" />
+              New collection
+            </Button>
+            <Button
+              variant="ghost"
+              className="h-8 gap-1.5 border border-[var(--app-line)] px-2.5 text-xs text-[var(--app-dim)]"
+              title="Import Postman collection (⌘I)"
+              onClick={() => void importAndSelect()}
+            >
+              <Upload className="size-3.5" />
+              Import
+            </Button>
+          </div>
         </div>
       )}
     </div>
@@ -173,7 +338,9 @@ function CollectionDetail({
   onAskDelete,
   onCancelDelete,
   onDelete,
+  onExport,
   onCreate,
+  onImport,
 }: {
   collection: CollectionSummary;
   stats: CollectionStats | undefined;
@@ -185,7 +352,9 @@ function CollectionDetail({
   onAskDelete: () => void;
   onCancelDelete: () => void;
   onDelete: () => void;
+  onExport: (includeEnvironments: boolean) => void;
   onCreate?: () => void;
+  onImport?: () => void;
 }) {
   // Only the selected collection's profile is ever read; this component
   // remounts per selection, so the state belongs to one collection.
@@ -206,6 +375,8 @@ function CollectionDetail({
 
   const requestCount =
     profile?.methods.reduce((sum, entry) => sum + entry.count, 0) ?? 0;
+  const environmentCount = profile?.environments.length;
+
   const variableCount = profile
     ? profile.collectionVariableCount +
       profile.environments.reduce((sum, e) => sum + e.variableCount, 0)
@@ -221,12 +392,24 @@ function CollectionDetail({
           onStartEdit={onStartRename}
           onFinishEdit={onFinishRename}
         />
+        {renaming || !onImport ? null : (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7 shrink-0 border border-[var(--app-line)] text-[var(--app-dim)] hover:text-[var(--app-text)]"
+            title="Import Postman collection (⌘I)"
+            aria-label="Import collection"
+            onClick={onImport}
+          >
+            <Upload className="size-3.5" />
+          </Button>
+        )}
         {renaming || !onCreate ? null : (
           <Button
             variant="ghost"
             size="icon"
             className="size-7 shrink-0 border border-[var(--app-line)] text-[var(--app-dim)] hover:text-[var(--app-text)]"
-            title="New collection"
+            title="New collection (⌘N)"
             aria-label="New collection"
             onClick={onCreate}
           >
@@ -234,9 +417,62 @@ function CollectionDetail({
           </Button>
         )}
         {renaming ? null : (
+          <div className="flex shrink-0">
+            <Button
+              variant="ghost"
+              className="h-7 gap-1.5 rounded-r-none border border-[var(--app-line)] px-2 text-xs text-[var(--app-dim)] hover:text-[var(--app-text)]"
+              title="Export as a Postman collection (⌘E)"
+              onClick={() => onExport(false)}
+            >
+              <Download className="size-3.5" />
+              Export
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-6 rounded-l-none border border-l-0 border-[var(--app-line)] text-[var(--app-dim)] hover:text-[var(--app-text)]"
+                  title="Export options"
+                  aria-label="Export options"
+                >
+                  <ChevronDown className="size-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-64">
+                <DropdownMenuItem onSelect={() => onExport(false)}>
+                  <Download />
+                  <ExportOption
+                    title="Collection"
+                    detail=".postman_collection.json"
+                  />
+                  <DropdownMenuShortcut>⌘E</DropdownMenuShortcut>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={!environmentCount}
+                  onSelect={() => onExport(true)}
+                >
+                  <Download />
+                  <ExportOption
+                    title="Collection + environments"
+                    detail={
+                      environmentCount === undefined
+                        ? "Loading…"
+                        : environmentCount
+                          ? `also ${plural(environmentCount, "environment file")}, secrets included`
+                          : "No environments to export"
+                    }
+                  />
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        )}
+        {renaming ? null : (
           <Button
             variant="ghost"
             className="h-7 shrink-0 gap-1.5 border border-[var(--app-line)] px-2 text-xs text-[var(--app-dim)] hover:bg-destructive/10 hover:text-destructive"
+            title="Delete collection (⌘⌫)"
             onClick={onAskDelete}
             aria-expanded={confirmingDelete}
           >
@@ -362,6 +598,17 @@ function CollectionDetail({
         </div>
       )}
     </div>
+  );
+}
+
+function ExportOption({ title, detail }: { title: string; detail: string }) {
+  return (
+    <span className="min-w-0">
+      <span className="block text-xs">{title}</span>
+      <span className="block truncate text-[11px] text-[var(--app-dim)]">
+        {detail}
+      </span>
+    </span>
   );
 }
 

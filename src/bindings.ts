@@ -36,16 +36,30 @@ export const commands = {
 	duplicateEnvironment: (input: DuplicateEnvironmentInput) => __TAURI_INVOKE<string>("duplicate_environment", { input }),
 	deleteNode: (nodeId: string) => __TAURI_INVOKE<null>("delete_node", { nodeId }),
 	duplicateRequest: (input: DuplicateRequestInput) => __TAURI_INVOKE<DuplicateRequestResult>("duplicate_request", { input }),
+	/**
+	 *  Asks where to save the collection, offering "<collection>.postman_collection.json",
+	 *  and writes it there. With `include_environments`, each of its environments
+	 *  goes next to it as "<file stem> - <environment>.postman_environment.json",
+	 *  replacing a file of that name. Returns the written file's name, or `None`
+	 *  when the user cancels.
+	 */
+	exportPostmanCollection: (collectionId: string, includeEnvironments: boolean) => __TAURI_INVOKE<string | null>("export_postman_collection", { collectionId, includeEnvironments }),
 	getCollectionProfile: (collectionId: string) => __TAURI_INVOKE<CollectionProfile>("get_collection_profile", { collectionId }),
 	getCollectionTree: (collectionId: string) => __TAURI_INVOKE<CollectionNode[]>("get_collection_tree", { collectionId }),
 	getRequest: (requestId: string) => __TAURI_INVOKE<RequestDetail>("get_request", { requestId }),
 	importPostmanEnvironment: (collectionId: string, postmanJson: string, fileName: string | null) => __TAURI_INVOKE<string>("import_postman_environment", { collectionId, postmanJson, fileName }),
-	/**  Reads the file at `path` in Rust, so a large collection never crosses IPC. */
+	/**
+	 *  Reads the file at `path` in Rust, so a large collection never crosses IPC.
+	 *  The app imports through `pick_and_import_postman_collection`; this one is
+	 *  for the perf harness and agents, which seed data from a known path.
+	 */
 	importPostmanCollection: (path: string) => __TAURI_INVOKE<ImportedCollection>("import_postman_collection", { path }),
 	listCollectionStats: () => __TAURI_INVOKE<CollectionStats[]>("list_collection_stats"),
 	listCollections: () => __TAURI_INVOKE<CollectionSummary[]>("list_collections"),
 	listEnvironments: () => __TAURI_INVOKE<EnvironmentSummary[]>("list_environments"),
 	listVariables: (target: VariableTarget) => __TAURI_INVOKE<VariableEntry[]>("list_variables", { target }),
+	/**  `None` when the user cancels the dialog. */
+	pickAndImportPostmanCollection: () => __TAURI_INVOKE<ImportedCollection | null>("pick_and_import_postman_collection"),
 	renameCollection: (collectionId: string, name: string) => __TAURI_INVOKE<CollectionSummary[]>("rename_collection", { collectionId, name }),
 	renameEnvironment: (input: RenameEnvironmentInput) => __TAURI_INVOKE<null>("rename_environment", { input }),
 	/**

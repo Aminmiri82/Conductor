@@ -33,6 +33,15 @@ export function ShortcutsPane() {
         ["Import environment", ["⌘", "I"]],
       ],
     },
+    {
+      title: "Collections settings",
+      rows: [
+        ["New collection", ["⌘", "N"]],
+        ["Import collection", ["⌘", "I"]],
+        ["Export collection", ["⌘", "E"]],
+        ["Delete collection", ["⌘", "⌫"]],
+      ],
+    },
   ];
 
   return (

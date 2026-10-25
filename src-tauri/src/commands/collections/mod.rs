@@ -1,8 +1,10 @@
+mod export;
 mod import;
 mod profile;
 mod tree;
 
-pub use import::import_postman_collection;
+pub use export::export_postman_collection;
+pub use import::{import_postman_collection, pick_and_import_postman_collection};
 pub use profile::get_collection_profile;
 #[cfg(test)]
 pub(crate) use tree::{add_folder, read_tree};
@@ -19,6 +21,21 @@ use super::{
     models::{CollectionStats, CollectionSummary, ImportedCollection},
 };
 use crate::{storage::StorageError, AppState};
+
+/// The native open and save dialogs for Postman files, attached to `window`
+/// (a sheet on macOS) as the dialog plugin's own commands do.
+fn postman_file_dialog(
+    window: &tauri::Window,
+) -> tauri_plugin_dialog::FileDialogBuilder<tauri::Wry> {
+    use tauri_plugin_dialog::DialogExt;
+    let dialog = window
+        .dialog()
+        .file()
+        .add_filter("Postman collection", &["json"]);
+    #[cfg(any(windows, target_os = "macos"))]
+    let dialog = dialog.set_parent(window);
+    dialog
+}
 
 #[tauri::command(async)]
 #[specta::specta]
