@@ -40,7 +40,7 @@ You need Node.js 24.22.1+, [pnpm](https://pnpm.io/), and the [Rust toolchain and
 
 ```bash
 pnpm install
-pnpm tauri dev
+pnpm app:dev
 ```
 
 See [docs/](./docs/index.md) for architecture notes.

@@ -8,6 +8,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "app:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "agent:start": "bash scripts/agent/agent-app.sh start",
     "agent:stop": "bash scripts/agent/agent-app.sh stop",
     "typecheck": "tsc --noEmit && tsc --noEmit -p scripts && tsc --noEmit -p tools && tsc --noEmit -p tsconfig.node.json",

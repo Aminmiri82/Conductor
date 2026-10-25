@@ -1,0 +1,24 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Conductor dev",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Conductor dev",
+        "width": 850,
+        "height": 625,
+        "dragDropEnabled": false
+      }
+    ]
+  },
+  "bundle": {
+    "icon": [
+      "icons/dev/128x128@2x.png",
+      "icons/dev/32x32.png",
+      "icons/dev/128x128.png",
+      "icons/dev/icon.icns",
+      "icons/dev/icon.ico"
+    ]
+  }
+}
