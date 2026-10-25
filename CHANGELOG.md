@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.1.14](https://github.com/Aminmiri82/Conductor/compare/app-v0.1.13...app-v0.1.14) (2026-10-25)
+
+
+### Features
+
+* **agent:** improve isolated app verification workflow ([#32](https://github.com/Aminmiri82/Conductor/issues/32)) ([907d435](https://github.com/Aminmiri82/Conductor/commit/907d4352d232098fc02a95c625bc7f98c7d77e35))
+* **collections:** export collections to Postman ([#34](https://github.com/Aminmiri82/Conductor/issues/34)) ([718c5e4](https://github.com/Aminmiri82/Conductor/commit/718c5e45adc903c3cdac3ae833e9e1a52c74c54c))
+* **dev:** add distinct app icons and dev launch config ([#35](https://github.com/Aminmiri82/Conductor/issues/35)) ([713d505](https://github.com/Aminmiri82/Conductor/commit/713d50515521fec8413058f47540e8d87c2dfba3))
+* **perf:** add profiling harness and enforce performance rules ([#31](https://github.com/Aminmiri82/Conductor/issues/31)) ([c7db99a](https://github.com/Aminmiri82/Conductor/commit/c7db99ac8d33dacf25c2f4c64e6a3e5f3e9c6af5))
+* **perf:** measure long background idles ([#36](https://github.com/Aminmiri82/Conductor/issues/36)) ([f9edd2b](https://github.com/Aminmiri82/Conductor/commit/f9edd2b4c1c760a97420e89bf17f692b9e69bcbc))
+* **perf:** run performance jobs on labeled PRs ([#33](https://github.com/Aminmiri82/Conductor/issues/33)) ([48b362d](https://github.com/Aminmiri82/Conductor/commit/48b362d0cf6c81fca03d1dbf42f590e2bf6e3c89))
+* **settings:** add collection profiles and redesign settings UI ([dd927a0](https://github.com/Aminmiri82/Conductor/commit/dd927a09d4cc74841f6f7677b0328fdd9e791b03))
+
+
+### Fixes
+
+* build the About menu metadata only on macOS ([#28](https://github.com/Aminmiri82/Conductor/issues/28)) ([ad5059e](https://github.com/Aminmiri82/Conductor/commit/ad5059ed5e6691cc52534ec04ed2fdfc27b6d0b0))
+* **deps:** update TLS, SQLite and build dependencies for security fixes ([#29](https://github.com/Aminmiri82/Conductor/issues/29)) ([d21bf9f](https://github.com/Aminmiri82/Conductor/commit/d21bf9f6988daebeee616a68bc635faed821a551))
+* **settings:** improve variables table layout and controls ([6eaae26](https://github.com/Aminmiri82/Conductor/commit/6eaae26c939237139c24962b3e347fa47a5116ba))
+* **settings:** preserve selection and cancel edits safely ([28ad6b9](https://github.com/Aminmiri82/Conductor/commit/28ad6b9b6413c5ff72ec63ae1313d24b194e5ec3))
+
 ## [0.1.13](https://github.com/Aminmiri82/Conductor/compare/app-v0.1.12...app-v0.1.13) (2026-10-23)
 
 
