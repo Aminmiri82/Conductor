@@ -22,14 +22,33 @@ export type ScenarioContext<Fixtures extends FixtureName> = {
    * Runs `action`, waits for its result to paint, settles, then records a
    * checkpoint: memory, CPU, and wakeups of every process, the Rust heap,
    * the step's time, the longest frame during it, and what `action`
-   * returned. Fails the run if a store action reported an error.
+   * returned. Fails the run if a store action reported an error, or if the
+   * app is in the background once `action` is done, since nothing paints
+   * there.
    */
   step: (
     label: string,
     action: () => Promise<StepMetrics | void>,
   ) => Promise<void>;
-  /** Waits with nothing scheduled, then checkpoints; CPU should be near 0. */
-  idle: (label: string) => Promise<void>;
+  /**
+   * Waits with nothing scheduled, then checkpoints; CPU should be near 0.
+   * A `long` idle lasts `--long-idle-ms` (10 minutes by default), long
+   * enough for garbage collection and macOS's background behavior to settle;
+   * use it for "the user went to another app".
+   */
+  idle: (label: string, options?: { long?: boolean }) => Promise<void>;
+  /**
+   * Hides the app, as Cmd-H does, and waits until the page is hidden, so
+   * WebKit throttles it and macOS can App Nap it. Records no checkpoint;
+   * follow it with `idle()`. Until `foreground()`, a `step()` fails, since
+   * nothing paints in the background.
+   */
+  background: () => Promise<void>;
+  /**
+   * Shows and focuses the app again and waits until it painted. Wrap it in
+   * `step()` to measure coming back.
+   */
+  foreground: () => Promise<void>;
   /** The request in the active collection with this name. */
   requestId: (name: string) => string;
   /** Every request in the active collection, in sidebar order. */

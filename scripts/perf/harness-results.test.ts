@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   compareResults,
+  comparisonWarnings,
   medians,
+  SCHEMA,
   verdict,
   type Metrics,
+  type Result,
+  type Settings,
 } from "./harness-results.ts";
 
 const result = (values: number[]) => {
@@ -57,5 +61,46 @@ describe("compareResults", () => {
       ["s/import/time", "worse"],
       ["s/idle/time", "noise"],
     ]);
+  });
+});
+
+describe("comparisonWarnings", () => {
+  const withSettings = (settings: Partial<Settings>): Result => ({
+    ...result([100, 101, 102, 103, 104]),
+    schema: SCHEMA,
+    meta: {
+      app: {
+        root: "",
+        sha: "",
+        dirty: false,
+        changesHash: "",
+        scenarioHashes: {},
+      },
+      machine: {
+        macOS: "26.0",
+        chip: "M4",
+        memoryBytes: 1,
+        power: "ac",
+        lowPower: false,
+      },
+      settings: {
+        settleMs: 3000,
+        idleMs: 15000,
+        quick: false,
+        runs: 5,
+        warmup: 1,
+        ...settings,
+      },
+      date: "",
+    },
+  });
+
+  it("warns when the two sides idled in the background for different lengths", () => {
+    expect(
+      comparisonWarnings(
+        withSettings({ longIdleMs: 60_000 }),
+        withSettings({ longIdleMs: 600_000 }),
+      ),
+    ).toContain("They used different longIdleMs (60000 vs 600000).");
   });
 });

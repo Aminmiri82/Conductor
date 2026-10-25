@@ -22,7 +22,7 @@ use std::time::Instant;
 
 use serde::Serialize;
 use serde_json::Value;
-use tauri::{AppHandle, Emitter, Listener};
+use tauri::{AppHandle, Emitter, Listener, Manager};
 
 use crate::alloc_counter;
 
@@ -246,6 +246,38 @@ pub fn listen(app: &AppHandle) {
             ),
         }
         let _ = handle.emit("perf:recorded", ());
+    });
+
+    // `ctx.background()` and `ctx.foreground()`. Hiding the app is Cmd-H:
+    // the window is not visible, so WebKit hides the page and macOS may App
+    // Nap the processes. The webview waits for `visibilitychange` itself.
+    let handle = app.clone();
+    let background_out = out.clone();
+    app.listen_any("perf:background", move |_| {
+        if let Err(error) = handle.hide() {
+            append(
+                &background_out,
+                &serde_json::json!({ "error": format!("could not hide the app: {error}") }),
+            );
+        }
+    });
+
+    // `show` does not focus; the user coming back does.
+    let handle = app.clone();
+    let foreground_out = out.clone();
+    app.listen_any("perf:foreground", move |_| {
+        let shown = handle
+            .show()
+            .and_then(|()| match handle.get_webview_window("main") {
+                Some(window) => window.set_focus(),
+                None => Ok(()),
+            });
+        if let Err(error) = shown {
+            append(
+                &foreground_out,
+                &serde_json::json!({ "error": format!("could not show the app: {error}") }),
+            );
+        }
     });
 
     let handle = app.clone();
