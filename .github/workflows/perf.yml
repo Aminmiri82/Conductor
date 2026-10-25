@@ -2,7 +2,8 @@ name: Perf
 
 # Compares what a PR ships against its base branch, built in the same job so
 # runner differences cancel out. Budgets live in perf/budgets.json. Yara can
-# accept a deliberate regression with the perf-regression-approved label.
+# accept a deliberate regression with the perf-regression-approved label. Both
+# jobs run only on PRs labeled `needs perf job`.
 
 on:
   pull_request:
@@ -12,16 +13,24 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: perf-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
 jobs:
   size:
     # Bundle sizes and lockfiles don't depend on the OS, and Linux runners
     # start faster. Binary and DMG sizes are recorded per release instead.
+    #
+    # Runs on each push to a PR labeled `needs perf job`, when that label is
+    # added, and when perf-regression-approved is added or removed, so the
+    # override takes effect.
+    if: >-
+      contains(github.event.pull_request.labels.*.name, 'needs perf job') &&
+      ((github.event.action != 'labeled' && github.event.action != 'unlabeled') ||
+      (github.event.action == 'labeled' && github.event.label.name == 'needs perf job') ||
+      github.event.label.name == 'perf-regression-approved')
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    concurrency:
+      group: perf-size-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -56,11 +65,18 @@ jobs:
     # its base, alternating on one runner, and writes the comparison to the
     # step summary and a PR comment. Report only: a hosted runner's numbers
     # are noisy, so a regression never fails this job. It fails when the
-    # harness breaks, such as a scenario that no longer finishes. Labels only
-    # matter to `size`.
-    if: github.event.action != 'labeled' && github.event.action != 'unlabeled'
+    # harness breaks, such as a scenario that no longer finishes.
+    #
+    # Runs only on PRs labeled `needs perf job`: on each push to one, and when the label is added.
+    if: >-
+      contains(github.event.pull_request.labels.*.name, 'needs perf job') &&
+      github.event.action != 'unlabeled' &&
+      (github.event.action != 'labeled' || github.event.label.name == 'needs perf job')
     runs-on: macos-latest
     timeout-minutes: 90
+    concurrency:
+      group: perf-harness-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
     permissions:
       contents: read
       pull-requests: write
