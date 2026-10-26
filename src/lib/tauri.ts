@@ -1,6 +1,8 @@
 import { commands, type RequestDetail } from "@/bindings";
 import type { WorkspaceUiState } from "@/features/types";
 
+const utf8 = new TextDecoder();
+
 // Call-site conveniences over the generated `commands`. Command names, argument
 // names, and payload types come from Rust; add new commands in Rust and run
 // `pnpm bindings` rather than calling `invoke` directly.
@@ -52,8 +54,12 @@ export const api = {
   listCollectionStats: commands.listCollectionStats,
   moveNode: (nodeId: string, parentId: string | null, position: number) =>
     commands.moveNode({ nodeId, parentId, position }),
-  saveTextFile: (path: string, contents: string) =>
-    commands.saveTextFile({ path, contents }),
+  // Arrives as raw UTF-8 rather than a JSON string, so a large body is not
+  // parsed out of an escaped copy of itself.
+  getResponseBody: async (historyId: string) =>
+    utf8.decode(await commands.getResponseBody({ historyId })),
+  discardResponses: (requestIds: string[]) =>
+    commands.discardResponses({ requestIds }),
   saveResponseBody: (historyId: string, path: string) =>
     commands.saveResponseBody({ historyId, path }),
   saveRequest: commands.saveRequest,

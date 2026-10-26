@@ -144,7 +144,11 @@ the Mac is on battery or in Low Power Mode, which slow the CPU.
 A scenario's long idles (see below) last 10 minutes by default, so a scenario
 with two of them takes over 20 minutes a run. `--long-idle-ms` shortens them
 to iterate faster. Confirm a result at full length before trusting it, since
-garbage collection and App Nap may not have happened yet in a short one.
+garbage collection and App Nap may not have happened yet in a short one: in
+the background, WebKit's own cleanup of a hidden page, which collects garbage,
+was measured about 4 to 5 minutes in, so a long idle under about 6 minutes
+misses it. Rust times every idle, not the webview, because WebKit throttles a
+hidden page's timers more the longer it stays hidden.
 `compare` warns when the two files used different lengths. A launch counts as
 hung once it records nothing for 5 minutes plus one long idle.
 
@@ -277,7 +281,7 @@ one only when the growth is deliberate, and say so in the change.
   ([`import.rs`](../../src-tauri/src/commands/collections/import.rs)).
   `large_postman_collection` in [`fixtures.rs`](../../src-tauri/src/fixtures.rs)
   builds the same collection as the harness's `largeCollection` fixture.
-- The size of the JSON the webview parses for a 1 MB JSON response
+- What crosses IPC to the webview for a 1 MB JSON response
   ([`sender.rs`](../../src-tauri/src/commands/requests/sender.rs)).
 
 The heap is counted per thread by the counting allocator

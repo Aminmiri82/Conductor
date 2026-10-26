@@ -7,7 +7,9 @@ mod response_files;
 mod sender;
 mod store;
 
-pub use response_files::{save_response_body, save_text_file, BinaryBodies};
+pub use response_files::{
+    discard_responses, get_response_body, save_response_body, ResponseBodies,
+};
 pub use sender::{resolve_request, send_request};
 #[cfg(test)]
 pub(crate) use store::add_request;

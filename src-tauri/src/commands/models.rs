@@ -398,9 +398,14 @@ pub struct MoveNodeInput {
 
 #[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct SaveTextFileInput {
-    pub path: String,
-    pub contents: String,
+pub struct GetResponseBodyInput {
+    pub history_id: String,
+}
+
+#[derive(Debug, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscardResponsesInput {
+    pub request_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, specta::Type)]
@@ -424,8 +429,7 @@ pub struct SendRequestResult {
     pub status_code: u16,
     pub duration_ms: u128,
     pub headers: Vec<ResponseHeader>,
-    /// Pretty-printed for JSON, as received for text, empty for binary.
-    pub body: String,
+    /// The body stays in Rust; read it with `get_response_body`.
     pub body_bytes: usize,
     pub body_content_type: Option<String>,
     pub body_format: ResponseBodyFormat,
@@ -435,7 +439,7 @@ pub struct SendRequestResult {
     pub variable_warnings: Vec<String>,
 }
 
-/// Binary bodies stay as raw bytes in Rust; see `save_response_body`.
+/// Binary bodies are only ever saved; see `save_response_body`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
 #[serde(rename_all = "lowercase")]
 pub enum ResponseBodyFormat {

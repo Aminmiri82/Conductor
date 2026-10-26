@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { FileUp, X } from "lucide-react";
 import {
@@ -28,6 +29,13 @@ import type {
 } from "@/features/types";
 import { KeyValueTable } from "@/features/requests/KeyValueTable";
 import { pickOption } from "@/lib/options";
+
+// CodeMirror stays out of the main chunk.
+const RawBodyEditor = lazy(() =>
+  import("@/features/requests/RawBodyEditor").then((module) => ({
+    default: module.RawBodyEditor,
+  })),
+);
 
 const bodyModes = [
   ["none", "No body"],
@@ -90,53 +98,53 @@ export function BodyEditor({
           </Select>
         ) : null}
       </div>
-      <ScrollArea className="min-h-0 flex-1">
-        {body.mode === "raw" ? (
-          <Textarea
-            data-body-editor
-            className="min-h-[420px] resize-none rounded-none border-0 bg-transparent p-3 font-mono text-xs leading-5 shadow-none focus-visible:ring-0"
-            value={body.raw}
-            spellCheck={false}
-            onChange={(event) => onChange({ ...body, raw: event.target.value })}
+      {body.mode === "raw" ? (
+        <Suspense fallback={<div className="min-h-0 flex-1" />}>
+          <RawBodyEditor
+            initial={body.raw ?? ""}
+            onChange={(raw) => onChange({ ...body, raw })}
           />
-        ) : null}
-        {body.mode === "formdata" ? (
-          <div className="p-3">
-            <FormDataEditor
-              rows={body.formData ?? []}
-              onChange={(formData) => onChange({ ...body, formData })}
+        </Suspense>
+      ) : (
+        <ScrollArea className="min-h-0 flex-1">
+          {body.mode === "formdata" ? (
+            <div className="p-3">
+              <FormDataEditor
+                rows={body.formData ?? []}
+                onChange={(formData) => onChange({ ...body, formData })}
+              />
+            </div>
+          ) : null}
+          {body.mode === "urlencoded" ? (
+            <div className="p-3">
+              <KeyValueTable
+                rows={body.urlencoded ?? []}
+                onChange={(urlencoded) => onChange({ ...body, urlencoded })}
+                placeholder="Field"
+              />
+            </div>
+          ) : null}
+          {body.mode === "graphql" ? (
+            <GraphqlEditor
+              query={body.graphql?.query ?? ""}
+              variables={body.graphql?.variables ?? ""}
+              onChange={(graphql) => onChange({ ...body, graphql })}
             />
-          </div>
-        ) : null}
-        {body.mode === "urlencoded" ? (
-          <div className="p-3">
-            <KeyValueTable
-              rows={body.urlencoded ?? []}
-              onChange={(urlencoded) => onChange({ ...body, urlencoded })}
-              placeholder="Field"
+          ) : null}
+          {body.mode === "file" ? (
+            <BinaryFileEditor
+              path={body.file?.path ?? null}
+              contentType={body.file?.contentType ?? ""}
+              onChange={(file) => onChange({ ...body, file })}
             />
-          </div>
-        ) : null}
-        {body.mode === "graphql" ? (
-          <GraphqlEditor
-            query={body.graphql?.query ?? ""}
-            variables={body.graphql?.variables ?? ""}
-            onChange={(graphql) => onChange({ ...body, graphql })}
-          />
-        ) : null}
-        {body.mode === "file" ? (
-          <BinaryFileEditor
-            path={body.file?.path ?? null}
-            contentType={body.file?.contentType ?? ""}
-            onChange={(file) => onChange({ ...body, file })}
-          />
-        ) : null}
-        {body.mode === "none" ? (
-          <div className="p-8 text-center text-xs text-muted-foreground">
-            This request does not send a body.
-          </div>
-        ) : null}
-      </ScrollArea>
+          ) : null}
+          {body.mode === "none" ? (
+            <div className="p-8 text-center text-xs text-muted-foreground">
+              This request does not send a body.
+            </div>
+          ) : null}
+        </ScrollArea>
+      )}
     </div>
   );
 }
