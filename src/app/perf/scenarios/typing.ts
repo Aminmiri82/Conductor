@@ -30,14 +30,14 @@ export default defineScenario({
 
     await ctx.step("open-body", () => openBody(ctx, small));
     await ctx.step("type-body", async () =>
-      ctx.type(await ctx.find("textarea[data-body-editor]"), TEXT),
+      ctx.type(await ctx.find("[data-body-editor]"), TEXT),
     );
 
     await ctx.step("open-large-body", () =>
       openBody(ctx, ctx.requestId(largeBody)),
     );
     await ctx.step("type-large-body", async () =>
-      ctx.type(await ctx.find("textarea[data-body-editor]"), TEXT),
+      ctx.type(await ctx.find("[data-body-editor]"), TEXT),
     );
   },
 });

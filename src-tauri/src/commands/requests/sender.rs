@@ -117,16 +117,16 @@ pub(crate) async fn send(
     let raw_body = response.bytes().await?;
     let body_bytes = raw_body.len();
     let history_id = Uuid::new_v4().to_string();
-    let (body, body_format, script_writes) =
+    let (body_format, script_writes) =
         if response_files::is_binary_body(&raw_body, content_type.as_deref()) {
             state
-                .binary_bodies
-                .insert(&input.request.id, &history_id, raw_body);
+                .response_bodies
+                .insert(&input.request.id, &history_id, &raw_body)?;
             let script_writes = postman_scripts::collect_postman_script_variables(
                 input.request.test_script.as_ref(),
                 None,
             );
-            (String::new(), ResponseBodyFormat::Binary, script_writes)
+            (ResponseBodyFormat::Binary, script_writes)
         } else {
             let body_text = response_text(raw_body);
             // Scripts read the raw text, before it is replaced by the pretty copy.
@@ -135,7 +135,10 @@ pub(crate) async fn send(
                 Some(&body_text),
             );
             let (body, body_format) = format_response_body(body_text);
-            (body, body_format, script_writes)
+            state
+                .response_bodies
+                .insert(&input.request.id, &history_id, body.as_bytes())?;
+            (body_format, script_writes)
         };
     let download_file_name = response_files::download_file_name(
         content_disposition,
@@ -186,7 +189,6 @@ pub(crate) async fn send(
         status_code: status.as_u16(),
         duration_ms,
         headers,
-        body,
         body_bytes,
         body_content_type: content_type,
         body_format,
@@ -304,12 +306,12 @@ mod tests {
     }
 
     // A perf budget (see "Budgets In Tests" in
-    // docs/01-architecture/01-performance.md): the JSON the webview parses for
-    // a 1 MB minified JSON response, about 5% over the 1,848,959 bytes
-    // measured. The body crosses pretty-printed and escaped inside a string,
-    // so it is about 1.85 times the response; raise this only when the
-    // growth is deliberate.
-    const LARGE_JSON_RESPONSE_IPC_BYTES_BUDGET: usize = 1_940_000;
+    // docs/01-architecture/01-performance.md): what crosses IPC to the
+    // webview for a 1 MB minified JSON response, the send's result and then
+    // the body read for it, about 5% over the 1,566,136 bytes measured. The
+    // body crosses pretty-printed as raw UTF-8, so it is about 1.55 times the
+    // response; raise this only when the growth is deliberate.
+    const LARGE_JSON_RESPONSE_IPC_BYTES_BUDGET: usize = 1_645_000;
 
     #[test]
     fn a_large_json_response_reaches_the_webview_within_its_payload_budget() {
@@ -355,10 +357,16 @@ mod tests {
         );
 
         assert_eq!(result.body_format, ResponseBodyFormat::Json);
-        let bytes = serde_json::to_vec(&result).unwrap().len();
+        // The result, then the body the viewer reads for it.
+        let body = app
+            .state
+            .response_bodies
+            .read_text(&result.history_id)
+            .unwrap();
+        let bytes = serde_json::to_vec(&result).unwrap().len() + body.0.len();
         assert!(
             bytes <= LARGE_JSON_RESPONSE_IPC_BYTES_BUDGET,
-            "a {} byte JSON response is {bytes} bytes of JSON for the webview, over the budget of {LARGE_JSON_RESPONSE_IPC_BYTES_BUDGET}",
+            "a {} byte JSON response is {bytes} bytes for the webview, over the budget of {LARGE_JSON_RESPONSE_IPC_BYTES_BUDGET}",
             result.body_bytes,
         );
     }
@@ -460,7 +468,8 @@ mod tests {
         );
 
         assert_eq!(result.body_format, ResponseBodyFormat::Text);
-        assert_eq!(result.body, raw);
+        let body = app.state.response_bodies.read_text(&result.history_id);
+        assert_eq!(body.unwrap().0, raw.as_bytes());
     }
 
     #[test]

@@ -20,8 +20,8 @@ use commands::collections::{
     rename_folder,
 };
 use commands::requests::{
-    create_request, duplicate_request, get_request, resolve_request, save_request,
-    save_response_body, save_text_file, send_request, BinaryBodies,
+    create_request, discard_responses, duplicate_request, get_request, get_response_body,
+    resolve_request, save_request, save_response_body, send_request, ResponseBodies,
 };
 use commands::variables::{
     apply_variable_changes, create_environment, delete_environment, duplicate_environment,
@@ -42,7 +42,7 @@ static ALLOCATOR: alloc_counter::CountingAllocator = alloc_counter::CountingAllo
 pub struct AppState {
     database: Database,
     http_client: reqwest::Client,
-    binary_bodies: BinaryBodies,
+    response_bodies: ResponseBodies,
 }
 
 /// What the user picked in the app menu, sent to the webview as the typed
@@ -124,7 +124,8 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             resolve_request,
             move_node,
             save_request,
-            save_text_file,
+            get_response_body,
+            discard_responses,
             save_response_body,
             send_request,
         ])
@@ -176,13 +177,14 @@ pub fn run() {
                 Some(dir) => std::path::PathBuf::from(dir),
                 None => default_data_dir(app.path().app_data_dir()?, cfg!(debug_assertions)),
             };
+            let response_bodies = ResponseBodies::open(app_data_dir.join("responses"))?;
             let database = Database::open(app_data_dir)?;
             let http_client = build_http_client()?;
 
             app.manage(AppState {
                 database,
                 http_client,
-                binary_bodies: BinaryBodies::default(),
+                response_bodies,
             });
             app.set_menu(build_app_menu(app.handle())?)?;
             #[cfg(all(feature = "perf-harness", target_os = "macos"))]

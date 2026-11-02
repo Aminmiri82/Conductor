@@ -18,7 +18,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::OnceLock;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use serde_json::Value;
@@ -188,6 +188,13 @@ struct CheckpointEvent {
     metrics: BTreeMap<String, f64>,
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct IdleEvent {
+    label: String,
+    idle_ms: f64,
+}
+
 fn since_start_ms() -> f64 {
     let started = STARTED.get().copied().unwrap_or_else(Instant::now);
     started.elapsed().as_secs_f64() * 1000.0
@@ -235,6 +242,38 @@ pub fn listen(app: &AppHandle) {
         );
     });
 
+    // `ctx.idle()`. Rust waits, not the webview: WebKit throttles a hidden
+    // page's timers more the longer it stays hidden, so a JS timer of
+    // minutes can fire far too late, and the run hangs.
+    let handle = app.clone();
+    let idle_out = out.clone();
+    app.listen_any("perf:idle", move |event| {
+        let idle: IdleEvent = match serde_json::from_str(event.payload()) {
+            Ok(idle) => idle,
+            Err(error) => {
+                append(
+                    &idle_out,
+                    &serde_json::json!({ "error": format!("bad idle: {error}") }),
+                );
+                let _ = handle.emit("perf:recorded", ());
+                return;
+            }
+        };
+        let handle = handle.clone();
+        let idle_out = idle_out.clone();
+        std::thread::spawn(move || {
+            let started = Instant::now();
+            std::thread::sleep(Duration::from_secs_f64(idle.idle_ms / 1000.0));
+            let event = CheckpointEvent {
+                label: idle.label,
+                step_ms: started.elapsed().as_secs_f64() * 1000.0,
+                metrics: BTreeMap::new(),
+            };
+            append(&idle_out, &checkpoint(event));
+            let _ = handle.emit("perf:recorded", ());
+        });
+    });
+
     let handle = app.clone();
     let checkpoint_out = out.clone();
     app.listen_any("perf:checkpoint", move |event| {
@@ -262,14 +301,19 @@ pub fn listen(app: &AppHandle) {
         }
     });
 
-    // `show` does not focus; the user coming back does.
+    // `show` does not focus; the user coming back does. macOS may refuse the
+    // focus to an app the user did not click, which leaves the window behind
+    // the frontmost app's, covered, so WebKit keeps the page hidden; on top,
+    // it is visible without focus.
     let handle = app.clone();
     let foreground_out = out.clone();
     app.listen_any("perf:foreground", move |_| {
         let shown = handle
             .show()
             .and_then(|()| match handle.get_webview_window("main") {
-                Some(window) => window.set_focus(),
+                Some(window) => window
+                    .set_always_on_top(true)
+                    .and_then(|()| window.set_focus()),
                 None => Ok(()),
             });
         if let Err(error) = shown {

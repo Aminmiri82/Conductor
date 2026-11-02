@@ -123,7 +123,7 @@
           {
             "group": ["@codemirror/*", "@lezer/*"],
             "allowTypeImports": true,
-            "message": "The editor stays out of the main chunk. Import it only in ResponseViewer.tsx, which loads lazily."
+            "message": "The editor stays out of the main chunk. Import it only in ResponseViewer.tsx and RawBodyEditor.tsx, which load lazily."
           }
         ]
       }
@@ -156,7 +156,10 @@
       }
     },
     {
-      "files": ["src/features/requests/ResponseViewer.tsx"],
+      "files": [
+        "src/features/requests/ResponseViewer.tsx",
+        "src/features/requests/RawBodyEditor.tsx"
+      ],
       "rules": {
         "no-restricted-imports": [
           "error",
@@ -187,7 +190,7 @@
               {
                 "group": ["@codemirror/*", "@lezer/*"],
                 "allowTypeImports": true,
-                "message": "The editor stays out of the main chunk. Import it only in ResponseViewer.tsx, which loads lazily."
+                "message": "The editor stays out of the main chunk. Import it only in ResponseViewer.tsx and RawBodyEditor.tsx, which load lazily."
               }
             ]
           }

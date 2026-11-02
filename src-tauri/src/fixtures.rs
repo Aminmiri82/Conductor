@@ -12,7 +12,7 @@ use uuid::Uuid;
 use crate::commands::{
     collections::add_folder,
     models::{CreateFolderInput, CreateRequestInput, CreateRequestResult, VariableTarget},
-    requests::{add_request, BinaryBodies},
+    requests::{add_request, ResponseBodies},
 };
 use crate::storage::{upsert_variable, Database, NewVariable};
 use crate::AppState;
@@ -149,7 +149,7 @@ impl TestApp {
         let state = AppState {
             database: Database::open(&directory).unwrap(),
             http_client: crate::build_http_client().unwrap(),
-            binary_bodies: BinaryBodies::default(),
+            response_bodies: ResponseBodies::open(directory.join("responses")).unwrap(),
         };
         Self { state, directory }
     }

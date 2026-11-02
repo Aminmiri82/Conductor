@@ -1,51 +1,127 @@
-use std::collections::VecDeque;
+use std::collections::HashMap;
 use std::fs;
+use std::io;
+use std::path::PathBuf;
 use std::sync::Mutex;
 
-use bytes::Bytes;
-use tauri::State;
+use tauri::{
+    ipc::{InvokeResponseBody, IpcResponse},
+    State,
+};
 
 use crate::commands::{
     error::CommandError,
-    models::{ResponseBodyFormat, SaveResponseBodyInput, SaveTextFileInput},
+    models::{
+        DiscardResponsesInput, GetResponseBodyInput, ResponseBodyFormat, SaveResponseBodyInput,
+    },
 };
 use crate::AppState;
 
-/// Binary bodies are kept only so they can be downloaded. Most recent first,
-/// one per request, at most this many, so a session of file downloads cannot
-/// grow memory without bound.
-const MAX_BINARY_BODIES: usize = 8;
+const MISSING_BODY: &str =
+    "This response is no longer available. Send the request again to see it.";
 
-/// Raw bytes of recent binary responses. They never cross IPC; the frontend
-/// asks Rust to write them to disk by history id.
-#[derive(Default)]
-pub struct BinaryBodies(Mutex<VecDeque<BinaryBody>>);
-
-struct BinaryBody {
-    request_id: String,
-    history_id: String,
-    bytes: Bytes,
+/// The body of each request's latest response, one file per response, so
+/// neither the webview nor Rust holds bodies the user is not looking at. The
+/// webview reads the one it shows with `get_response_body` and discards a
+/// request's body when its tab closes. The directory is emptied at startup,
+/// so a crash leaves nothing behind for longer than one session.
+pub struct ResponseBodies {
+    dir: PathBuf,
+    /// Request id to the history id of its latest response, which names the
+    /// file. Only ids in here are ever turned into paths.
+    latest: Mutex<HashMap<String, String>>,
 }
 
-impl BinaryBodies {
-    pub fn insert(&self, request_id: &str, history_id: &str, bytes: Bytes) {
-        let mut bodies = self.0.lock().unwrap_or_else(|error| error.into_inner());
-        bodies.retain(|body| body.request_id != request_id);
-        bodies.push_front(BinaryBody {
-            request_id: request_id.to_string(),
-            history_id: history_id.to_string(),
-            bytes,
-        });
-        bodies.truncate(MAX_BINARY_BODIES);
+impl ResponseBodies {
+    pub fn open(dir: PathBuf) -> io::Result<Self> {
+        // Leftovers are only a cache, so failing to clear them (on Windows, a
+        // file an antivirus scan holds open) must not stop the app starting.
+        // A file that survives is never read: names are fresh history ids.
+        match fs::remove_dir_all(&dir) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => {
+                eprintln!("could not clear old response bodies in {dir:?}: {error}");
+            }
+            _ => {}
+        }
+        fs::create_dir_all(&dir)?;
+        Ok(Self {
+            dir,
+            latest: Mutex::default(),
+        })
     }
 
-    fn get(&self, history_id: &str) -> Option<Bytes> {
-        let bodies = self.0.lock().unwrap_or_else(|error| error.into_inner());
-        bodies
-            .iter()
-            .find(|body| body.history_id == history_id)
-            .map(|body| body.bytes.clone())
+    /// Replaces the request's previous body.
+    pub fn insert(&self, request_id: &str, history_id: &str, body: &[u8]) -> io::Result<()> {
+        fs::write(self.dir.join(history_id), body)?;
+        let previous = self
+            .lock()
+            .insert(request_id.to_string(), history_id.to_string());
+        if let Some(previous) = previous {
+            let _ = fs::remove_file(self.dir.join(previous));
+        }
+        Ok(())
     }
+
+    pub fn discard(&self, request_ids: &[String]) {
+        let mut latest = self.lock();
+        for request_id in request_ids {
+            if let Some(history_id) = latest.remove(request_id) {
+                let _ = fs::remove_file(self.dir.join(history_id));
+            }
+        }
+    }
+
+    pub(super) fn read_text(&self, history_id: &str) -> Result<RawText, CommandError> {
+        Ok(RawText(fs::read(self.path(history_id)?)?))
+    }
+
+    fn path(&self, history_id: &str) -> Result<PathBuf, CommandError> {
+        self.lock()
+            .values()
+            .any(|latest| latest == history_id)
+            .then(|| self.dir.join(history_id))
+            .ok_or_else(|| MISSING_BODY.into())
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, String>> {
+        self.latest
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+    }
+}
+
+/// UTF-8 text that crosses IPC as raw bytes and reaches the webview as an
+/// `ArrayBuffer`. As a JSON string, a large body would also exist escaped in
+/// Rust and be parsed again in the webview.
+pub struct RawText(pub(super) Vec<u8>);
+
+impl IpcResponse for RawText {
+    fn body(self) -> tauri::Result<InvokeResponseBody> {
+        Ok(InvokeResponseBody::Raw(self.0))
+    }
+}
+
+impl specta::Type for RawText {
+    fn definition(_: &mut specta::Types) -> specta::datatype::DataType {
+        specta_typescript::define("ArrayBuffer").into()
+    }
+}
+
+/// The text the response viewer shows: pretty-printed for JSON, as received
+/// for text. Binary bodies are only ever saved with `save_response_body`.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn get_response_body(
+    input: GetResponseBodyInput,
+    state: State<'_, AppState>,
+) -> Result<RawText, CommandError> {
+    state.response_bodies.read_text(&input.history_id)
+}
+
+#[tauri::command(async)]
+#[specta::specta]
+pub fn discard_responses(input: DiscardResponsesInput, state: State<'_, AppState>) {
+    state.response_bodies.discard(&input.request_ids);
 }
 
 #[tauri::command(async)]
@@ -54,17 +130,8 @@ pub fn save_response_body(
     input: SaveResponseBodyInput,
     state: State<'_, AppState>,
 ) -> Result<(), CommandError> {
-    let bytes = state
-        .binary_bodies
-        .get(&input.history_id)
-        .ok_or("This response is no longer in memory. Send the request again to download it.")?;
-    Ok(fs::write(input.path, bytes)?)
-}
-
-#[tauri::command(async)]
-#[specta::specta]
-pub fn save_text_file(input: SaveTextFileInput) -> Result<(), CommandError> {
-    Ok(fs::write(input.path, input.contents)?)
+    fs::copy(state.response_bodies.path(&input.history_id)?, input.path)?;
+    Ok(())
 }
 
 /// A body is binary when it is not UTF-8 and the server did not call it text,
@@ -241,30 +308,65 @@ mod tests {
         );
     }
 
-    #[test]
-    fn only_the_latest_binary_body_per_request_is_kept() {
-        let bodies = BinaryBodies::default();
-        bodies.insert("request", "first", Bytes::from_static(b"one"));
-        bodies.insert("request", "second", Bytes::from_static(b"two"));
-
-        assert!(bodies.get("first").is_none());
-        assert_eq!(bodies.get("second").as_deref(), Some(&b"two"[..]));
+    fn bodies() -> (ResponseBodies, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("conductor-bodies-{}", uuid::Uuid::new_v4()));
+        (ResponseBodies::open(dir.clone()).unwrap(), dir)
     }
 
     #[test]
-    fn binary_bodies_are_capped() {
-        let bodies = BinaryBodies::default();
-        for index in 0..=MAX_BINARY_BODIES {
-            bodies.insert(
-                &format!("request-{index}"),
-                &format!("history-{index}"),
-                Bytes::new(),
-            );
-        }
+    fn only_the_latest_body_per_request_is_kept() {
+        let (bodies, dir) = bodies();
+        bodies.insert("request", "first", b"one").unwrap();
+        bodies.insert("request", "second", b"two").unwrap();
 
-        assert!(bodies.get("history-0").is_none());
-        assert!(bodies
-            .get(&format!("history-{MAX_BINARY_BODIES}"))
-            .is_some());
+        assert!(bodies.path("first").is_err());
+        assert!(!dir.join("first").exists());
+        assert_eq!(fs::read(bodies.path("second").unwrap()).unwrap(), b"two");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_discarded_body_is_deleted() {
+        let (bodies, dir) = bodies();
+        bodies.insert("request", "history", b"body").unwrap();
+
+        bodies.discard(&["request".to_string()]);
+
+        assert!(bodies.path("history").is_err());
+        assert!(!dir.join("history").exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn opening_empties_what_a_previous_session_left() {
+        let (bodies, dir) = bodies();
+        bodies.insert("request", "history", b"body").unwrap();
+        drop(bodies);
+
+        let _reopened = ResponseBodies::open(dir.clone()).unwrap();
+
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    // Stands in for a file Windows will not let go of: a read-only folder
+    // makes clearing the old bodies fail the same way.
+    #[cfg(unix)]
+    #[test]
+    fn opening_still_works_when_old_bodies_cannot_be_cleared() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("conductor-bodies-{}", uuid::Uuid::new_v4()));
+        let locked = dir.join("locked");
+        fs::create_dir_all(&locked).unwrap();
+        fs::write(locked.join("old"), b"old").unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
+
+        let opened = ResponseBodies::open(dir.clone());
+
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::remove_dir_all(&dir).unwrap();
+        let bodies = opened.expect("opening should not fail over leftovers");
+        drop(bodies);
     }
 }

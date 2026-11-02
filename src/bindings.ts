@@ -70,7 +70,12 @@ export const commands = {
 	resolveRequest: (request: RequestDetail, environmentId: string | null) => __TAURI_INVOKE<ResolvedRequestPreview>("resolve_request", { request, environmentId }),
 	moveNode: (input: MoveNodeInput) => __TAURI_INVOKE<null>("move_node", { input }),
 	saveRequest: (request: RequestDetail) => __TAURI_INVOKE<null>("save_request", { request }),
-	saveTextFile: (input: SaveTextFileInput) => __TAURI_INVOKE<null>("save_text_file", { input }),
+	/**
+	 *  The text the response viewer shows: pretty-printed for JSON, as received
+	 *  for text. Binary bodies are only ever saved with `save_response_body`.
+	 */
+	getResponseBody: (input: GetResponseBodyInput) => __TAURI_INVOKE<ArrayBuffer>("get_response_body", { input }),
+	discardResponses: (input: DiscardResponsesInput) => __TAURI_INVOKE<void>("discard_responses", { input }),
 	saveResponseBody: (input: SaveResponseBodyInput) => __TAURI_INVOKE<null>("save_response_body", { input }),
 	sendRequest: (input: SendRequestInput) => __TAURI_INVOKE<SendRequestResult>("send_request", { input }),
 };
@@ -210,6 +215,10 @@ export type CreateRequestResult = {
 	nodeId: string,
 };
 
+export type DiscardResponsesInput = {
+	requestIds: string[],
+};
+
 export type DuplicateEnvironmentInput = {
 	environmentId: string,
 };
@@ -248,6 +257,10 @@ export type FolderSize = {
 
 /**  JSON blob whose shape is owned by the frontend; Rust only stores it. */
 export type FrontendJson = unknown;
+
+export type GetResponseBodyInput = {
+	historyId: string,
+};
 
 export type GraphqlBody = {
 	query?: string,
@@ -326,7 +339,7 @@ export type ResolvedRequestPreview = {
 	variableValues: { [key in string]: string | null },
 };
 
-/**  Binary bodies stay as raw bytes in Rust; see `save_response_body`. */
+/**  Binary bodies are only ever saved; see `save_response_body`. */
 export type ResponseBodyFormat = "json" | "text" | "binary";
 
 export type ResponseHeader = {
@@ -339,11 +352,6 @@ export type SaveResponseBodyInput = {
 	path: string,
 };
 
-export type SaveTextFileInput = {
-	path: string,
-	contents: string,
-};
-
 export type SendRequestInput = {
 	request: RequestDetail,
 	environmentId?: string | null,
@@ -354,8 +362,7 @@ export type SendRequestResult = {
 	statusCode: number,
 	durationMs: number,
 	headers: ResponseHeader[],
-	/**  Pretty-printed for JSON, as received for text, empty for binary. */
-	body: string,
+	/**  The body stays in Rust; read it with `get_response_body`. */
 	bodyBytes: number,
 	bodyContentType: string | null,
 	bodyFormat: ResponseBodyFormat,

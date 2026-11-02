@@ -24,6 +24,8 @@ import {
   setSearchQuery,
 } from "@codemirror/search";
 import { tags as t } from "@lezer/highlight";
+import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
+import { api } from "@/lib/tauri";
 
 const jsonHighlightStyle = HighlightStyle.define([
   { tag: t.string, color: "rgb(110 231 183)" },
@@ -267,24 +269,20 @@ const editorTheme = EditorView.theme(
 );
 
 export function ResponseViewer({
-  value,
+  historyId,
   sending,
 }: {
-  value: string;
+  historyId: string;
   sending: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
-  // The editor is read-only, so its document is always the last value applied
-  // here; comparing against this avoids rebuilding a large document as a string.
-  const appliedRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
     const view = new EditorView({
       parent: containerRef.current,
       state: EditorState.create({
-        doc: value,
         extensions: [
           EditorState.readOnly.of(true),
           EditorView.contentAttributes.of({ spellcheck: "false" }),
@@ -301,24 +299,33 @@ export function ResponseViewer({
       }),
     });
     viewRef.current = view;
-    appliedRef.current = value;
     return () => {
       view.destroy();
       viewRef.current = null;
     };
-    // Keep the editor mounted; the effect below applies subsequent text changes.
-    // oxlint-disable-next-line react/exhaustive-deps
   }, []);
 
+  // The body is read from Rust here rather than kept in a store, so only the
+  // response on screen is in the webview. The previous body stays shown
+  // until the next one arrives.
   useEffect(() => {
-    const view = viewRef.current;
-    if (!view) return;
-    if (appliedRef.current === value) return;
-    view.dispatch({
-      changes: { from: 0, to: view.state.doc.length, insert: value },
-    });
-    appliedRef.current = value;
-  }, [value]);
+    let current = true;
+    api.getResponseBody(historyId).then(
+      (body) => {
+        const view = viewRef.current;
+        if (!current || !view) return;
+        view.dispatch({
+          changes: { from: 0, to: view.state.doc.length, insert: body },
+        });
+      },
+      (error) => {
+        if (current) useWorkspaceStore.getState().setError(error);
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [historyId]);
 
   return (
     <div className="relative h-full min-h-0">

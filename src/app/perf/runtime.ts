@@ -151,14 +151,18 @@ function context(config: Config): ScenarioContext<FixtureName> {
   const measuring = config.phase === "measure";
   const labels = new Set<string>();
 
+  function claimLabel(label: string) {
+    if (labels.has(label) || label.includes("/"))
+      throw new Error(`step label "${label}" is repeated or has a "/"`);
+    labels.add(label);
+  }
+
   async function checkpoint(
     label: string,
     stepMs: number,
     metrics: StepMetrics,
   ) {
-    if (labels.has(label) || label.includes("/"))
-      throw new Error(`step label "${label}" is repeated or has a "/"`);
-    labels.add(label);
+    claimLabel(label);
     for (const name of Object.keys(metrics))
       if (RESERVED_METRICS.has(name) || name.includes("/"))
         throw new Error(`step "${label}" returned a reserved metric "${name}"`);
@@ -200,12 +204,14 @@ function context(config: Config): ScenarioContext<FixtureName> {
     },
 
     // No frame tracking here: its callbacks would be the CPU being measured.
-    // A hidden page's timers are throttled, so a background idle can run
-    // past its length; the checkpoint records how long it really took.
+    // Rust waits and records the checkpoint, because a hidden page's timers
+    // are throttled more the longer it stays hidden, and a long background
+    // idle timed here could fire far too late or seem to hang.
     idle: async (label, { long = false } = {}) => {
-      const started = performance.now();
-      await wait(long ? config.longIdleMs : config.idleMs);
-      if (measuring) await checkpoint(label, performance.now() - started, {});
+      const idleMs = long ? config.longIdleMs : config.idleMs;
+      if (!measuring) return wait(idleMs);
+      claimLabel(label);
+      await request("perf:idle", "perf:recorded", { label, idleMs });
     },
 
     background: async () => {
@@ -241,10 +247,32 @@ function context(config: Config): ScenarioContext<FixtureName> {
     // execCommand goes through WebKit's editing path and fires the same input
     // events a key press does, so React's onChange runs as it would for a
     // user. What it skips is the native key event before that.
+    // A contenteditable field, such as a CodeMirror editor, gets the text at
+    // the end of the last line it has rendered, which for a long document is
+    // not the end of the document.
     type: async (field, text) => {
       field.focus();
-      field.setSelectionRange(field.value.length, field.value.length);
-      const expected = field.value + text;
+      let typed: () => boolean;
+      if (
+        field instanceof HTMLInputElement ||
+        field instanceof HTMLTextAreaElement
+      ) {
+        field.setSelectionRange(field.value.length, field.value.length);
+        const expected = field.value + text;
+        typed = () => field.value === expected;
+      } else {
+        // The last text node, not the field's end: an editor that renders
+        // only some lines may keep a spacer after them for the rest.
+        const walker = document.createTreeWalker(field, NodeFilter.SHOW_TEXT);
+        let last: Node = field;
+        while (walker.nextNode()) last = walker.currentNode;
+        const range = document.createRange();
+        range.selectNodeContents(last);
+        range.collapse(false);
+        document.getSelection()?.removeAllRanges();
+        document.getSelection()?.addRange(range);
+        typed = () => field.textContent?.includes(text) ?? false;
+      }
       const latencies: number[] = [];
       for (const character of text) {
         const started = performance.now();
@@ -256,8 +284,7 @@ function context(config: Config): ScenarioContext<FixtureName> {
         await wait(Math.max(0, KEYSTROKE_INTERVAL_MS - latency));
       }
       // React resets a controlled field whose change did not reach the store.
-      if (field.value !== expected)
-        throw new Error("the typed text did not stay in the field");
+      if (!typed()) throw new Error("the typed text did not stay in the field");
       latencies.sort((a, b) => a - b);
       return {
         "keystroke-p50": percentile(latencies, 0.5),

@@ -56,14 +56,12 @@ export type ScenarioContext<Fixtures extends FixtureName> = {
   /** Waits for an element to render, for up to two seconds. */
   find: <E extends Element = HTMLElement>(selector: string) => Promise<E>;
   /**
-   * Types `text` at the end of a field, one character every 50 ms, and
+   * Types `text` at the end of a field (of what a contenteditable one has
+   * rendered), one character every 50 ms, and
    * returns `keystroke-p50`, `keystroke-p95`, and `keystroke-max`: the time
    * from each input event until the frame after it painted.
    */
-  type: (
-    field: HTMLInputElement | HTMLTextAreaElement,
-    text: string,
-  ) => Promise<StepMetrics>;
+  type: (field: HTMLElement, text: string) => Promise<StepMetrics>;
 };
 
 export type Scenario<Fixtures extends FixtureName> = {

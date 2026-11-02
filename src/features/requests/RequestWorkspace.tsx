@@ -23,6 +23,7 @@ import { useDraftStore, useDraftValue } from "@/features/workspace/draftStore";
 import { useResponseStore } from "@/features/workspace/responseStore";
 import { useWorkspaceUiStore } from "@/features/workspace/workspaceUiStore";
 import { api } from "@/lib/tauri";
+import { usePageHiddenFor } from "@/lib/usePageHiddenFor";
 import type {
   KeyValue,
   RequestBody,
@@ -252,6 +253,7 @@ function BodySection({ requestId }: { requestId: string }) {
 
   return (
     <BodyEditor
+      key={requestId}
       body={body ?? emptyBody()}
       onChange={(body) => updateRequest({ body })}
     />
@@ -274,11 +276,16 @@ function VariablesSection({ requestId }: { requestId: string }) {
   ) : null;
 }
 
+// How long the app stays in the background before the response viewer lets
+// go of its document. Coming back reads the body from Rust again.
+const RELEASE_RESPONSE_AFTER_MS = 60_000;
+
 function ResponsePane({ requestId }: { requestId: string }) {
   const response = useResponseStore((state) => state.responses.get(requestId));
   const sending = useWorkspaceStore((state) =>
     state.sendingRequestIds.has(requestId),
   );
+  const released = usePageHiddenFor(RELEASE_RESPONSE_AFTER_MS);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -322,11 +329,16 @@ function ResponsePane({ requestId }: { requestId: string }) {
         </Button>
       </div>
       <div className="min-h-0 flex-1">
-        {response?.bodyFormat === "binary" && !sending ? (
-          <BinaryResponse response={response} />
-        ) : response ? (
+        {response?.bodyFormat === "binary" ? (
+          // Never the text viewer: it would read the file's bytes as text.
+          sending ? (
+            <ResponsePlaceholder sending />
+          ) : (
+            <BinaryResponse response={response} />
+          )
+        ) : response && !released ? (
           <Suspense fallback={<ResponsePlaceholder sending={sending} />}>
-            <ResponseViewer sending={sending} value={response.body} />
+            <ResponseViewer sending={sending} historyId={response.historyId} />
           </Suspense>
         ) : (
           <ResponsePlaceholder sending={sending} />
@@ -411,17 +423,12 @@ function emptyBody() {
   } satisfies RequestBody;
 }
 
-// Saves only the response body.
-// Binary bodies never reach the webview, so Rust writes those bytes itself.
+// Saves only the response body, which Rust has.
 async function downloadBody(response: SendRequestResult) {
   const path = await save({ defaultPath: response.downloadFileName });
   if (!path) return;
   try {
-    if (response.bodyFormat === "binary") {
-      await api.saveResponseBody(response.historyId, path);
-    } else {
-      await api.saveTextFile(path, response.body);
-    }
+    await api.saveResponseBody(response.historyId, path);
   } catch (error) {
     useWorkspaceStore.getState().setError(error);
   }
