@@ -12,6 +12,13 @@ const editorTheme = EditorView.theme({
   ".cm-cursor": { borderLeftColor: "var(--app-accent)" },
 });
 
+// Mod-Enter sends the request (see app/hotkeys.ts). CodeMirror's default
+// binding would insert a blank line into the body first, and the send would
+// carry it.
+const editorKeymap = defaultKeymap.filter(
+  (binding) => binding.key !== "Mod-Enter",
+);
+
 // The raw body editor. A textarea lays out every line of its text on each
 // keystroke, which for a 1 MB body takes hundreds of milliseconds and
 // megabytes per key; CodeMirror only renders the lines on screen.
@@ -40,7 +47,7 @@ export function RawBodyEditor({
         doc: initial,
         extensions: [
           history(),
-          keymap.of([...defaultKeymap, ...historyKeymap]),
+          keymap.of([...editorKeymap, ...historyKeymap]),
           EditorView.lineWrapping,
           EditorView.contentAttributes.of({
             spellcheck: "false",

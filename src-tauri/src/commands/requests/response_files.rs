@@ -34,8 +34,13 @@ pub struct ResponseBodies {
 
 impl ResponseBodies {
     pub fn open(dir: PathBuf) -> io::Result<Self> {
+        // Leftovers are only a cache, so failing to clear them (on Windows, a
+        // file an antivirus scan holds open) must not stop the app starting.
+        // A file that survives is never read: names are fresh history ids.
         match fs::remove_dir_all(&dir) {
-            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+            Err(error) if error.kind() != io::ErrorKind::NotFound => {
+                eprintln!("could not clear old response bodies in {dir:?}: {error}");
+            }
             _ => {}
         }
         fs::create_dir_all(&dir)?;
@@ -342,5 +347,26 @@ mod tests {
 
         assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    // Stands in for a file Windows will not let go of: a read-only folder
+    // makes clearing the old bodies fail the same way.
+    #[cfg(unix)]
+    #[test]
+    fn opening_still_works_when_old_bodies_cannot_be_cleared() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("conductor-bodies-{}", uuid::Uuid::new_v4()));
+        let locked = dir.join("locked");
+        fs::create_dir_all(&locked).unwrap();
+        fs::write(locked.join("old"), b"old").unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
+
+        let opened = ResponseBodies::open(dir.clone());
+
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::remove_dir_all(&dir).unwrap();
+        let bodies = opened.expect("opening should not fail over leftovers");
+        drop(bodies);
     }
 }

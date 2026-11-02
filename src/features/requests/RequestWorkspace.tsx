@@ -329,8 +329,13 @@ function ResponsePane({ requestId }: { requestId: string }) {
         </Button>
       </div>
       <div className="min-h-0 flex-1">
-        {response?.bodyFormat === "binary" && !sending ? (
-          <BinaryResponse response={response} />
+        {response?.bodyFormat === "binary" ? (
+          // Never the text viewer: it would read the file's bytes as text.
+          sending ? (
+            <ResponsePlaceholder sending />
+          ) : (
+            <BinaryResponse response={response} />
+          )
         ) : response && !released ? (
           <Suspense fallback={<ResponsePlaceholder sending={sending} />}>
             <ResponseViewer sending={sending} historyId={response.historyId} />
