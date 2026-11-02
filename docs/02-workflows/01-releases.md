@@ -32,7 +32,10 @@ already passed it on its PR and on `main`. None of them writes `latest.json`:
 parallel jobs rewriting one file would drop a platform. A final `updater` job
 writes it once from the draft's assets and signatures with
 [`scripts/release/updater-json.ts`](../../scripts/release/updater-json.ts), and fails if any
-platform is missing. A draft without a platform's `latest.json` entry would
+platform is missing. It then deletes the separate `.sig` assets, since
+`latest.json` carries every signature, and users only see the installers. If
+that deletion fails partway, re-dispatch the Release workflow for the tag:
+re-running only the `updater` job would find some signatures already gone. A draft without a platform's `latest.json` entry would
 leave those users without updates, so a failed job means the draft is not
 ready to publish.
 
