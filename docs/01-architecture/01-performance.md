@@ -263,8 +263,10 @@ budget in the PR, with the numbers in its description, or add the
 `perf-regression-approved` label for a one-off.
 
 Each [release](../../.github/workflows/release.yml) also records its Mac
-binary and DMG sizes as `perf-size.json` on the draft release and compares them
-with the last published release. That comparison only reports.
+binary and DMG sizes in a `perf-size-<tag>` workflow artifact and compares them
+with the last published release's artifact. That comparison only reports.
+Artifacts expire after 90 days, so a longer gap between releases starts a new
+baseline.
 
 Run it locally with `pnpm perf:size`, which builds the frontend and prints the
 measurements.

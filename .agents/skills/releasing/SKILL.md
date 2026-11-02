@@ -19,9 +19,8 @@ on any failure; never force-push, skip checks, or edit a published release.
 4. That merge runs the `Release PR` workflow, which builds a **draft** on Mac,
    Windows, and Linux in parallel, then writes `latest.json` in the `updater`
    job. Wait for all of them to succeed and confirm the
-   draft has the `.dmg`, the `.app.tar.gz` and its `.sig`, the `-setup.exe` and
-   its `.sig`, the `.deb`, the `.AppImage` and its `.sig`, and a `latest.json`
-   with the new version and the `darwin-aarch64`, `windows-x86_64`, and
+   draft has the `.dmg`, the `.app.tar.gz`, the `-setup.exe`, the `.deb`, the
+   `.AppImage`, and a `latest.json` with the new version and the `darwin-aarch64`, `windows-x86_64`, and
    `linux-x86_64` platforms.
 5. Publish: `gh release edit app-vX.Y.Z --draft=false --latest`. The updater
    reads `releases/latest/download/latest.json`, so nothing is OTA-able until

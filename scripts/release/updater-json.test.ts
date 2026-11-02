@@ -16,7 +16,6 @@ const draftAssets = [
   asset("Conductor_1.2.3_amd64.AppImage.sig", 7),
   asset("Conductor_1.2.3_amd64.deb", 8),
   asset("Conductor_1.2.3_amd64.deb.sig", 9),
-  asset("perf-size.json", 10),
 ];
 
 const build = (assets: ReturnType<typeof asset>[]) =>

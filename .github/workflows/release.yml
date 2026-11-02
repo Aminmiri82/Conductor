@@ -15,6 +15,8 @@ on:
 
 permissions:
   contents: write
+  # The mac job finds the previous release's size artifact.
+  actions: read
 
 concurrency:
   group: release-${{ inputs.release-tag }}
@@ -105,24 +107,35 @@ jobs:
       - run: git diff --exit-code -- src-tauri/Cargo.lock
       # Records what this release ships and compares it with the last published
       # release, so the numbers are in front of Yara before the draft is
-      # published. Report only: PRs are where budgets block.
+      # published. Report only: PRs are where budgets block. The measurement is
+      # kept as a workflow artifact, not a release asset, so users don't see it.
+      # Artifacts expire after 90 days; a release further apart than that starts
+      # a new baseline.
       - name: Record release sizes
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ inputs.release-tag }}
         run: |
           release=src-tauri/target/aarch64-apple-darwin/release
           node scripts/perf/size.ts measure --binary "$release/conductor" \
             --dmg "$(ls "$release"/bundle/dmg/*.dmg | head -n 1)" --out perf-size.json
-          gh release upload "$RELEASE_TAG" perf-size.json --clobber
           previous=$(gh release list --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName')
-          if [ -n "$previous" ] && gh release download "$previous" --pattern perf-size.json --output previous-perf-size.json; then
-            node scripts/perf/size.ts compare previous-perf-size.json perf-size.json
+          run=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=perf-size-$previous" \
+            --jq '[.artifacts[] | select(.expired | not)][0].workflow_run.id // empty')
+          if [ -n "$previous" ] && [ -n "$run" ] && gh run download "$run" -n "perf-size-$previous" -D previous; then
+            node scripts/perf/size.ts compare previous/perf-size.json perf-size.json
           else
-            echo "No perf-size.json on the previous release yet; this release starts the baseline."
+            echo "No size artifact for the previous release; this release starts the baseline."
             node scripts/perf/size.ts compare perf-size.json perf-size.json
           fi
+      # Separate from the step above so an over-budget compare still keeps it.
+      - name: Keep release sizes for the next release
+        if: always() && hashFiles('perf-size.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-size-${{ inputs.release-tag }}
+          path: perf-size.json
+          retention-days: 90
 
   windows:
     needs: draft
@@ -232,3 +245,16 @@ jobs:
           node scripts/release/updater-json.ts release.json sigs > latest.json
           jq '{version, platforms: (.platforms | keys)}' latest.json
           gh release upload "$RELEASE_TAG" latest.json --clobber
+      # tauri-action uploads each signature as its own asset. latest.json now
+      # carries them, and users only need the installers, so remove them. If this
+      # step fails partway, re-dispatch the Release workflow for the tag:
+      # re-running only this job would find some signatures already gone.
+      - name: Remove the separate signature files
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          jq -r '.assets[] | select(.name | endswith(".sig")) | "\(.id) \(.name)"' release.json |
+            while read -r id name; do
+              echo "Deleting $name"
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$id"
+            done
