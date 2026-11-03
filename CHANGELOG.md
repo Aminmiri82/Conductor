@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.15](https://github.com/Aminmiri82/Conductor/compare/app-v0.1.14...app-v0.1.15) (2026-11-02)
+
+
+### Fixes
+
+* **release:** hide size data and remove signature assets ([#39](https://github.com/Aminmiri82/Conductor/issues/39)) ([ec4ecd8](https://github.com/Aminmiri82/Conductor/commit/ec4ecd853472e59e0488bb7984169b7d1ba04817))
+
+
+### Performance
+
+* cut memory for many big tabs, in use and in the background ([#37](https://github.com/Aminmiri82/Conductor/issues/37)) ([cd8f4bf](https://github.com/Aminmiri82/Conductor/commit/cd8f4bf77f554fc4506160e435823c71cd444bcc))
+
 ## [0.1.14](https://github.com/Aminmiri82/Conductor/compare/app-v0.1.13...app-v0.1.14) (2026-10-25)
 
 
