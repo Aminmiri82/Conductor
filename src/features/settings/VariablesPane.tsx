@@ -114,6 +114,11 @@ export function VariablesPane({
   const [pickedCollectionId, setPickedCollectionId] =
     useState(activeCollectionId);
   const selectedCollectionId = pickedCollectionId ?? collections[0]?.id ?? "";
+  const selectedCollection = collections.find(
+    (collection) => collection.id === selectedCollectionId,
+  );
+  const linked = Boolean(selectedCollection?.repository);
+  const repositoryEnvironments = linked ? allEnvironments : undefined;
   const activeEnvironmentId = useWorkspaceUiStore((state) =>
     activeEnvironmentIdFor(state.workspaceUi, selectedCollectionId),
   );
@@ -216,6 +221,33 @@ export function VariablesPane({
     // persist only reads refs and stable setters.
     // oxlint-disable-next-line react/exhaustive-deps
   }, [target, autosaver]);
+
+  useEffect(() => {
+    if (!repositoryEnvironments || target?.scope !== "environment") return;
+    const current = session.current;
+    if (!current || current.target !== target) return;
+    let mounted = true;
+    async function reload() {
+      await autosaver.flush();
+      if (!mounted || !current) return;
+      const { upserts, deletes } = diffVariables(current.saved, current.rows);
+      if (upserts.length || deletes.length) return;
+      const before = current.rows;
+      const rows = await api.listVariables(current.target);
+      if (!mounted || session.current !== current || current.rows !== before)
+        return;
+      current.rows = rows;
+      current.saved = rows;
+      setVariables(rows);
+      setRevealed({});
+    }
+    void reload().catch((error) => {
+      if (mounted) useWorkspaceStore.getState().setError(error);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, [autosaver, repositoryEnvironments, target]);
 
   function edit(rows: VariableEntry[], when: "typing" | "now") {
     setVariables(rows);
@@ -449,9 +481,12 @@ export function VariablesPane({
   // `selectedEnvironment`.
   async function deleteEnvironment(deletedId: string) {
     const name = environments.find((e) => e.id === deletedId)?.name;
-    const confirmed = await confirm(`Delete environment "${name}"?`, {
-      kind: "warning",
-    });
+    const confirmed = await confirm(
+      linked
+        ? `Remove environment "${name}" from the repository? Its local values are kept if it returns on another branch.`
+        : `Delete environment "${name}"?`,
+      { kind: "warning" },
+    );
     if (!confirmed) return;
     try {
       await api.deleteEnvironment(deletedId);
@@ -467,9 +502,7 @@ export function VariablesPane({
   }
 
   const duplicates = duplicateKeys(variables);
-  const selectedCollectionName = collections.find(
-    (collection) => collection.id === selectedCollectionId,
-  )?.name;
+  const selectedCollectionName = selectedCollection?.name;
 
   const newVariableButton = (
     <Button
@@ -519,7 +552,9 @@ export function VariablesPane({
                 )}
                 type={masked ? "password" : "text"}
                 value={variable.value}
-                placeholder="Value"
+                placeholder={
+                  linked && scope !== "global" ? "Local value" : "Value"
+                }
                 onChange={(event) =>
                   updateVariable(index, { value: event.target.value }, "typing")
                 }
@@ -649,6 +684,13 @@ export function VariablesPane({
           />
         </div>
       </div>
+      {scope !== "global" && linked ? (
+        <p className="mb-3 text-xs text-[var(--app-dim)]">
+          {scope === "environment"
+            ? "Environment names are shared. Values edited here stay on this device and override the defaults in .conductor."
+            : "Collection variable values stay on this device."}
+        </p>
+      ) : null}
       {scope === "global" ? (
         <>
           <div className="mb-3 -ml-2 flex min-h-8 items-center gap-2.5">

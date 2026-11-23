@@ -14,8 +14,12 @@ pub use response_files::{
 };
 pub use sender::{resolve_request, send_request};
 #[cfg(test)]
-pub(crate) use store::add_request;
-pub use store::{create_request, duplicate_request, get_request, save_request};
+pub(crate) use store::SaveRequestResult;
+#[cfg(test)]
+pub(crate) use store::{add_request, store_request};
+pub use store::{
+    create_request, duplicate_request, get_request, save_repository_request_as_new, save_request,
+};
 
 /// Stored JSON columns are read leniently: one that no longer parses reads as
 /// absent instead of making the request unopenable.

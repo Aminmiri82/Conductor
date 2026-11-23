@@ -1,12 +1,13 @@
 use std::collections::{HashMap, HashSet};
 
 use chrono::Utc;
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
 use tauri::State;
 use uuid::Uuid;
 
 use super::{
+    collections::repository,
     error::CommandError,
     models::{
         CreateEnvironmentInput, DuplicateEnvironmentInput, EnvironmentSummary,
@@ -77,19 +78,28 @@ impl VariableContext {
 pub fn list_environments(
     state: State<'_, AppState>,
 ) -> Result<Vec<EnvironmentSummary>, CommandError> {
-    Ok(state.database.with_read_connection(|connection| {
-        let mut statement =
-            connection.prepare("SELECT id, collection_id, name FROM environments ORDER BY name")?;
-        let rows = statement.query_map([], |row| {
-            Ok(EnvironmentSummary {
-                id: row.get(0)?,
-                collection_id: row.get(1)?,
-                name: row.get(2)?,
-            })
-        })?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(StorageError::from)
-    })?)
+    Ok(state.database.with_read_connection(read_environments)?)
+}
+
+pub(crate) fn read_environments(
+    connection: &Connection,
+) -> Result<Vec<EnvironmentSummary>, StorageError> {
+    let mut statement = connection.prepare(
+        "SELECT environments.id, environments.collection_id, environments.name
+         FROM environments
+         LEFT JOIN repository_environments ON repository_environments.environment_id = environments.id
+         WHERE repository_environments.active IS NOT 0
+         ORDER BY environments.name",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok(EnvironmentSummary {
+            id: row.get(0)?,
+            collection_id: row.get(1)?,
+            name: row.get(2)?,
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(StorageError::from)
 }
 
 #[tauri::command(async)]
@@ -99,23 +109,25 @@ pub fn create_environment(
     state: State<'_, AppState>,
 ) -> Result<String, CommandError> {
     let name = clean_environment_name(&input.name);
-    let environment_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
 
     Ok(state.database.with_connection(|connection| {
-        insert_environment(
-            connection,
-            &environment_id,
-            &input.collection_id,
-            &name,
-            &now,
-        )?;
+        let environment_id = repository::new_entity_id(connection, &input.collection_id)?;
+        repository::mutate(connection, &input.collection_id, |connection| {
+            insert_environment(
+                connection,
+                &environment_id,
+                &input.collection_id,
+                &name,
+                &now,
+            )
+        })?;
         Ok(environment_id)
     })?)
 }
 
 fn insert_environment(
-    connection: &rusqlite::Connection,
+    connection: &Connection,
     id: &str,
     collection_id: &str,
     name: &str,
@@ -125,6 +137,21 @@ fn insert_environment(
         "INSERT INTO environments (id, collection_id, name, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?)",
         params![id, collection_id, name, now, now],
+    )?;
+    track_repository_environment(connection, id)?;
+    Ok(())
+}
+
+fn track_repository_environment(
+    connection: &Connection,
+    environment_id: &str,
+) -> Result<(), StorageError> {
+    connection.execute(
+        "INSERT INTO repository_environments (environment_id, active)
+         SELECT environments.id, 1
+         FROM environments JOIN repository_links USING (collection_id)
+         WHERE environments.id = ?",
+        [environment_id],
     )?;
     Ok(())
 }
@@ -137,21 +164,25 @@ pub fn duplicate_environment(
     input: DuplicateEnvironmentInput,
     state: State<'_, AppState>,
 ) -> Result<String, CommandError> {
-    let environment_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
-    state.database.with_connection(|connection| {
-        copy_environment(connection, &input.environment_id, &environment_id, &now)
-    })?;
-    Ok(environment_id)
+    Ok(state.database.with_connection(|connection| {
+        let collection_id = environment_owner(connection, &input.environment_id)?
+            .ok_or_else(environment_not_found)?;
+        let environment_id = repository::new_entity_id(connection, &collection_id)?;
+        repository::mutate(connection, &collection_id, |connection| {
+            copy_environment(connection, &input.environment_id, &environment_id, &now)
+        })?;
+        Ok(environment_id)
+    })?)
 }
 
 fn copy_environment(
-    connection: &mut rusqlite::Connection,
+    connection: &mut Connection,
     source_id: &str,
     new_id: &str,
     now: &str,
 ) -> Result<(), StorageError> {
-    let tx = connection.transaction()?;
+    let tx = connection.savepoint()?;
     let copied = tx.execute(
         "INSERT INTO environments (id, collection_id, name, created_at, updated_at)
          SELECT ?, collection_id, name || ' copy', ?, ?
@@ -159,16 +190,25 @@ fn copy_environment(
         params![new_id, now, now, source_id],
     )?;
     if copied == 0 {
-        return Err(StorageError::InvalidInput(
-            "environment not found".to_string(),
-        ));
+        return Err(environment_not_found());
     }
+    track_repository_environment(&tx, new_id)?;
     tx.execute(
         "INSERT INTO variables
          (scope, environment_id, key, current_value, enabled, sensitive, created_at, updated_at)
          SELECT 'environment', ?, key, current_value, enabled, sensitive, ?, ?
          FROM variables WHERE scope = 'environment' AND environment_id = ?",
         params![new_id, now, now, source_id],
+    )?;
+    tx.execute(
+        "INSERT INTO repository_defaults (environment_id, key, value)
+         SELECT ?, key, value FROM repository_defaults WHERE environment_id = ?",
+        params![new_id, source_id],
+    )?;
+    tx.execute(
+        "INSERT INTO repository_default_hides (environment_id, key)
+         SELECT ?, key FROM repository_default_hides WHERE environment_id = ?",
+        params![new_id, source_id],
     )?;
     tx.commit()?;
     Ok(())
@@ -183,16 +223,15 @@ pub fn rename_environment(
     let name = clean_environment_name(&input.name);
     let now = Utc::now().to_rfc3339();
     Ok(state.database.with_connection(|connection| {
-        let changed = connection.execute(
-            "UPDATE environments SET name = ?, updated_at = ? WHERE id = ?",
-            params![name, now, input.environment_id],
-        )?;
-        if changed == 0 {
-            return Err(StorageError::InvalidInput(
-                "environment not found".to_string(),
-            ));
-        }
-        Ok(())
+        let collection_id = environment_owner(connection, &input.environment_id)?
+            .ok_or_else(environment_not_found)?;
+        repository::mutate(connection, &collection_id, |connection| {
+            connection.execute(
+                "UPDATE environments SET name = ?, updated_at = ? WHERE id = ?",
+                params![name, now, input.environment_id],
+            )?;
+            Ok(())
+        })
     })?)
 }
 
@@ -203,11 +242,22 @@ pub fn delete_environment(
     state: State<'_, AppState>,
 ) -> Result<(), CommandError> {
     Ok(state.database.with_connection(|connection| {
-        connection.execute(
-            "DELETE FROM environments WHERE id = ?",
-            params![environment_id],
-        )?;
-        Ok(())
+        let Some(collection_id) = environment_owner(connection, &environment_id)? else {
+            return Ok(());
+        };
+        repository::mutate(connection, &collection_id, |connection| {
+            let archived = connection.execute(
+                "UPDATE repository_environments SET active = 0 WHERE environment_id = ?",
+                params![environment_id],
+            )?;
+            if archived == 0 {
+                connection.execute(
+                    "DELETE FROM environments WHERE id = ?",
+                    params![environment_id],
+                )?;
+            }
+            Ok(())
+        })
     })?)
 }
 
@@ -220,23 +270,25 @@ pub fn import_postman_environment(
     state: State<'_, AppState>,
 ) -> Result<String, CommandError> {
     let imported = parse_imported_environment(&postman_json, file_name.as_deref())?;
-    let environment_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
 
-    state.database.with_connection(|connection| {
-        store_imported_environment(connection, &environment_id, &collection_id, &imported, &now)
-    })?;
-    Ok(environment_id)
+    Ok(state.database.with_connection(|connection| {
+        let environment_id = repository::new_entity_id(connection, &collection_id)?;
+        repository::mutate(connection, &collection_id, |connection| {
+            store_imported_environment(connection, &environment_id, &collection_id, &imported, &now)
+        })?;
+        Ok(environment_id)
+    })?)
 }
 
 fn store_imported_environment(
-    connection: &mut rusqlite::Connection,
+    connection: &mut Connection,
     environment_id: &str,
     collection_id: &str,
     imported: &ImportedEnvironment,
     now: &str,
 ) -> Result<(), StorageError> {
-    let tx = connection.transaction()?;
+    let tx = connection.savepoint()?;
     insert_environment(&tx, environment_id, collection_id, &imported.name, now)?;
     let target = VariableTarget::Environment {
         environment_id: environment_id.to_string(),
@@ -274,18 +326,21 @@ pub fn list_variables(
 }
 
 fn read_variables(
-    connection: &rusqlite::Connection,
+    connection: &Connection,
     target: &VariableTarget,
 ) -> Result<Vec<VariableEntry>, StorageError> {
     let (scope, collection_id, environment_id) = target.columns();
     let mut statement = connection.prepare_cached(
         "SELECT key, current_value, enabled, sensitive
          FROM variables
-         WHERE scope = ?
-           AND (
-               (scope = 'global' AND collection_id IS NULL AND environment_id IS NULL)
-               OR collection_id = ?
-               OR environment_id = ?
+         WHERE scope = ?1 AND collection_id IS ?2 AND environment_id IS ?3
+           AND NOT EXISTS (
+               SELECT 1 FROM repository_environments WHERE environment_id = ?3 AND active = 0
+           )
+         UNION ALL
+         SELECT key, value, 1, 0 FROM repository_default_values WHERE environment_id = ?3
+           AND NOT EXISTS (
+               SELECT 1 FROM repository_environments WHERE environment_id = ?3 AND active = 0
            )
          ORDER BY key",
     )?;
@@ -304,6 +359,7 @@ fn read_variables(
 /// The one way editors save variables: every change in one transaction, so a
 /// failure leaves nothing half-applied (for example a variable moved between
 /// scopes is never deleted from one and missing from the other).
+/// Edits in linked environments stay in SQLite, including hides for deleted defaults.
 #[tauri::command(async)]
 #[specta::specta]
 pub fn apply_variable_changes(
@@ -322,7 +378,7 @@ pub fn apply_variable_changes(
 /// exactly, so a stored key with stray spaces (from an import) can still be
 /// removed.
 fn apply_changes(
-    connection: &mut rusqlite::Connection,
+    connection: &mut Connection,
     changes: &[VariableChange],
     now: &str,
 ) -> Result<(), StorageError> {
@@ -333,8 +389,19 @@ fn apply_changes(
             "DELETE FROM variables
              WHERE scope = ? AND key = ? AND collection_id IS ? AND environment_id IS ?",
         )?;
+        if let Some(environment_id) = environment_id {
+            environment_owner(&tx, environment_id)?.ok_or_else(environment_not_found)?;
+        }
         for key in &change.deletes {
             delete.execute(params![scope, key, collection_id, environment_id])?;
+            if let Some(environment_id) = environment_id {
+                tx.prepare_cached(
+                    "INSERT OR IGNORE INTO repository_default_hides (environment_id, key)
+                     SELECT environment_id, key FROM repository_defaults
+                     WHERE environment_id = ? AND key = ?",
+                )?
+                .execute(params![environment_id, key])?;
+            }
         }
 
         let mut seen = HashSet::new();
@@ -359,6 +426,12 @@ fn apply_changes(
                 },
                 now,
             )?;
+            if let Some(environment_id) = environment_id {
+                tx.prepare_cached(
+                    "DELETE FROM repository_default_hides WHERE environment_id = ? AND key = ?",
+                )?
+                .execute(params![environment_id, key])?;
+            }
         }
     }
     tx.commit()?;
@@ -368,7 +441,7 @@ fn apply_changes(
 /// Every send and preview goes through here, so this is where an environment
 /// from another collection is refused rather than silently mixed in.
 pub(crate) fn load_variable_context(
-    connection: &rusqlite::Connection,
+    connection: &Connection,
     request: &RequestDetail,
     environment_id: Option<&str>,
 ) -> Result<VariableContext, StorageError> {
@@ -376,15 +449,21 @@ pub(crate) fn load_variable_context(
         ensure_environment_in_collection(connection, environment_id, &request.collection_id)?;
     }
     let mut values = HashMap::new();
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare_cached(
         "SELECT key, current_value, sensitive
-         FROM variables
-         WHERE enabled = 1
-           AND (
-               scope = 'global'
-               OR (scope = 'collection' AND collection_id = ?)
-               OR (scope = 'environment' AND environment_id = ?)
-           )
+         FROM (
+             SELECT key, current_value, sensitive, scope
+             FROM variables
+             WHERE enabled = 1
+               AND (
+                   scope = 'global'
+                   OR (scope = 'collection' AND collection_id = ?1)
+                   OR (scope = 'environment' AND collection_id IS NULL AND environment_id = ?2)
+               )
+             UNION ALL
+             SELECT key, value, 0, 'environment'
+             FROM repository_default_values WHERE environment_id = ?2
+         )
          ORDER BY CASE scope
              WHEN 'global' THEN 0
              WHEN 'collection' THEN 1
@@ -412,30 +491,42 @@ pub(crate) fn load_variable_context(
 }
 
 fn ensure_environment_in_collection(
-    connection: &rusqlite::Connection,
+    connection: &Connection,
     environment_id: &str,
     collection_id: &str,
 ) -> Result<(), StorageError> {
-    let owner = connection
-        .query_row(
-            "SELECT collection_id FROM environments WHERE id = ?",
-            params![environment_id],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()?;
-    match owner {
+    match environment_owner(connection, environment_id)? {
         Some(owner) if owner == collection_id => Ok(()),
         Some(_) => Err(StorageError::InvalidInput(
             "the environment belongs to a different collection".to_string(),
         )),
-        None => Err(StorageError::InvalidInput(
-            "environment not found".to_string(),
-        )),
+        None => Err(environment_not_found()),
     }
 }
 
+fn environment_owner(
+    connection: &Connection,
+    environment_id: &str,
+) -> Result<Option<String>, StorageError> {
+    Ok(connection
+        .prepare_cached(
+            "SELECT environments.collection_id FROM environments
+             LEFT JOIN repository_environments ON repository_environments.environment_id = environments.id
+             WHERE environments.id = ? AND repository_environments.active IS NOT 0",
+        )?
+        .query_row(
+            [environment_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?)
+}
+
+fn environment_not_found() -> StorageError {
+    StorageError::InvalidInput("environment not found".to_string())
+}
+
 pub(crate) fn save_script_variable(
-    connection: &rusqlite::Connection,
+    connection: &Connection,
     target: &VariableTarget,
     key: &str,
     value: &str,
@@ -914,6 +1005,97 @@ mod tests {
             matches!(result, Err(StorageError::InvalidInput(ref message)) if message.contains("different collection")),
             "{result:?}"
         );
+    }
+
+    #[test]
+    fn repository_defaults_are_overridden_and_hidden_locally() {
+        let mut connection = connection_with_targets();
+        connection
+            .execute_batch(
+                "INSERT INTO repository_environments (environment_id, active) VALUES ('env', 1);
+                 INSERT INTO repository_defaults (environment_id, key, value)
+                 VALUES ('env', 'host', 'shared'), ('env', 'region', 'default');",
+            )
+            .unwrap();
+        let request = RequestDetail {
+            collection_id: "col".to_string(),
+            ..RequestDetail::default()
+        };
+        let context = load_variable_context(&connection, &request, Some("env")).unwrap();
+        assert_eq!(context.get("host").as_deref(), Some("shared"));
+
+        let mut secret = entry("host", "private");
+        secret.sensitive = true;
+        apply_changes(
+            &mut connection,
+            &[VariableChange {
+                target: environment_target(),
+                upserts: vec![secret],
+                deletes: vec!["region".to_string()],
+            }],
+            "now",
+        )
+        .unwrap();
+
+        let context = load_variable_context(&connection, &request, Some("env")).unwrap();
+        assert_eq!(context.get("host").as_deref(), Some("private"));
+        assert!(context.is_sensitive("host"));
+        assert_eq!(context.get("region"), None);
+        assert_eq!(
+            listed(&connection, &environment_target()),
+            [pair("host", "private")]
+        );
+        let shared: String = connection
+            .query_row(
+                "SELECT value FROM repository_defaults WHERE environment_id = 'env' AND key = 'host'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(shared, "shared");
+    }
+
+    #[test]
+    fn a_branch_removing_an_environment_keeps_its_local_values_for_when_it_returns() {
+        let connection = connection_with_targets();
+        connection
+            .execute(
+                "INSERT INTO repository_environments (environment_id, active) VALUES ('env', 0)",
+                [],
+            )
+            .unwrap();
+        save_script_variable(
+            &connection,
+            &environment_target(),
+            "token",
+            "private",
+            "now",
+        )
+        .unwrap();
+        let request = RequestDetail {
+            collection_id: "col".to_string(),
+            ..RequestDetail::default()
+        };
+
+        assert!(read_environments(&connection).unwrap().is_empty());
+        assert!(listed(&connection, &environment_target()).is_empty());
+        assert!(load_variable_context(&connection, &request, Some("env")).is_err());
+
+        connection
+            .execute(
+                "UPDATE repository_environments SET active = 1 WHERE environment_id = 'env'",
+                [],
+            )
+            .unwrap();
+        assert_eq!(read_environments(&connection).unwrap()[0].id, "env");
+        let context = load_variable_context(&connection, &request, Some("env")).unwrap();
+        assert_eq!(context.get("token").as_deref(), Some("private"));
+        let shared_count: i64 = connection
+            .query_row("SELECT count(*) FROM repository_defaults", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(shared_count, 0);
     }
 
     #[test]

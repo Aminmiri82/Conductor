@@ -10,6 +10,14 @@ use super::stored_enum::stored_enum;
 pub struct CollectionSummary {
     pub id: String,
     pub name: String,
+    pub repository: Option<RepositoryLink>,
+}
+
+#[derive(Debug, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RepositoryLink {
+    pub root: String,
+    pub issue: Option<String>,
 }
 
 /// A collection with what it holds, for the settings page. Kept apart from
@@ -245,6 +253,8 @@ pub struct AuthConfig {
 pub struct RequestDetail {
     pub id: String,
     pub collection_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository_revision: Option<String>,
     pub name: String,
     pub method: String,
     pub url: String,

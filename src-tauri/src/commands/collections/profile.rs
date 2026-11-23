@@ -68,7 +68,9 @@ pub(crate) fn read_profile(
         "SELECT id, name,
                 (SELECT COUNT(*) FROM variables
                  WHERE scope = 'environment' AND environment_id = environments.id)
-         FROM environments WHERE collection_id = ? ORDER BY created_at, name",
+         FROM environments WHERE collection_id = ? AND NOT EXISTS (
+             SELECT 1 FROM repository_environments re WHERE re.environment_id = environments.id AND re.active = 0
+         ) ORDER BY created_at, name",
     )?;
     for row in statement.query_map(params![collection_id], |row| {
         Ok(EnvironmentVariableCount {

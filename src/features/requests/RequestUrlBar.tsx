@@ -49,6 +49,7 @@ export function RequestUrlBar({
   request,
   sending,
   saving,
+  saveBlocked,
   dirty,
   unresolvedKeys,
   variableValues,
@@ -60,6 +61,7 @@ export function RequestUrlBar({
   request: Pick<RequestDetail, "name" | "method" | "url">;
   sending: boolean;
   saving: boolean;
+  saveBlocked: boolean;
   dirty: boolean;
   unresolvedKeys: string[];
   variableValues: VariableValues;
@@ -115,7 +117,7 @@ export function RequestUrlBar({
         style={{ borderRadius: "var(--app-radius)" }}
         onClick={onSave}
         title={saving ? "Saving request" : dirty ? "Unsaved changes" : "Saved"}
-        disabled={saving}
+        disabled={saving || saveBlocked}
       >
         <Save className={`size-4 ${saving ? "opacity-60" : ""}`} />
       </Button>

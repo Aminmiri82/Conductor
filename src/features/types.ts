@@ -20,6 +20,7 @@ export type {
   MethodCount,
   RequestBody,
   RequestDetail,
+  RepositoryRefresh,
   ResolvedRequestPreview,
   SendRequestResult,
   VariableChange,

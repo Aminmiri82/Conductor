@@ -93,6 +93,7 @@ type VariableEditorProps = {
   requestId: string;
   collectionId: string;
   variableNames: string[];
+  linked: boolean;
 };
 
 // Memoized so typing in the URL re-renders this table only when the set of
@@ -120,17 +121,20 @@ function VariableTable({
   collectionId,
   environmentId,
   variableNames,
+  linked,
 }: VariableEditorProps & { environmentId: string | null }) {
   // Null until the stored variables have loaded.
   const [shown, setShown] = useState<Session | null>(null);
   const session = useRef<Session | null>(null);
   const [status, setStatus] = useState<SaveStatus>("idle");
   const { save: saveVariables } = useSaveVariables();
-  const environmentName = useWorkspaceStore(
-    (state) =>
-      state.environments.find((environment) => environment.id === environmentId)
-        ?.name,
-  );
+  const environments = useWorkspaceStore((state) => state.environments);
+  // Linked collections reload when a pull or focus refresh rewrites the
+  // environment list; local ones only care about the active id.
+  const repositoryEnvironments = linked ? environments : undefined;
+  const environmentName = environments.find(
+    (environment) => environment.id === environmentId,
+  )?.name;
   const hasPathParams = useDraftValue(
     requestId,
     (request) => request.pathParams.length > 0,
@@ -213,7 +217,7 @@ function VariableTable({
     return () => {
       mounted = false;
     };
-  }, [collectionId, environmentId]);
+  }, [collectionId, environmentId, repositoryEnvironments]);
 
   useEffect(() => {
     const unregister = registerVariableAutosave(() => autosaver.flush());
@@ -271,6 +275,7 @@ function VariableTable({
           Every variable and path parameter this request uses. Variables save as
           you type; manage the full list in Settings.
           {environmentName ? ` Active environment: ${environmentName}.` : ""}
+          {linked ? " Values edited here stay on this device." : ""}
         </div>
         <div className="shrink-0">
           <SaveState status={status} onRetry={() => void autosaver.flush()} />

@@ -155,7 +155,7 @@ export function CollectionsPane() {
       if (selected) void exportCollection(selected, false);
     },
     remove: () => {
-      if (selected) askDelete();
+      if (selected && !selected.repository) askDelete();
     },
   };
   const shortcutsRef = useRef(shortcuts);
@@ -213,7 +213,7 @@ export function CollectionsPane() {
         title="Collections"
         sub={
           collections.length
-            ? `${plural(collections.length, "collection")}. Deleting one removes everything in it.`
+            ? `${plural(collections.length, "collection")}.`
             : undefined
         }
       />
@@ -468,7 +468,7 @@ function CollectionDetail({
             </DropdownMenu>
           </div>
         )}
-        {renaming ? null : (
+        {renaming || collection.repository ? null : (
           <Button
             variant="ghost"
             className="h-7 shrink-0 gap-1.5 border border-[var(--app-line)] px-2 text-xs text-[var(--app-dim)] hover:bg-destructive/10 hover:text-destructive"
@@ -482,7 +482,16 @@ function CollectionDetail({
         )}
       </div>
 
-      {confirmingDelete ? (
+      {collection.repository ? (
+        <p
+          className="mb-3 truncate text-xs text-[var(--app-dim)]"
+          title={collection.repository.root}
+        >
+          Repository at {collection.repository.root}
+        </p>
+      ) : null}
+
+      {confirmingDelete && !collection.repository ? (
         <div
           className="mb-3 border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-xs"
           style={{ borderRadius: "var(--app-radius-lg)" }}

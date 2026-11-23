@@ -37,12 +37,23 @@ const ResponseViewer = lazy(() =>
   })),
 );
 
+const RepositoryConflict = lazy(() =>
+  import("./RepositoryConflict").then((module) => ({
+    default: module.RepositoryConflict,
+  })),
+);
+
 // Split into sections that each select only the draft fields they render,
 // so a keystroke in one field does not re-render the rest of the workspace.
 export function RequestWorkspace() {
   const activeRequestId = useWorkspaceStore((state) => state.activeRequestId);
   const hasDraft = useDraftStore((state) =>
     activeRequestId ? state.drafts.has(activeRequestId) : false,
+  );
+  const hasConflict = useWorkspaceStore((state) =>
+    Boolean(
+      state.tabs.find((tab) => tab.requestId === activeRequestId)?.conflict,
+    ),
   );
 
   if (!activeRequestId || !hasDraft) {
@@ -63,6 +74,11 @@ export function RequestWorkspace() {
     <section className="flex h-full min-h-0 flex-col bg-[var(--app-bg)]">
       <RequestTabsBar />
       <UrlBarSection requestId={activeRequestId} />
+      {hasConflict ? (
+        <Suspense>
+          <RepositoryConflict requestId={activeRequestId} />
+        </Suspense>
+      ) : null}
       <ResizablePanelGroup orientation="vertical" className="min-h-0 flex-1">
         <ResizablePanel defaultSize="58%" minSize="34%">
           <RequestEditors requestId={activeRequestId} />
@@ -97,9 +113,11 @@ function UrlBarSection({ requestId }: { requestId: string }) {
     (state) => state.copyActiveRequestAsCurl,
   );
   const saving = useWorkspaceStore((state) => state.saving);
-  const dirty = useWorkspaceStore(
-    (state) =>
-      state.tabs.find((tab) => tab.requestId === requestId)?.dirty ?? false,
+  const repositoryRequest = useDraftValue(requestId, (request) =>
+    Boolean(request.repositoryRevision),
+  );
+  const tab = useWorkspaceStore((state) =>
+    state.tabs.find((tab) => tab.requestId === requestId),
   );
   const unresolved =
     useDraftStore(
@@ -119,7 +137,8 @@ function UrlBarSection({ requestId }: { requestId: string }) {
         request={{ name, method, url }}
         sending={sending}
         saving={saving}
-        dirty={dirty}
+        saveBlocked={Boolean(tab?.conflict)}
+        dirty={tab?.dirty ?? false}
         unresolvedKeys={unresolved}
         variableValues={variableValues}
         onChange={updateRequest}
@@ -127,6 +146,11 @@ function UrlBarSection({ requestId }: { requestId: string }) {
         onSave={() => void saveActiveRequest()}
         onCopyCurl={copyActiveRequestAsCurl}
       />
+      {repositoryRequest && !tab?.conflict ? (
+        <div className="mt-2 text-xs text-[var(--app-dim)]">
+          Saves to the repository. Use variables for credentials.
+        </div>
+      ) : null}
       {unresolved.length ? (
         <div className="mt-2 flex items-start gap-2 rounded-md border border-amber-400/20 bg-amber-400/10 px-2 py-1.5 text-xs text-amber-200">
           <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
@@ -269,6 +293,9 @@ function VariablesSection({ requestId }: { requestId: string }) {
     requestId,
     (request) => request.collectionId,
   );
+  const linked = useDraftValue(requestId, (request) =>
+    Boolean(request.repositoryRevision),
+  );
   const variableNames = useRequestVariableNames(requestId);
   // Keyed so each request gets its own table; leaving one saves its pending
   // edits.
@@ -278,6 +305,7 @@ function VariablesSection({ requestId }: { requestId: string }) {
       requestId={requestId}
       collectionId={collectionId}
       variableNames={variableNames}
+      linked={Boolean(linked)}
     />
   ) : null;
 }

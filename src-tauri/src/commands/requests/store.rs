@@ -1,10 +1,11 @@
 use chrono::Utc;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
+use serde::Serialize;
 use tauri::State;
 use uuid::Uuid;
 
 use crate::commands::{
-    collections::{sort_order_after, sort_order_for_position},
+    collections::{repository, sort_order_after, sort_order_for_position},
     error::CommandError,
     models::{
         CreateRequestInput, CreateRequestResult, DuplicateRequestInput, DuplicateRequestResult,
@@ -26,9 +27,11 @@ pub fn get_request(
         Ok(connection.query_row(
             "SELECT r.id, r.collection_id, n.name, r.method, r.url, r.headers_json, r.query_json,
                     r.path_params_json, r.auth_json, r.body_json, r.pre_request_script_json,
-                    r.test_script_json
+                    r.test_script_json, f.revision
              FROM requests r
              JOIN collection_nodes n ON n.request_id = r.id
+             LEFT JOIN repository_files f ON f.collection_id = r.collection_id
+                AND f.kind = 'request' AND f.entity_id = r.id
              WHERE r.id = ?",
             params![request_id],
             |row| {
@@ -43,6 +46,7 @@ pub fn get_request(
                 Ok(RequestDetail {
                     id: row.get(0)?,
                     collection_id: row.get(1)?,
+                    repository_revision: row.get(12)?,
                     name: row.get(2)?,
                     method: row.get(3)?,
                     url: row.get(4)?,
@@ -67,9 +71,11 @@ pub fn create_request(
     input: CreateRequestInput,
     state: State<'_, AppState>,
 ) -> Result<CreateRequestResult, CommandError> {
-    Ok(state
-        .database
-        .with_connection(|connection| add_request(connection, &input))?)
+    Ok(state.database.with_connection(|connection| {
+        repository::mutate(connection, &input.collection_id, |connection| {
+            add_request(connection, &input)
+        })
+    })?)
 }
 
 pub(crate) fn add_request(
@@ -77,9 +83,9 @@ pub(crate) fn add_request(
     input: &CreateRequestInput,
 ) -> Result<CreateRequestResult, StorageError> {
     let now = Utc::now().to_rfc3339();
-    let request_id = Uuid::new_v4().to_string();
-    let node_id = Uuid::new_v4().to_string();
-    let tx = connection.transaction()?;
+    let request_id = repository::new_entity_id(connection, &input.collection_id)?;
+    let node_id = request_node_id(&request_id);
+    let tx = connection.savepoint()?;
     let sort_order = sort_order_for_position(
         &tx,
         &input.collection_id,
@@ -118,9 +124,13 @@ pub fn duplicate_request(
     input: DuplicateRequestInput,
     state: State<'_, AppState>,
 ) -> Result<DuplicateRequestResult, CommandError> {
-    Ok(state
-        .database
-        .with_connection(|connection| copy_request(connection, &input.request_id))?)
+    Ok(state.database.with_connection(|connection| {
+        let owner = request_owner(connection, &input.request_id)?
+            .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
+        repository::mutate(connection, &owner, |connection| {
+            copy_request(connection, &input.request_id)
+        })
+    })?)
 }
 
 /// Inserts a copy named "<name> Copy" directly below the original.
@@ -129,9 +139,7 @@ pub(crate) fn copy_request(
     request_id: &str,
 ) -> Result<DuplicateRequestResult, StorageError> {
     let now = Utc::now().to_rfc3339();
-    let new_request_id = Uuid::new_v4().to_string();
-    let new_node_id = Uuid::new_v4().to_string();
-    let tx = connection.transaction()?;
+    let tx = connection.savepoint()?;
     let source = tx.query_row(
         "SELECT r.collection_id, r.method, r.url, r.headers_json, r.query_json,
                 r.path_params_json, r.auth_json, r.body_json,
@@ -160,6 +168,8 @@ pub(crate) fn copy_request(
             })
         },
     )?;
+    let new_request_id = repository::new_entity_id(&tx, &source.collection_id)?;
+    let new_node_id = request_node_id(&new_request_id);
     let sort_order = sort_order_after(
         &tx,
         &source.collection_id,
@@ -202,53 +212,176 @@ pub(crate) fn copy_request(
     })
 }
 
+fn request_node_id(request_id: &str) -> String {
+    if request_id.contains('/') {
+        request_id.to_string()
+    } else {
+        Uuid::new_v4().to_string()
+    }
+}
+
+fn request_owner(
+    connection: &Connection,
+    request_id: &str,
+) -> Result<Option<String>, StorageError> {
+    Ok(connection
+        .query_row(
+            "SELECT collection_id FROM requests WHERE id = ?",
+            [request_id],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
+#[derive(Debug, Serialize, specta::Type)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum SaveRequestResult {
+    Saved {
+        revision: Option<String>,
+    },
+    Conflict {
+        revision: Option<String>,
+        refresh: Option<repository::RepositoryRefresh>,
+    },
+}
+
 #[tauri::command(async)]
 #[specta::specta]
 pub fn save_request(
-    mut request: RequestDetail,
+    request: RequestDetail,
     state: State<'_, AppState>,
-) -> Result<(), CommandError> {
-    let now = Utc::now().to_rfc3339();
-    // Every write of `body_json` (this, import, duplicate) leaves file paths
-    // out, so a stored body never carries one and reads need not strip them.
+) -> Result<SaveRequestResult, CommandError> {
+    Ok(state
+        .database
+        .with_connection(|connection| store_request(connection, request))?)
+}
+
+pub(crate) fn store_request(
+    connection: &mut Connection,
+    mut request: RequestDetail,
+) -> Result<SaveRequestResult, StorageError> {
+    let Some(owner) = request_owner(connection, &request.id)? else {
+        return Ok(if request.repository_revision.is_some() {
+            SaveRequestResult::Conflict {
+                revision: None,
+                refresh: None,
+            }
+        } else {
+            SaveRequestResult::Saved { revision: None }
+        });
+    };
+    if let repository::RequestBaseline::Conflict { revision, refresh } = repository::check_request(
+        connection,
+        &owner,
+        &request.id,
+        request.repository_revision.as_deref(),
+    )? {
+        return Ok(SaveRequestResult::Conflict { revision, refresh });
+    }
+
+    // Local saves and repository files both leave file upload paths out.
     if let Some(request_body) = &mut request.body {
         body::strip_file_paths(request_body);
     }
-
-    Ok(state.database.with_connection(|connection| {
-        let tx = connection.transaction()?;
-        tx.execute(
-            "UPDATE requests
-             SET method = ?, url = ?, headers_json = ?, query_json = ?, path_params_json = ?,
-                 auth_json = ?, body_json = ?, updated_at = ?
-             WHERE id = ?",
-            params![
-                request.method,
-                request.url,
-                serde_json::to_string(&request.headers)?,
-                serde_json::to_string(&request.query)?,
-                serde_json::to_string(&request.path_params)?,
-                request
-                    .auth
-                    .as_ref()
-                    .map(serde_json::to_string)
-                    .transpose()?,
-                request
-                    .body
-                    .as_ref()
-                    .map(serde_json::to_string)
-                    .transpose()?,
-                now,
-                request.id
-            ],
-        )?;
-        tx.execute(
-            "UPDATE collection_nodes SET name = ?, updated_at = ? WHERE request_id = ?",
-            params![request.name, now, request.id],
-        )?;
+    repository::mutate(connection, &owner, |connection| {
+        let tx = connection.savepoint()?;
+        update_request(&tx, &request)?;
         tx.commit()?;
         Ok(())
-    })?)
+    })?;
+    Ok(SaveRequestResult::Saved {
+        revision: repository::revision(connection, &request.id)?,
+    })
+}
+
+#[tauri::command(async)]
+#[specta::specta]
+pub fn save_repository_request_as_new(
+    request: RequestDetail,
+    state: State<'_, AppState>,
+) -> Result<CreateRequestResult, CommandError> {
+    Ok(state
+        .database
+        .with_connection(|connection| save_as_new(connection, request))?)
+}
+
+fn save_as_new(
+    connection: &mut Connection,
+    mut request: RequestDetail,
+) -> Result<CreateRequestResult, StorageError> {
+    let collection = request.collection_id.clone();
+    if !repository::linked(connection, &collection)? {
+        return Err(StorageError::InvalidInput(
+            "Select a linked collection.".into(),
+        ));
+    }
+    if let Some(request_body) = &mut request.body {
+        body::strip_file_paths(request_body);
+    }
+    repository::mutate(connection, &collection, |connection| {
+        let created = add_request(
+            connection,
+            &CreateRequestInput {
+                collection_id: collection.clone(),
+                name: request.name.clone(),
+                parent_id: None,
+                position: i64::MAX,
+            },
+        )?;
+        request.id.clone_from(&created.request_id);
+        update_request(connection, &request)?;
+        connection.execute(
+            "UPDATE requests SET pre_request_script_json = ?, test_script_json = ? WHERE id = ?",
+            params![
+                request
+                    .pre_request_script
+                    .as_ref()
+                    .map(serde_json::to_string)
+                    .transpose()?,
+                request
+                    .test_script
+                    .as_ref()
+                    .map(serde_json::to_string)
+                    .transpose()?,
+                request.id,
+            ],
+        )?;
+        Ok(created)
+    })
+}
+
+fn update_request(connection: &Connection, request: &RequestDetail) -> Result<(), StorageError> {
+    let now = Utc::now().to_rfc3339();
+    connection.execute(
+        "UPDATE requests
+         SET method = ?, url = ?, headers_json = ?, query_json = ?, path_params_json = ?,
+             auth_json = ?, body_json = ?, updated_at = ?
+         WHERE id = ?",
+        params![
+            request.method,
+            request.url,
+            serde_json::to_string(&request.headers)?,
+            serde_json::to_string(&request.query)?,
+            serde_json::to_string(&request.path_params)?,
+            request
+                .auth
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()?,
+            request
+                .body
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()?,
+            now,
+            request.id,
+        ],
+    )?;
+    connection.execute(
+        "UPDATE collection_nodes SET name = ?, updated_at = ? WHERE request_id = ?",
+        params![request.name, now, request.id],
+    )?;
+    Ok(())
 }
 
 struct DuplicateSource {

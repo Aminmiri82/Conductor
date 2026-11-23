@@ -15,14 +15,15 @@ mod test_server;
 
 use commands::collections::{
     create_collection, create_folder, delete_collection, delete_node, export_postman_collection,
-    get_collection_profile, get_collection_tree, import_postman_collection, list_collection_stats,
-    list_collections, move_node, pick_and_import_postman_collection, rename_collection,
+    get_collection_profile, get_collection_tree, import_postman_collection, inspect_repository,
+    list_collection_stats, list_collections, move_node, open_repository,
+    pick_and_import_postman_collection, refresh_repositories, relink_repository, rename_collection,
     rename_folder,
 };
 use commands::requests::{
     create_request, discard_responses, duplicate_request, get_request, get_response_body,
-    request_as_curl, resolve_request, save_request, save_response_body, send_request,
-    ResponseBodies,
+    request_as_curl, resolve_request, save_repository_request_as_new, save_request,
+    save_response_body, send_request, ResponseBodies,
 };
 use commands::variables::{
     apply_variable_changes, create_environment, delete_environment, duplicate_environment,
@@ -114,6 +115,11 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             get_request,
             import_postman_environment,
             import_postman_collection,
+            inspect_repository,
+            open_repository,
+            refresh_repositories,
+            relink_repository,
+            save_repository_request_as_new,
             list_collection_stats,
             list_collections,
             list_environments,

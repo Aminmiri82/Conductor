@@ -18,6 +18,9 @@ reading every page is not required.
 - [Storage](./01-architecture/03-storage.md): Where data lives, how to change
   the schema without losing data, and how to run against a throwaway database.
 
+- [Repository Collections](./01-architecture/04-repository-collections.md): The
+  shared file format, local values, and synchronization.
+
 Testing rules live in the
 [writing-tests skill](../.agents/skills/writing-tests/SKILL.md).
 

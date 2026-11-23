@@ -13,6 +13,7 @@ export const commands = {
 	 *  The one way editors save variables: every change in one transaction, so a
 	 *  failure leaves nothing half-applied (for example a variable moved between
 	 *  scopes is never deleted from one and missing from the other).
+	 *  Edits in linked environments stay in SQLite, including hides for deleted defaults.
 	 */
 	applyVariableChanges: (changes: VariableChange[]) => __TAURI_INVOKE<null>("apply_variable_changes", { changes }),
 	/**
@@ -54,6 +55,11 @@ export const commands = {
 	 *  for the perf harness and agents, which seed data from a known path.
 	 */
 	importPostmanCollection: (path: string) => __TAURI_INVOKE<ImportedCollection>("import_postman_collection", { path }),
+	inspectRepository: (root: string) => __TAURI_INVOKE<boolean>("inspect_repository", { root }),
+	openRepository: (root: string, create: boolean, sourceCollectionId: string | null) => __TAURI_INVOKE<ImportedCollection>("open_repository", { root, create, sourceCollectionId }),
+	refreshRepositories: () => __TAURI_INVOKE<RepositoryRefresh>("refresh_repositories"),
+	relinkRepository: (collectionId: string, root: string) => __TAURI_INVOKE<null>("relink_repository", { collectionId, root }),
+	saveRepositoryRequestAsNew: (request: RequestDetail) => __TAURI_INVOKE<CreateRequestResult>("save_repository_request_as_new", { request }),
 	listCollectionStats: () => __TAURI_INVOKE<CollectionStats[]>("list_collection_stats"),
 	listCollections: () => __TAURI_INVOKE<CollectionSummary[]>("list_collections"),
 	listEnvironments: () => __TAURI_INVOKE<EnvironmentSummary[]>("list_environments"),
@@ -75,7 +81,7 @@ export const commands = {
 	requestAsCurl: (request: RequestDetail, environmentId: string | null, includeValues: boolean) => __TAURI_INVOKE<string>("request_as_curl", { request, environmentId, includeValues }),
 	resolveRequest: (request: RequestDetail, environmentId: string | null) => __TAURI_INVOKE<ResolvedRequestPreview>("resolve_request", { request, environmentId }),
 	moveNode: (input: MoveNodeInput) => __TAURI_INVOKE<null>("move_node", { input }),
-	saveRequest: (request: RequestDetail) => __TAURI_INVOKE<null>("save_request", { request }),
+	saveRequest: (request: RequestDetail) => __TAURI_INVOKE<SaveRequestResult>("save_request", { request }),
 	/**
 	 *  The text the response viewer shows: pretty-printed for JSON, as received
 	 *  for text. Binary bodies are only ever saved with `save_response_body`.
@@ -195,6 +201,7 @@ export type CollectionStats = {
 export type CollectionSummary = {
 	id: string,
 	name: string,
+	repository: RepositoryLink | null,
 };
 
 export type CreateEnvironmentInput = {
@@ -305,6 +312,22 @@ export type RenameEnvironmentInput = {
 	name: string,
 };
 
+export type RepositoryLink = {
+	root: string,
+	issue: string | null,
+};
+
+export type RepositoryRefresh = {
+	collections: CollectionSummary[],
+	changedRequests: RepositoryRequestChange[],
+	changedCollectionIds: string[],
+};
+
+export type RepositoryRequestChange = {
+	requestId: string,
+	revision: string | null,
+};
+
 export type RequestBody = {
 	mode: BodyMode,
 	raw?: string,
@@ -318,6 +341,7 @@ export type RequestBody = {
 export type RequestDetail = {
 	id: string,
 	collectionId: string,
+	repositoryRevision?: string | null,
 	name: string,
 	method: string,
 	url: string,
@@ -352,6 +376,8 @@ export type ResponseHeader = {
 	key: string,
 	value: string,
 };
+
+export type SaveRequestResult = { status: "saved"; revision: string | null } | { status: "conflict"; revision: string | null; refresh: RepositoryRefresh | null };
 
 export type SaveResponseBodyInput = {
 	historyId: string,
