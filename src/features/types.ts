@@ -33,14 +33,22 @@ export type RequestNode = Extract<CollectionNode, { kind: "request" }>;
 export type VariableScope = VariableTarget["scope"];
 
 export type RequestEditorTab =
-  "params" | "headers" | "auth" | "body" | "variables";
+  | "params"
+  | "headers"
+  | "auth"
+  | "body"
+  | "variables";
 
 export type AppTheme = "softpro" | "conductor" | "brutalist";
 
 export type UrlDisplayMode = "flat" | "syntax" | "chip" | "hybrid";
 
 export type SettingsTab =
-  "appearance" | "collections" | "variables" | "shortcuts" | "about";
+  | "appearance"
+  | "collections"
+  | "variables"
+  | "shortcuts"
+  | "about";
 
 export type WorkspaceUiState = {
   activeCollectionId?: string;

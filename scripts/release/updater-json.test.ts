@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { buildUpdaterJson } from "./updater-json.ts";
 
 const asset = (name: string, id: number) => ({

@@ -4,25 +4,25 @@
   "version": "0.1.15",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview",
+    "dev": "vp dev",
+    "build": "tsc && vp build",
+    "preview": "vp preview",
     "tauri": "tauri",
     "app:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "agent:start": "bash scripts/agent/agent-app.sh start",
     "agent:stop": "bash scripts/agent/agent-app.sh stop",
     "typecheck": "tsc --noEmit && tsc --noEmit -p scripts && tsc --noEmit -p tools && tsc --noEmit -p tsconfig.node.json",
-    "test": "vitest",
-    "test:run": "vitest run",
+    "test": "vp test",
+    "test:run": "vp test run",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "lint:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings",
     "format:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml",
     "bindings": "UPDATE_BINDINGS=1 cargo test --manifest-path src-tauri/Cargo.toml bindings_are_up_to_date",
     "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test:run && pnpm perf:list && cargo fmt --manifest-path src-tauri/Cargo.toml --check && pnpm lint:rust && pnpm test:rust",
-    "lint": "oxlint . --deny-warnings --report-unused-disable-directives",
+    "lint": "vp lint . --deny-warnings --report-unused-disable-directives",
     "lint:fix": "pnpm lint --fix",
-    "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"{scripts,tools}/**/*.ts\" \"*.{js,ts,json,html}\"",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"{scripts,tools}/**/*.ts\" \"*.{js,ts,json,html}\"",
+    "format": "vp fmt \"src/**/*.{ts,tsx,css}\" \"{scripts,tools}/**/*.ts\" \"*.{js,ts,json,html}\"",
+    "format:check": "vp fmt --check \"src/**/*.{ts,tsx,css}\" \"{scripts,tools}/**/*.ts\" \"*.{js,ts,json,html}\"",
     "agent:status": "bash scripts/agent/agent-app.sh status",
     "perf:size": "pnpm build && node scripts/perf/size.ts measure",
     "perf:run": "node scripts/perf/harness.ts run",
@@ -62,15 +62,13 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
-    "oxlint": "^1.89.0",
-    "prettier": "^3.9.10",
     "tailwindcss": "^4.3.3",
     "typescript": "~7.0.2",
-    "vite": "^8.3.5",
-    "vitest": "^5.0.5"
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
   },
   "engines": {
     "node": ">=24.22.1"
   },
-  "packageManager": "pnpm@10.24.0+sha512.01ff8ae71b4419903b65c60fb2dc9d34cf8bb6e06d03bde112ef38f7a34d6904c424ba66bea5cdcf12890230bf39f9580473140ed9c946fef328b6e5238a345a"
+  "packageManager": "pnpm@12.18.0"
 }

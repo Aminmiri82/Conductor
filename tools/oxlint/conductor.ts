@@ -1,5 +1,4 @@
-// Conductor's own lint rules, loaded by .oxlintrc.json as a JS plugin.
-import type { RuleTester } from "oxlint/plugins-dev";
+import type { RuleTester } from "vite-plus/lint/plugins-dev";
 
 // oxlint exports its rule and AST types only through RuleTester's signature.
 type Rule = Parameters<RuleTester["run"]>[1];
@@ -13,7 +12,9 @@ type FunctionNode = Extract<
   Node,
   {
     type:
-      "ArrowFunctionExpression" | "FunctionExpression" | "FunctionDeclaration";
+      | "ArrowFunctionExpression"
+      | "FunctionExpression"
+      | "FunctionDeclaration";
   }
 >;
 type ReturnArgument = Extract<Node, { type: "ReturnStatement" }>["argument"];

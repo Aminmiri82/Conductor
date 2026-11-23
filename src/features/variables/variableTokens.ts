@@ -1,5 +1,6 @@
 export type VariableToken =
-  { kind: "text"; value: string } | { kind: "variable"; name: string };
+  | { kind: "text"; value: string }
+  | { kind: "variable"; name: string };
 
 // The same grammar as Rust's `resolve_text` (commands/requests/resolver.rs):
 // a `{{` opens a variable at the next `}}`, and its name is what lies between,

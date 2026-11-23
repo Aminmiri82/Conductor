@@ -1,6 +1,6 @@
 {
   // scripts/ runs as TypeScript in plain `node`, which strips the types, so
-  // only erasable syntax and explicit `.ts` imports work there. 
+  // only erasable syntax and explicit `.ts` imports work there.
   "compilerOptions": {
     "target": "ES2024",
     "lib": ["ES2024"],

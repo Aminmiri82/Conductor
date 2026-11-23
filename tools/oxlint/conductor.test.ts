@@ -3,16 +3,16 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vite-plus/test";
 
-const oxlint = fileURLToPath(
-  new URL("../../node_modules/oxlint/bin/oxlint", import.meta.url),
+const vp = fileURLToPath(
+  new URL("../../node_modules/vite-plus/bin/vp", import.meta.url),
 );
 const plugin = fileURLToPath(new URL("./conductor.ts", import.meta.url));
 const directory = mkdtempSync(join(tmpdir(), "conductor-lint-"));
 afterAll(() => rmSync(directory, { recursive: true, force: true }));
 
-// Lints `source` with only `rule` on, through the real oxlint, and returns the
+// Lints `source` with only `rule` on, through the real oxlint in `vp lint`, and returns the
 // lines it flagged. Fixtures mark the lines they expect with `// flagged`.
 function flaggedLines(rule: string, source: string) {
   const config = join(directory, `${rule}.json`);
@@ -30,13 +30,13 @@ function flaggedLines(rule: string, source: string) {
   try {
     output = execFileSync(
       process.execPath,
-      [oxlint, "-c", config, "-f", "unix", file],
+      [vp, "lint", "-c", config, "-f", "unix", file],
       {
         encoding: "utf8",
       },
     );
   } catch (error) {
-    // oxlint exits non-zero when it reports anything.
+    // `vp lint` exits non-zero when it reports anything.
     output = (error as { stdout: string }).stdout;
   }
   return [...output.matchAll(/:(\d+):\d+: /g)]

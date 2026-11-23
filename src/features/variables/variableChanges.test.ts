@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import type { VariableEntry, VariableTarget } from "@/features/types";
 import {
   diffVariables,
