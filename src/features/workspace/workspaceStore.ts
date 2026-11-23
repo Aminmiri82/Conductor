@@ -103,6 +103,8 @@ type WorkspaceState = {
   saveActiveRequest: () => Promise<void>;
   resolveActiveRequest: () => Promise<void>;
   sendActiveRequest: () => Promise<void>;
+  /** Resolves `true` once the command is on the clipboard. */
+  copyActiveRequestAsCurl: (includeValues: boolean) => Promise<boolean>;
   toggleSidebar: () => void;
   setError: (error: unknown) => void;
   clearError: () => void;
@@ -550,6 +552,23 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       if (get().activeRequestId === request.id) {
         set({ error: String(error) });
       }
+    }
+  },
+
+  copyActiveRequestAsCurl: async (includeValues) => {
+    const request = getDraft(get().activeRequestId);
+    if (!request) return false;
+    try {
+      const curl = await api.requestAsCurl(
+        request,
+        activeEnvironmentIdFor(getWorkspaceUiState(), request.collectionId),
+        includeValues,
+      );
+      await navigator.clipboard.writeText(curl);
+      return true;
+    } catch (error) {
+      set({ error: String(error) });
+      return false;
     }
   },
 

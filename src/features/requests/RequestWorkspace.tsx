@@ -93,6 +93,9 @@ function UrlBarSection({ requestId }: { requestId: string }) {
   const sending = useWorkspaceStore((state) =>
     state.sendingRequestIds.has(requestId),
   );
+  const copyActiveRequestAsCurl = useWorkspaceStore(
+    (state) => state.copyActiveRequestAsCurl,
+  );
   const saving = useWorkspaceStore((state) => state.saving);
   const dirty = useWorkspaceStore(
     (state) =>
@@ -122,6 +125,7 @@ function UrlBarSection({ requestId }: { requestId: string }) {
         onChange={updateRequest}
         onSend={() => void sendActiveRequest()}
         onSave={() => void saveActiveRequest()}
+        onCopyCurl={copyActiveRequestAsCurl}
       />
       {unresolved.length ? (
         <div className="mt-2 flex items-start gap-2 rounded-md border border-amber-400/20 bg-amber-400/10 px-2 py-1.5 text-xs text-amber-200">

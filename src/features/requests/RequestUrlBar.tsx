@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
+  Check,
   CheckCircle2,
   Save,
   SendHorizontal,
+  Terminal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,6 +49,7 @@ export function RequestUrlBar({
   onChange,
   onSend,
   onSave,
+  onCopyCurl,
 }: {
   request: Pick<RequestDetail, "name" | "method" | "url">;
   sending: boolean;
@@ -57,6 +60,7 @@ export function RequestUrlBar({
   onChange: (patch: Partial<RequestDetail>) => void;
   onSend: () => void;
   onSave: () => void;
+  onCopyCurl: (includeValues: boolean) => Promise<boolean>;
 }) {
   const urlMode = useWorkspaceUiStore(
     (state) => state.workspaceUi.urlDisplayMode,
@@ -109,6 +113,7 @@ export function RequestUrlBar({
       >
         <Save className={`size-4 ${saving ? "opacity-60" : ""}`} />
       </Button>
+      <CopyCurlButton onCopy={onCopyCurl} />
       <Button
         className="h-8 shrink-0 gap-1.5 bg-[var(--app-accent)] px-3 text-xs font-bold uppercase tracking-[0.04em] text-[var(--app-accent-fg)] hover:bg-[var(--app-accent)]/90"
         onClick={onSend}
@@ -119,6 +124,51 @@ export function RequestUrlBar({
         {sending ? "Sending" : "Send"}
       </Button>
     </div>
+  );
+}
+
+// ⌘-click copies with the environment's values; a plain click copies
+// `<name>` placeholders, safe to paste anywhere.
+function CopyCurlButton({
+  onCopy,
+}: {
+  onCopy: (includeValues: boolean) => Promise<boolean>;
+}) {
+  const [withValues, setWithValues] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(timer);
+  }, [copied]);
+
+  const label = copied
+    ? "Copied"
+    : withValues
+      ? "Copy as cURL with variable values (secrets stay placeholders)"
+      : "Copy as cURL (⌘-click to include variable values)";
+
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      className={`size-8 shrink-0 border hover:text-[var(--app-text)] ${
+        withValues || copied
+          ? "border-[var(--app-accent)] text-[var(--app-accent)]"
+          : "border-[var(--app-line)] text-[var(--app-dim)]"
+      }`}
+      style={{ borderRadius: "var(--app-radius)" }}
+      title={label}
+      aria-label={label}
+      onMouseMove={(event) => setWithValues(event.metaKey)}
+      onMouseLeave={() => setWithValues(false)}
+      onClick={(event) => {
+        void onCopy(event.metaKey).then(setCopied);
+      }}
+    >
+      {copied ? <Check className="size-4" /> : <Terminal className="size-4" />}
+    </Button>
   );
 }
 

@@ -67,6 +67,11 @@ export const commands = {
 	 *  name lives on the request row too.
 	 */
 	renameFolder: (nodeId: string, name: string) => __TAURI_INVOKE<null>("rename_folder", { nodeId, name }),
+	/**
+	 *  With `include_values`, fills in the variables the request's environment
+	 *  has, except secrets; without it, every variable is a placeholder.
+	 */
+	requestAsCurl: (request: RequestDetail, environmentId: string | null, includeValues: boolean) => __TAURI_INVOKE<string>("request_as_curl", { request, environmentId, includeValues }),
 	resolveRequest: (request: RequestDetail, environmentId: string | null) => __TAURI_INVOKE<ResolvedRequestPreview>("resolve_request", { request, environmentId }),
 	moveNode: (input: MoveNodeInput) => __TAURI_INVOKE<null>("move_node", { input }),
 	saveRequest: (request: RequestDetail) => __TAURI_INVOKE<null>("save_request", { request }),

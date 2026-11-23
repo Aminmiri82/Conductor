@@ -1,5 +1,6 @@
 mod auth;
 mod body;
+mod curl;
 mod postman_scripts;
 mod pretty_json;
 mod resolver;
@@ -7,6 +8,7 @@ mod response_files;
 mod sender;
 mod store;
 
+pub use curl::request_as_curl;
 pub use response_files::{
     discard_responses, get_response_body, save_response_body, ResponseBodies,
 };

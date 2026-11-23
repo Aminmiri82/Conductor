@@ -20,6 +20,8 @@ use crate::AppState;
 #[derive(Debug, Default)]
 pub(crate) struct VariableContext {
     values: HashMap<String, StoredValue>,
+    /// Set by `nothing`, so `{{$guid}}` and friends stay unresolved too.
+    no_dynamic: bool,
 }
 
 #[derive(Debug)]
@@ -33,7 +35,21 @@ impl VariableContext {
         self.values
             .get(key)
             .map(|stored| stored.value.clone())
-            .or_else(|| dynamic_variable(key))
+            .or_else(|| (!self.no_dynamic).then(|| dynamic_variable(key)).flatten())
+    }
+
+    /// Resolves no variable at all, not even the dynamic ones.
+    pub(crate) fn nothing() -> Self {
+        Self {
+            values: HashMap::new(),
+            no_dynamic: true,
+        }
+    }
+
+    /// Drops the values the user marked secret, so they read as unresolved.
+    pub(crate) fn without_secrets(mut self) -> Self {
+        self.values.retain(|_, stored| !stored.sensitive);
+        self
     }
 
     #[cfg(test)]
@@ -51,6 +67,7 @@ impl VariableContext {
                     )
                 })
                 .collect(),
+            no_dynamic: false,
         }
     }
 
@@ -394,7 +411,10 @@ pub(crate) fn load_variable_context(
         let (key, stored) = row?;
         values.insert(key, stored);
     }
-    Ok(VariableContext { values })
+    Ok(VariableContext {
+        values,
+        no_dynamic: false,
+    })
 }
 
 fn ensure_environment_in_collection(
