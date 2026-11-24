@@ -8,7 +8,8 @@ pub use export::export_postman_collection;
 pub use import::{import_postman_collection, pick_and_import_postman_collection};
 pub use profile::get_collection_profile;
 pub use repository::{
-    inspect_repository, open_repository, refresh_repositories, relink_repository,
+    inspect_repository, open_repository, preview_repository_publish, refresh_repositories,
+    relink_repository,
 };
 #[cfg(test)]
 pub(crate) use tree::{add_folder, read_tree};

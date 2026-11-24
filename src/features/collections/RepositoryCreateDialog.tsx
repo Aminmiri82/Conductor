@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { RepositoryPublishScope } from "@/bindings";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -15,6 +16,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
+import { api } from "@/lib/tauri";
 
 export default function RepositoryCreateDialog({
   root,
@@ -26,22 +28,60 @@ export default function RepositoryCreateDialog({
   const collections = useWorkspaceStore((state) => state.collections);
   const openRepository = useWorkspaceStore((state) => state.openRepository);
   const [source, setSource] = useState("empty");
-  const [busy, setBusy] = useState(false);
+  const [operation, setOperation] = useState<"preview" | "create">();
+  const [preview, setPreview] = useState<RepositoryPublishScope[]>();
+  const busy = operation !== undefined;
   const [error, setError] = useState<string>();
 
+  async function review(collectionId: string) {
+    setSource(collectionId);
+    setPreview(undefined);
+    setError(undefined);
+    if (collectionId === "empty") return;
+    setOperation("preview");
+    try {
+      setPreview(await api.previewRepositoryPublish(collectionId));
+    } catch (error) {
+      setError(String(error));
+    } finally {
+      setOperation(undefined);
+    }
+  }
+
+  function requireSecret(environmentId: string | null, key: string) {
+    if (!preview) return;
+    setPreview(
+      preview.map((scope) =>
+        scope.environmentId === environmentId
+          ? {
+              ...scope,
+              sharedKeys: scope.sharedKeys.filter((shared) => shared !== key),
+              secretKeys: [...scope.secretKeys, key],
+            }
+          : scope,
+      ),
+    );
+  }
+
   async function create() {
-    setBusy(true);
+    if (source !== "empty" && !preview) return;
+    setOperation("create");
     setError(undefined);
     try {
       if (
-        await openRepository(root, true, source === "empty" ? null : source)
+        await openRepository(
+          root,
+          true,
+          source === "empty" ? null : source,
+          preview,
+        )
       ) {
         onClose();
       }
     } catch (error) {
       setError(String(error));
     } finally {
-      setBusy(false);
+      setOperation(undefined);
     }
   }
 
@@ -72,7 +112,11 @@ export default function RepositoryCreateDialog({
               {root}
             </span>
           </DialogDescription>
-          <Select value={source} onValueChange={setSource} disabled={busy}>
+          <Select
+            value={source}
+            onValueChange={(value) => void review(value)}
+            disabled={busy}
+          >
             <SelectTrigger
               aria-label="Collection to share"
               className="w-full text-xs"
@@ -92,13 +136,74 @@ export default function RepositoryCreateDialog({
                 ))}
             </SelectContent>
           </Select>
-          {source !== "empty" ? (
+          {source !== "empty" && (
             <p className="text-xs text-[var(--app-dim)]">
-              Request definitions and enabled non-secret defaults will be
-              shared. Private values go in .conductor/local.json. Review
-              requests and variables for credentials before sharing.
+              Request definitions and shared values go in Git. Required secrets
+              keep their values in <code>.conductor/local.json</code>. Review
+              free-form fields and custom headers before committing.
             </p>
-          ) : null}
+          )}
+          {operation === "preview" && (
+            <p role="status" className="text-xs text-[var(--app-dim)]">
+              Reviewing variables…
+            </p>
+          )}
+          {preview && (
+            <div className="max-h-60 space-y-3 overflow-y-auto rounded-md border border-[var(--app-line)] p-2 text-xs">
+              {preview.map((scope) => (
+                <section key={scope.environmentId ?? "collection"}>
+                  <h3 className="mb-1 font-medium">
+                    {scope.environmentId === null ? "Collection" : scope.name}
+                  </h3>
+                  {!scope.sharedKeys.length && !scope.secretKeys.length ? (
+                    <p className="text-[var(--app-dim)]">
+                      No shared values or required secrets
+                    </p>
+                  ) : (
+                    <ul className="space-y-1">
+                      {[
+                        ...scope.sharedKeys.map((key) => ({
+                          key,
+                          shared: true,
+                        })),
+                        ...scope.secretKeys.map((key) => ({
+                          key,
+                          shared: false,
+                        })),
+                      ].map(({ key, shared }) => (
+                        <li
+                          key={key}
+                          className="flex min-h-6 items-center gap-2"
+                        >
+                          <code className="min-w-0 flex-1 wrap-break-word">
+                            {key}
+                          </code>
+                          <span className="text-[var(--app-dim)]">
+                            {shared ? "Shared value" : "Required secret"}
+                          </span>
+                          {shared && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 px-1.5 text-xs"
+                              aria-label={`Require secret for ${key}`}
+                              disabled={busy}
+                              onClick={() =>
+                                requireSecret(scope.environmentId, key)
+                              }
+                            >
+                              Require secret
+                            </Button>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              ))}
+            </div>
+          )}
           {error ? (
             <p
               role="alert"
@@ -108,6 +213,17 @@ export default function RepositoryCreateDialog({
             </p>
           ) : null}
           <DialogFooter className="border-[var(--app-line)] bg-transparent">
+            {error && source !== "empty" && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={busy}
+                onClick={() => void review(source)}
+              >
+                Refresh preview
+              </Button>
+            )}
             <Button
               type="button"
               variant="ghost"
@@ -117,8 +233,14 @@ export default function RepositoryCreateDialog({
             >
               Cancel
             </Button>
-            <Button type="submit" size="sm" disabled={busy}>
-              {busy ? "Creating…" : "Create repository collection"}
+            <Button
+              type="submit"
+              size="sm"
+              disabled={busy || (source !== "empty" && !preview)}
+            >
+              {operation === "create"
+                ? "Creating…"
+                : "Create repository collection"}
             </Button>
           </DialogFooter>
         </form>

@@ -27,31 +27,61 @@ it("preserves an unsaved local draft when the user cancels opening a repository"
   }
 });
 
-it("preserves a draft made while opening a repository when the user cancels", async () => {
+it.each([false, true])(
+  "preserves a draft made while opening a repository (create=%s) when the user cancels switching",
+  async (create) => {
+    const before = useWorkspaceStore.getState();
+    const tabs = [
+      { requestId: "draft", name: "Draft", method: "GET", dirty: true },
+    ];
+    useWorkspaceStore.setState({ activeCollectionId: "local", tabs: [] });
+    vi.stubGlobal("window", {});
+    const environments = [{ id: "env", collectionId: "repo", name: "Local" }];
+    mockIPC((command) => {
+      if (command === "open_repository") {
+        useWorkspaceStore.setState({ tabs });
+        return { collectionId: "repo", collections: [], tree: [] };
+      }
+      if (command === "list_environments") return environments;
+      if (command === "plugin:dialog|message") return "Cancel";
+      throw new Error(`Unexpected IPC command: ${command}`);
+    });
+
+    try {
+      await expect(
+        useWorkspaceStore.getState().openRepository("/repo", create, null),
+      ).resolves.toBe(create);
+      expect(useWorkspaceStore.getState().tabs).toEqual(tabs);
+      expect(useWorkspaceStore.getState().activeCollectionId).toBe("local");
+      expect(useWorkspaceStore.getState().environments).toEqual(environments);
+    } finally {
+      clearMocks();
+      vi.unstubAllGlobals();
+      useWorkspaceStore.setState(before);
+    }
+  },
+);
+
+it("keeps a newly edited draft when switching collections and cancelling", async () => {
   const before = useWorkspaceStore.getState();
   const tabs = [
     { requestId: "draft", name: "Draft", method: "GET", dirty: true },
   ];
   useWorkspaceStore.setState({ activeCollectionId: "local", tabs: [] });
   vi.stubGlobal("window", {});
-  const environments = [{ id: "env", collectionId: "repo", name: "Local" }];
   mockIPC((command) => {
-    if (command === "open_repository") {
+    if (command === "get_collection_tree") {
       useWorkspaceStore.setState({ tabs });
-      return { collectionId: "repo", collections: [], tree: [] };
+      return [];
     }
-    if (command === "list_environments") return environments;
     if (command === "plugin:dialog|message") return "Cancel";
     throw new Error(`Unexpected IPC command: ${command}`);
   });
 
   try {
-    await expect(
-      useWorkspaceStore.getState().openRepository("/repo", false, null),
-    ).resolves.toBe(false);
+    await useWorkspaceStore.getState().selectCollection("other");
     expect(useWorkspaceStore.getState().tabs).toEqual(tabs);
     expect(useWorkspaceStore.getState().activeCollectionId).toBe("local");
-    expect(useWorkspaceStore.getState().environments).toEqual(environments);
   } finally {
     clearMocks();
     vi.unstubAllGlobals();

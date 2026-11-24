@@ -1,6 +1,7 @@
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { create } from "zustand";
 import { api } from "@/lib/tauri";
+import type { RepositoryPublishScope } from "@/bindings";
 import {
   applyPathParamRowChanges,
   buildQueryString,
@@ -18,11 +19,11 @@ import {
   removeNodeById,
   renameFolderNode,
   requestIdsForNode,
-  updateRequestNode,
 } from "@/features/collections/tree";
 import { flushVariableEdits } from "@/features/variables/autosave";
 import { getDraft, useDraftStore } from "@/features/workspace/draftStore";
 import type { RequestTab } from "@/features/workspace/repositoryTabs";
+import { mayDiscardDrafts } from "./discardDrafts";
 import { useResponseStore } from "@/features/workspace/responseStore";
 import {
   preferredEnvironmentIdFor,
@@ -39,6 +40,10 @@ import type {
 
 let repositoryRefreshInFlight: Promise<void> | undefined;
 let previewGeneration = 0;
+
+export function waitForRepositoryRefresh() {
+  return repositoryRefreshInFlight;
+}
 
 type WorkspaceState = {
   collections: CollectionSummary[];
@@ -67,6 +72,7 @@ type WorkspaceState = {
     root: string,
     create: boolean,
     source: string | null,
+    preview?: RepositoryPublishScope[],
   ) => Promise<boolean>;
   relinkRepository: (collectionId: string, root: string) => Promise<void>;
   loadEnvironments: () => Promise<void>;
@@ -158,9 +164,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   refreshRepositories: async () => {
     if (repositoryRefreshInFlight) return repositoryRefreshInFlight;
-    if (!get().collections.some((collection) => collection.repository)) return;
+    const linked = get().collections.filter(
+      (collection) => collection.repository,
+    );
+    if (!linked.length) return;
     repositoryRefreshInFlight = api
-      .refreshRepositories()
+      .refreshRepositories(linked)
       .then(async (refresh) => {
         const { applyRepositoryRefresh } =
           await import("./repositoryWorkspace");
@@ -173,34 +182,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     await repositoryRefreshInFlight;
   },
 
-  openRepository: async (root, create, source) => {
-    const before = get();
-    const approvedDrafts = new Map(
-      before.tabs
-        .filter((tab) => tab.dirty)
-        .map((tab) => [tab.requestId, getDraft(tab.requestId)]),
-    );
-    if (!(await mayDiscardDrafts(before, source))) return false;
-    await repositoryRefreshInFlight;
-    const opened = await api.openRepository(root, create, source);
-    const current = get();
-    const changed = current.tabs.some(
-      (tab) =>
-        tab.dirty &&
-        (!approvedDrafts.has(tab.requestId) ||
-          approvedDrafts.get(tab.requestId) !== getDraft(tab.requestId)),
-    );
-    const switchCollection =
-      !changed || (await mayDiscardDrafts(current, source));
-    if (switchCollection) await showCollection(opened);
-    else set({ collections: opened.collections });
-    await get().loadEnvironments();
-    return switchCollection;
+  openRepository: async (root, create, source, preview) => {
+    const { openRepository } = await import("./repositoryOpen");
+    return openRepository(root, create, source, preview);
   },
 
   relinkRepository: async (collectionId, root) => {
-    await api.relinkRepository(collectionId, root);
     await repositoryRefreshInFlight;
+    set({ collections: await api.relinkRepository(collectionId, root) });
     await get().refreshRepositories();
   },
 
@@ -223,31 +212,34 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   importCollection: async (path) => {
-    if (!(await mayDiscardDrafts(get()))) return;
+    const approved = await mayDiscardDrafts(get);
+    if (!approved) return;
     set({ error: undefined });
     try {
-      await showCollection(await api.importPostmanCollection(path));
+      await showCollection(await api.importPostmanCollection(path), approved);
     } catch (error) {
       set({ error: String(error) });
     }
   },
 
   pickAndImportCollection: async () => {
-    if (!(await mayDiscardDrafts(get()))) return undefined;
+    const approved = await mayDiscardDrafts(get);
+    if (!approved) return undefined;
     const imported = await api.pickAndImportPostmanCollection();
     if (!imported) return undefined;
-    await showCollection(imported);
+    await showCollection(imported, approved);
     return imported.collections.find(
       (collection) => collection.id === imported.collectionId,
     );
   },
 
   createCollection: async (name) => {
-    if (!(await mayDiscardDrafts(get()))) return undefined;
+    const approved = await mayDiscardDrafts(get);
+    if (!approved) return undefined;
     set({ error: undefined });
     try {
       const created = await api.createCollection(name);
-      await showCollection(created);
+      await showCollection(created, approved);
       return created.collectionId;
     } catch (error) {
       set({ error: String(error) });
@@ -308,15 +300,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   selectCollection: async (collectionId) => {
-    if (!(await mayDiscardDrafts(get()))) return;
+    const approved = await mayDiscardDrafts(get);
+    if (!approved) return;
     set({ error: undefined });
     try {
       const tree = await api.getCollectionTree(collectionId);
-      await showCollection({
-        collectionId,
-        collections: get().collections,
-        tree,
-      });
+      await showCollection(
+        { collectionId, collections: get().collections, tree },
+        approved,
+      );
     } catch (error) {
       set({ error: String(error) });
     }
@@ -564,7 +556,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
     useDraftStore.getState().setDraft(request);
     set((state) => ({
-      tabs: upsertTab(state.tabs, request, true, true),
+      tabs: upsertTab(state.tabs, request, true, { keepConflict: true }),
     }));
   },
 
@@ -572,9 +564,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     // Saving covers everything on screen, so a variable edit still inside
     // its autosave pause lands too.
     await flushVariableEdits();
-    const request = getDraft(get().activeRequestId);
-    if (!request || get().saving) return;
-    const tab = get().tabs.find((item) => item.requestId === request.id);
+    const { activeRequestId } = get();
+    if (!activeRequestId || get().saving) return;
+    const { saveDraft } = await import("./saveDraft");
+    const current = get();
+    const request = getDraft(activeRequestId);
+    if (
+      !request ||
+      current.activeRequestId !== activeRequestId ||
+      current.saving
+    )
+      return;
+    const tab = current.tabs.find((item) => item.requestId === request.id);
     if (request.repositoryRevision && (!tab?.dirty || tab.conflict)) return;
     await saveDraft(request);
   },
@@ -710,11 +711,14 @@ export function useActiveEnvironment(collectionId: string | undefined) {
   return availableEnvironment(environments, collectionId, preferredId);
 }
 
-async function showCollection({
-  collectionId,
-  collections,
-  tree,
-}: ImportedCollection) {
+export async function showCollection(
+  { collectionId, collections, tree }: ImportedCollection,
+  approved: () => boolean | Promise<boolean>,
+) {
+  if (!(await approved())) {
+    useWorkspaceStore.setState({ collections });
+    return false;
+  }
   useWorkspaceStore.setState({
     collections,
     tree,
@@ -726,6 +730,7 @@ async function showCollection({
   useDraftStore.getState().clearAll();
   useResponseStore.getState().clearAll();
   await useWorkspaceUiStore.getState().flushWorkspaceUiState();
+  return true;
 }
 
 export async function closeRequestTab(requestId: string) {
@@ -743,67 +748,6 @@ export async function closeRequestTab(requestId: string) {
   if (active && next) await current.selectRequest(next.requestId);
 }
 
-async function mayDiscardDrafts(
-  state: WorkspaceState,
-  copySource?: string | null,
-) {
-  if (!state.tabs.some((tab) => tab.dirty)) return true;
-  const message =
-    copySource && copySource === state.activeCollectionId
-      ? "Copy the saved collection and discard its unsaved request drafts?"
-      : "Discard the unsaved request drafts in the current collection?";
-  return confirm(message, { kind: "warning" });
-}
-
-export async function saveDraft(
-  request: RequestDetail,
-  overwriteRevision?: string,
-) {
-  useWorkspaceStore.setState({ saving: true, error: undefined });
-  try {
-    if (request.repositoryRevision) await repositoryRefreshInFlight;
-    const result = await api.saveRequest(
-      overwriteRevision === undefined
-        ? request
-        : { ...request, repositoryRevision: overwriteRevision },
-    );
-    if (result.status !== "saved") {
-      const { applyUnsuccessfulSave } = await import("./repositoryWorkspace");
-      await applyUnsuccessfulSave(request.id, result);
-      return;
-    }
-
-    const draft = getDraft(request.id);
-    if (draft) {
-      const current = result.revision
-        ? { ...draft, repositoryRevision: result.revision }
-        : draft;
-      if (current !== draft) useDraftStore.getState().setDraft(current);
-      useWorkspaceStore.setState((state) => ({
-        tabs: upsertTab(state.tabs, current, draft !== request),
-        tree: updateRequestNode(state.tree, request),
-      }));
-    }
-    if (result.refresh) {
-      const { applyRepositoryRefresh } = await import("./repositoryWorkspace");
-      await applyRepositoryRefresh({
-        ...result.refresh,
-        // The refresh precedes the save, so this draft already has a newer revision.
-        changedRequests: result.refresh.changedRequests.filter(
-          (change) => change.requestId !== request.id,
-        ),
-      });
-    }
-    if (draft) await useWorkspaceStore.getState().resolveActiveRequest();
-  } catch (error) {
-    const state = useWorkspaceStore.getState();
-    if (state.activeRequestId === request.id) state.setError(error);
-    if (request.repositoryRevision) await state.refreshRepositories();
-  } finally {
-    useWorkspaceStore.setState({ saving: false });
-  }
-}
-
 export function normalizeRequestParams(request: RequestDetail): RequestDetail {
   const { url, query } = loadQuery(request.url, request.query);
   return {
@@ -818,7 +762,7 @@ export function upsertTab(
   tabs: RequestTab[],
   request: RequestDetail,
   dirty: boolean,
-  keepConflict = false,
+  { keepConflict = false }: { keepConflict?: boolean } = {},
 ) {
   const tab = {
     requestId: request.id,

@@ -118,7 +118,7 @@ fn refresh_reports_bad_or_oversized_group_paths_and_keeps_last_good_requests() {
         .unwrap();
 
     let refreshed = refresh_all(&mut connection).unwrap();
-    let issue = refreshed.collections[0]
+    let issue = refreshed.collections.as_ref().unwrap()[0]
         .repository
         .as_ref()
         .unwrap()
@@ -218,7 +218,7 @@ fn equal_generation_branch_moves_keep_one_visible_request_and_preserve_both_file
     fs::write(requests.join("alpha.json"), &alpha_move).unwrap();
 
     let refresh = refresh_all(&mut connection).unwrap();
-    let issue = refresh.collections[0]
+    let issue = refresh.collections.as_ref().unwrap()[0]
         .repository
         .as_ref()
         .unwrap()
@@ -273,10 +273,9 @@ fn refresh_keeps_requests_through_each_folder_creation_step() {
         if completed == 2 {
             fs::write(&group, &new_group).unwrap();
         }
-        let refresh = refresh_all(&mut connection).unwrap();
-        assert!(refresh.collections[0]
-            .repository
-            .as_ref()
+        refresh_all(&mut connection).unwrap();
+        assert!(read_link(&connection, collection)
+            .unwrap()
             .unwrap()
             .issue
             .is_none());
@@ -338,13 +337,8 @@ fn refresh_keeps_requests_through_each_placeholder_folder_rename_step() {
         if completed == 3 {
             fs::remove_file(&placeholder).unwrap();
         }
-        let refresh = refresh_all(&mut connection).unwrap();
-        let issue = refresh.collections[0]
-            .repository
-            .as_ref()
-            .unwrap()
-            .issue
-            .as_deref();
+        refresh_all(&mut connection).unwrap();
+        let issue = read_link(&connection, collection).unwrap().unwrap().issue;
         if matches!(completed, 1 | 2) {
             assert!(issue
                 .unwrap()
@@ -398,7 +392,7 @@ fn refresh_keeps_last_good_request_when_its_only_moved_copy_is_invalid() {
     fs::write(&source, br#"{"requests":{}}"#).unwrap();
 
     let refresh = refresh_all(&mut connection).unwrap();
-    let issue = refresh.collections[0]
+    let issue = refresh.collections.as_ref().unwrap()[0]
         .repository
         .as_ref()
         .unwrap()
@@ -559,7 +553,7 @@ fn ui_placeholder_keys_are_unique_and_legacy_git_merge_keeps_both_requests() {
         .success());
 
     let refresh = refresh_all(&mut connection).unwrap();
-    let issue = refresh.collections[0]
+    let issue = refresh.collections.as_ref().unwrap()[0]
         .repository
         .as_ref()
         .unwrap()
@@ -586,7 +580,7 @@ fn ui_placeholder_keys_are_unique_and_legacy_git_merge_keeps_both_requests() {
     assert!(merged.duplicate_keys.is_empty());
     assert!(merged.requests[remote_id(&right.id)].is_ok());
     let refresh = refresh_all(&mut connection).unwrap();
-    assert!(refresh.collections[0]
+    assert!(refresh.collections.as_ref().unwrap()[0]
         .repository
         .as_ref()
         .unwrap()
@@ -596,7 +590,6 @@ fn ui_placeholder_keys_are_unique_and_legacy_git_merge_keeps_both_requests() {
 
 #[test]
 fn publish_names_the_request_folder_and_credential_field_with_a_fix() {
-    let root = Scratch::new();
     let mut connection = test_connection();
     let collection = fixtures::collection(&connection);
     let folder = named_folder(&mut connection, &collection, "Payments", None);
@@ -610,7 +603,7 @@ fn publish_names_the_request_folder_and_credential_field_with_a_fix() {
             ],
         )
         .unwrap();
-    let error = connect(&mut connection, &root.0, true, Some(&collection))
+    let error = publish_preview(&connection, &collection)
         .expect_err("publishing a literal credential must fail")
         .to_string();
     for text in ["Payments", "Capture", "auth token", "{{token}}"] {

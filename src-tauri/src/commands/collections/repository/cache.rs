@@ -4,7 +4,7 @@ use std::{
 };
 
 use chrono::Utc;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -62,13 +62,12 @@ pub(super) type StoredFiles = BTreeMap<String, StoredFile>;
 pub(super) fn stored_files(
     connection: &Connection,
     collection_id: &str,
-    request_id: Option<&str>,
 ) -> Result<StoredFiles, StorageError> {
     let mut statement = connection.prepare_cached(
         "SELECT path, kind, entity_id, contents, revision FROM repository_files
-         WHERE collection_id = ?1 AND (?2 IS NULL OR kind != 'request' OR entity_id = ?2)",
+         WHERE collection_id = ?",
     )?;
-    let rows = statement.query_map(params![collection_id, request_id], |row| {
+    let rows = statement.query_map([collection_id], |row| {
         Ok((
             row.get(0)?,
             StoredFile {
@@ -80,6 +79,59 @@ pub(super) fn stored_files(
         ))
     })?;
     Ok(rows.collect::<Result<_, _>>()?)
+}
+
+pub(super) fn stored_request(
+    connection: &Connection,
+    id: &str,
+) -> Result<Option<StoredFile>, StorageError> {
+    Ok(connection
+        .prepare_cached(
+            "SELECT contents, revision, entity_id, kind FROM repository_files
+         WHERE kind = 'request' AND entity_id = ?",
+        )?
+        .query_row([id], |row| {
+            Ok(StoredFile {
+                contents: row.get(0)?,
+                revision: row.get(1)?,
+                id: row.get(2)?,
+                kind: row.get(3)?,
+            })
+        })
+        .optional()?)
+}
+
+pub(super) fn request_group(
+    connection: &Connection,
+    collection_id: &str,
+    folder_id: &str,
+) -> Result<Option<(String, u32)>, StorageError> {
+    let mut statement = connection.prepare_cached(
+        "SELECT path, byte_count FROM repository_request_groups
+         WHERE collection_id = ? AND folder_id = ? LIMIT 2",
+    )?;
+    let mut rows = statement.query(params![collection_id, folder_id])?;
+    let group = rows
+        .next()?
+        .map(|row| Ok::<_, rusqlite::Error>((row.get(0)?, row.get(1)?)))
+        .transpose()?;
+    if rows.next()?.is_some() {
+        return Err(super::input(
+            "Folder has more than one request file. Resolve the duplicate before editing.",
+        ));
+    }
+    Ok(group)
+}
+
+pub(super) fn repository_bytes(
+    connection: &Connection,
+    collection_id: &str,
+) -> Result<i64, StorageError> {
+    Ok(connection.prepare_cached(
+        "SELECT (SELECT coalesce(sum(byte_count), 0) FROM repository_request_groups WHERE collection_id = ?1)
+              + (SELECT coalesce(sum(length(contents)), 0) FROM repository_files
+                 WHERE collection_id = ?1 AND kind = 'environment')",
+    )?.query_row([collection_id], |row| row.get(0))?)
 }
 
 pub(super) fn request_key(id: &str) -> String {
@@ -118,11 +170,7 @@ pub(super) fn record_groups(
 ) -> Result<(), StorageError> {
     for (path, group) in next {
         if previous.get(path) != Some(group) {
-            connection.prepare_cached(
-                "INSERT INTO repository_request_groups (collection_id, path, folder_id, byte_count)
-                 VALUES (?, ?, ?, ?) ON CONFLICT(collection_id,path) DO UPDATE SET
-                 folder_id = excluded.folder_id, byte_count = excluded.byte_count",
-            )?.execute(params![collection_id, path, group.folder_id, group.byte_count])?;
+            record_group(connection, collection_id, path, group)?;
         }
     }
     for path in previous.keys().filter(|path| !next.contains_key(*path)) {
@@ -132,6 +180,27 @@ pub(super) fn record_groups(
             )?
             .execute(params![collection_id, path])?;
     }
+    Ok(())
+}
+
+pub(super) fn record_group(
+    connection: &Connection,
+    collection_id: &str,
+    path: &str,
+    group: &RequestGroup,
+) -> Result<(), StorageError> {
+    connection
+        .prepare_cached(
+            "INSERT INTO repository_request_groups (collection_id, path, folder_id, byte_count)
+         VALUES (?, ?, ?, ?) ON CONFLICT(collection_id,path) DO UPDATE SET
+         folder_id = excluded.folder_id, byte_count = excluded.byte_count",
+        )?
+        .execute(params![
+            collection_id,
+            path,
+            group.folder_id,
+            group.byte_count
+        ])?;
     Ok(())
 }
 
@@ -197,7 +266,8 @@ pub(super) fn remove_file(
     Ok(())
 }
 
-pub(crate) fn revision(
+#[cfg(test)]
+pub(super) fn revision(
     connection: &Connection,
     request_id: &str,
 ) -> Result<Option<String>, StorageError> {
@@ -212,12 +282,89 @@ pub(crate) fn revision(
 }
 
 // Project only shared data. Local overrides are never serialized here.
-#[derive(Deserialize)]
+#[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Placement<'a> {
-    parent_id: Option<&'a str>,
+pub(super) struct Placement<'a> {
+    pub(super) parent_id: Option<&'a str>,
     #[serde(default)]
     move_generation: u32,
+}
+
+const REQUEST_PROJECTION: &str = "SELECT n.id, n.parent_id, n.name, n.sort_order, n.auth_json,
+            r.id, r.method, r.url, r.headers_json, r.query_json, r.path_params_json,
+            r.auth_json, r.body_json, r.pre_request_script_json, r.test_script_json
+     FROM collection_nodes n LEFT JOIN requests r ON r.id = n.request_id";
+
+fn project_request(
+    row: &Row<'_>,
+    connection: &Connection,
+    id: &str,
+    previous: Option<Placement<'_>>,
+    collection_name: Option<&str>,
+) -> Result<Request, StorageError> {
+    let parent_node_id: Option<String> = row.get(1)?;
+    let parent_id = parent_node_id.as_deref().map(|id| remote_id(id).into());
+    let move_generation = match previous {
+        Some(previous) if previous.parent_id != parent_id.as_deref() => previous
+            .move_generation
+            .checked_add(1)
+            .ok_or_else(|| super::input("Request move generation is exhausted."))?,
+        Some(previous) => previous.move_generation,
+        None => 0,
+    };
+    let mut request = Request {
+        id: remote_id(id).into(),
+        parent_id,
+        move_generation,
+        name: row.get(2)?,
+        position: row.get(3)?,
+        method: row.get(6)?,
+        url: row.get(7)?,
+        headers: decode(row.get(8)?)?,
+        query: decode(row.get(9)?)?,
+        path_params: decode(row.get(10)?)?,
+        auth: format::project_auth(decode_optional(row.get(11)?)?),
+        body: decode_optional(row.get(12)?)?,
+        pre_request_script: decode_optional(row.get(13)?)?,
+        test_script: decode_optional(row.get(14)?)?,
+    };
+    if let Err(error) = format::validate_request(&mut request) {
+        let folder: Option<String> = connection
+            .query_row(
+                "SELECT name FROM collection_nodes WHERE id = ?",
+                [parent_node_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let collection_name = match (folder, collection_name) {
+            (Some(folder), _) => folder,
+            (None, Some(name)) => name.into(),
+            (None, None) => connection.query_row(
+                "SELECT c.name FROM collections c JOIN requests r ON r.collection_id = c.id WHERE r.id = ?",
+                [id],
+                |row| row.get(0),
+            )?,
+        };
+        return Err(super::input(format!(
+            "Request {:?} in {collection_name:?}: {error}",
+            request.name
+        )));
+    }
+    Ok(request)
+}
+
+pub(super) fn project_one_request(
+    connection: &Connection,
+    id: &str,
+    previous: Placement<'_>,
+) -> Result<Request, StorageError> {
+    let mut statement =
+        connection.prepare_cached(&format!("{REQUEST_PROJECTION} WHERE n.request_id = ?"))?;
+    let mut rows = statement.query([id])?;
+    let row = rows
+        .next()?
+        .ok_or_else(|| super::input("The request was removed."))?;
+    project_request(row, connection, id, Some(previous), None)
 }
 
 pub(super) fn project(
@@ -225,7 +372,6 @@ pub(super) fn project(
     collection_id: &str,
     manifest_id: &str,
     stored: &StoredFiles,
-    request_id: Option<&str>,
     mut root: Option<&Path>,
 ) -> Result<Files, StorageError> {
     let (name, auth): (String, Option<String>) = connection.query_row(
@@ -245,71 +391,26 @@ pub(super) fn project(
     };
 
     let mut files = Files::new();
-    let mut nodes = connection.prepare(
-        "SELECT n.id, n.parent_id, n.name, n.sort_order, n.auth_json,
-                r.id, r.method, r.url, r.headers_json, r.query_json, r.path_params_json,
-                r.auth_json, r.body_json, r.pre_request_script_json, r.test_script_json
-         FROM collection_nodes n LEFT JOIN requests r ON r.id = n.request_id
-         WHERE n.collection_id = ?1 AND (?2 IS NULL OR n.request_id IS NULL OR n.request_id = ?2) ORDER BY n.id",
-    )?;
-    let mut rows = nodes.query(params![collection_id, request_id])?;
+    let mut nodes = connection.prepare(&format!(
+        "{REQUEST_PROJECTION} WHERE n.collection_id = ? ORDER BY n.id"
+    ))?;
+    let mut rows = nodes.query([collection_id])?;
     while let Some(row) = rows.next()? {
-        let parent_node_id: Option<String> = row.get(1)?;
-        let parent_id = parent_node_id.as_deref().map(|id| remote_id(id).into());
-        let name = row.get(2)?;
-        let position = row.get(3)?;
         if let Some(id) = row.get::<_, Option<String>>(5)? {
-            let id = remote_id(&id);
-            let previous = stored
-                .get(&request_key(id))
-                .map(|file| serde_json::from_slice::<Placement<'_>>(&file.contents))
+            let placement = stored
+                .get(&request_key(remote_id(&id)))
+                .map(|file| serde_json::from_slice(&file.contents))
                 .transpose()?;
-            let move_generation = match previous {
-                Some(previous) if previous.parent_id != parent_id.as_deref() => previous
-                    .move_generation
-                    .checked_add(1)
-                    .ok_or_else(|| super::input("Request move generation is exhausted."))?,
-                Some(previous) => previous.move_generation,
-                None => 0,
-            };
-            let mut request = Request {
-                id: id.into(),
-                parent_id,
-                move_generation,
-                name,
-                position,
-                method: row.get(6)?,
-                url: row.get(7)?,
-                headers: decode(row.get(8)?)?,
-                query: decode(row.get(9)?)?,
-                path_params: decode(row.get(10)?)?,
-                auth: format::project_auth(decode_optional(row.get(11)?)?),
-                body: decode_optional(row.get(12)?)?,
-                pre_request_script: decode_optional(row.get(13)?)?,
-                test_script: decode_optional(row.get(14)?)?,
-            };
-            if let Err(error) = format::validate_request(&mut request) {
-                let folder: Option<String> = connection
-                    .query_row(
-                        "SELECT name FROM collection_nodes WHERE id = ?",
-                        [parent_node_id],
-                        |row| row.get(0),
-                    )
-                    .optional()?;
-                return Err(super::input(format!(
-                    "Request {:?} in {:?}: {error}",
-                    request.name,
-                    folder.as_deref().unwrap_or(&manifest.name)
-                )));
-            }
+            let request = project_request(row, connection, &id, placement, Some(&manifest.name))?;
             put_request(&mut files, request)?;
         } else {
             let id: String = row.get(0)?;
+            let parent_node_id: Option<String> = row.get(1)?;
             manifest.folders.push(Folder {
                 id: remote_id(&id).into(),
-                parent_id,
-                name,
-                position,
+                parent_id: parent_node_id.as_deref().map(|id| remote_id(id).into()),
+                name: row.get(2)?,
+                position: row.get(3)?,
                 auth: format::project_auth(decode_optional(row.get(4)?)?),
             });
         }
@@ -333,9 +434,6 @@ pub(super) fn project(
     format::validate_manifest(&manifest)?;
     put(&mut files, MANIFEST.into(), Entity::Manifest(manifest))?;
 
-    if request_id.is_some() {
-        return Ok(files);
-    }
     let mut slugs = format::Slugs::default();
     for path in stored
         .keys()
@@ -425,10 +523,16 @@ pub(super) fn apply(
     };
     let now = Utc::now().to_rfc3339();
 
+    let mut summary = false;
     if stored
         .get(MANIFEST)
         .is_none_or(|old| old.contents != files[MANIFEST].contents)
     {
+        summary = tx.query_row(
+            "SELECT name != ? FROM collections WHERE id = ?",
+            params![manifest.name, collection_id],
+            |row| row.get(0),
+        )?;
         tx.execute(
             "UPDATE collections SET name = ?, auth_json = ? WHERE id = ?",
             params![manifest.name, json(&manifest.auth)?, collection_id],
@@ -448,7 +552,7 @@ pub(super) fn apply(
         .iter()
         .map(|folder| folder_id(collection_id, &folder.id))
         .collect();
-    let mut changes = BTreeMap::new();
+    let mut changes = Vec::new();
     let mut environments = Vec::new();
     for (path, file) in files {
         let unchanged = stored
@@ -470,8 +574,13 @@ pub(super) fn apply(
         }
         if !unchanged {
             let revision = record_file(tx, collection_id, path, file, stored.get(path))?;
-            if matches!(file.entity, Entity::Request(_)) {
-                changes.insert(local_id(collection_id, file.entity.id()), Some(revision));
+            if let Entity::Request(request) = &file.entity {
+                changes.push(RepositoryRequestChange {
+                    request_id: local_id(collection_id, &request.id),
+                    revision: Some(revision),
+                    name: Some(request.name.clone()),
+                    method: Some(request.method.clone()),
+                });
             }
         }
     }
@@ -489,7 +598,12 @@ pub(super) fn apply(
         match old.kind.as_str() {
             "request" if !nodes.contains(&old.id) => {
                 tx.execute("DELETE FROM requests WHERE id = ?", [&old.id])?;
-                changes.insert(old.id.clone(), None);
+                changes.push(RepositoryRequestChange {
+                    request_id: old.id.clone(),
+                    revision: None,
+                    name: None,
+                    method: None,
+                });
             }
             "environment"
                 if !files.values().any(|file| {
@@ -519,15 +633,11 @@ pub(super) fn apply(
     }
     environments.sort_unstable();
     environments.dedup();
+    changes.sort_unstable_by(|a, b| a.request_id.cmp(&b.request_id));
     Ok(Changes {
         environments,
-        requests: changes
-            .into_iter()
-            .map(|(request_id, revision)| RepositoryRequestChange {
-                request_id,
-                revision,
-            })
-            .collect(),
+        requests: changes,
+        summary,
         ..Default::default()
     })
 }

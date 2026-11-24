@@ -10,7 +10,7 @@ import type {
 
 export type RequestVariableRow = Pick<
   VariableEntry,
-  "origin" | "hasSharedValue" | "requiredSecret"
+  "origin" | "presentation" | "requiredSecret"
 > & {
   key: string;
   value: string;

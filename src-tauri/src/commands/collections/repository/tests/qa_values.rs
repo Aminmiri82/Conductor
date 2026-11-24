@@ -30,7 +30,7 @@ fn masking_a_variable_preserves_a_value_edited_on_disk() {
     fs::write(&local, br#"{"collection":{"token":"rotated-in-editor"}}"#).unwrap();
     refresh_all(&mut connection).unwrap();
     let target = values::target(&connection, &scope).unwrap().unwrap();
-    values::edit(&connection, &[(target, &change)]).unwrap();
+    assert!(values::edit(&connection, &[(target, &change)]).unwrap());
 
     refresh_all(&mut connection).unwrap();
     let stored = read_variables(&connection, &scope).unwrap().remove(0);
@@ -67,7 +67,7 @@ fn unrelated_editor_changes_survive_a_variable_save() {
     )
     .unwrap();
     let target = values::target(&connection, &scope).unwrap().unwrap();
-    values::edit(&connection, &[(target, &change)]).unwrap();
+    assert!(values::edit(&connection, &[(target, &change)]).unwrap());
 
     assert!(fs::read_to_string(&local).unwrap().contains(edited));
     assert_eq!(
@@ -75,6 +75,38 @@ fn unrelated_editor_changes_survive_a_variable_save() {
         Some("token-from-app")
     );
     assert_eq!(fs::read(&manifest).unwrap(), shared);
+}
+
+#[test]
+fn typing_a_local_value_keeps_the_variable_table_current_without_reloading() {
+    let root = Scratch::new();
+    let mut connection = test_connection();
+    let link = connect(&mut connection, &root.0, true, None).unwrap();
+    let scope = VariableTarget::Collection {
+        collection_id: link.collection_id,
+    };
+    fs::write(
+        root.0.join(".conductor/local.json"),
+        br#"{"collection":{"endpoint":"http://127.0.0.1/old"}}"#,
+    )
+    .unwrap();
+    refresh_all(&mut connection).unwrap();
+
+    let baseline = read_variables(&connection, &scope).unwrap();
+    let mut row = read_variables(&connection, &scope).unwrap().remove(0);
+    row.value = "http://127.0.0.1/new".into();
+    let change = VariableChange {
+        baseline: Some(baseline),
+        target: scope.clone(),
+        upserts: vec![row],
+        deletes: vec![],
+    };
+    let target = values::target(&connection, &scope).unwrap().unwrap();
+    assert!(!values::edit(&connection, &[(target, &change)]).unwrap());
+    assert_eq!(
+        read_variables(&connection, &scope).unwrap()[0].value,
+        "http://127.0.0.1/new"
+    );
 }
 
 #[test]
@@ -94,7 +126,7 @@ fn an_invalid_local_file_keeps_cached_private_values_and_blocks_saves() {
     fs::write(&local, invalid).unwrap();
     let refresh = refresh_all(&mut connection).unwrap();
 
-    let issue = refresh.collections[0]
+    let issue = refresh.collections.as_ref().unwrap()[0]
         .repository
         .as_ref()
         .unwrap()

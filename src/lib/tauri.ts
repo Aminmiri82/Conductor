@@ -33,6 +33,7 @@ export const api = {
   createCollection: commands.createCollection,
   inspectRepository: commands.inspectRepository,
   openRepository: commands.openRepository,
+  previewRepositoryPublish: commands.previewRepositoryPublish,
   relinkRepository: commands.relinkRepository,
   refreshRepositories: commands.refreshRepositories,
   saveRepositoryRequestAsNew: commands.saveRepositoryRequestAsNew,

@@ -1,8 +1,4 @@
-import type {
-  CollectionNode,
-  RepositoryRefresh,
-  RequestNode,
-} from "@/features/types";
+import type { RepositoryRefresh } from "@/features/types";
 
 export type RequestTab = {
   requestId: string;
@@ -16,28 +12,16 @@ export function reconcileRepositoryTabs(
   tabs: RequestTab[],
   changes: RepositoryRefresh["changedRequests"],
   revisionFor: (requestId: string) => string | null | undefined,
-  tree?: CollectionNode[],
 ) {
   const invalidate: string[] = [];
   const closed: string[] = [];
   if (!changes.length || !tabs.length) return { tabs, invalidate, closed };
-  const revisions = new Map(
-    changes.map((change) => [change.requestId, change.revision]),
-  );
-  let nodes: Map<string, RequestNode> | undefined;
+  const byId = new Map(changes.map((change) => [change.requestId, change]));
   let tabsChanged = false;
-  function collectRequests(
-    branch: CollectionNode[],
-    found: Map<string, RequestNode>,
-  ) {
-    for (const node of branch) {
-      if (node.kind === "folder") collectRequests(node.children, found);
-      else if (revisions.has(node.requestId)) found.set(node.requestId, node);
-    }
-  }
   const nextTabs = tabs.flatMap((tab) => {
-    const revision = revisions.get(tab.requestId);
-    if (revision === undefined) return [tab];
+    const change = byId.get(tab.requestId);
+    if (!change) return [tab];
+    const { revision, name, method } = change;
     if (revision !== null && revision === revisionFor(tab.requestId)) {
       if (!tab.conflict) return [tab];
       const { conflict: _conflict, ...restored } = tab;
@@ -55,16 +39,15 @@ export function reconcileRepositoryTabs(
       closed.push(tab.requestId);
       return [];
     }
-    if (tree && !nodes) {
-      nodes = new Map();
-      collectRequests(tree, nodes);
-    }
-    const node = nodes?.get(tab.requestId);
-    if (!node || (node.name === tab.name && node.method === tab.method)) {
+    if (
+      name === null ||
+      method === null ||
+      (name === tab.name && method === tab.method)
+    ) {
       return [tab];
     }
     tabsChanged = true;
-    return [{ ...tab, name: node.name, method: node.method }];
+    return [{ ...tab, name, method }];
   });
   return { tabs: tabsChanged ? nextTabs : tabs, invalidate, closed };
 }

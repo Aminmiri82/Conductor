@@ -16,8 +16,10 @@ pub fn run(connection: &Connection) -> Result<(), StorageError> {
         connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))?;
 
     if current_version < 1 {
-        connection.execute_batch(INITIAL_SCHEMA)?;
-        connection.pragma_update(None, "user_version", 1)?;
+        let tx = connection.unchecked_transaction()?;
+        tx.execute_batch(INITIAL_SCHEMA)?;
+        tx.pragma_update(None, "user_version", 1)?;
+        tx.commit()?;
         return Ok(());
     }
 
@@ -79,6 +81,50 @@ fn rebuild_without_foreign_keys(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn initialization_recovers_if_the_schema_was_written_before_the_version() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(INITIAL_SCHEMA).unwrap();
+        connection
+            .execute(
+                "INSERT INTO collections (id, name, created_at, updated_at)
+                      VALUES ('kept', 'Existing collection', '', '')",
+                [],
+            )
+            .unwrap();
+
+        run(&connection).unwrap();
+
+        let (version, name): (i64, String) = connection
+            .query_row(
+                "SELECT user_version, name FROM pragma_user_version, collections WHERE id = 'kept'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((version, name.as_str()), (1, "Existing collection"));
+    }
+
+    #[test]
+    fn initialization_leaves_no_partial_schema_when_a_statement_fails() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch("CREATE TABLE repository_request_groups (unexpected TEXT)")
+            .unwrap();
+
+        assert!(run(&connection).is_err());
+
+        let (version, collections_exist): (i64, bool) = connection
+            .query_row(
+                "SELECT user_version, EXISTS(SELECT 1 FROM sqlite_schema WHERE name = 'collections')
+                 FROM pragma_user_version",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((version, collections_exist), (0, false));
+    }
 
     fn database_before_repository_links() -> Connection {
         let connection = Connection::open_in_memory().unwrap();

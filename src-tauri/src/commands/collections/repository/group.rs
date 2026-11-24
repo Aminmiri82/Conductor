@@ -17,6 +17,7 @@ pub(super) struct Group {
     pub(super) requests: BTreeMap<String, Result<Request, String>>,
     pub(super) identity_issue: Option<String>,
     pub(super) duplicate_keys: BTreeSet<String>,
+    pub(super) duplicate_ids: BTreeSet<String>,
     entries: Range<usize>,
     members: Vec<Member>,
 }
@@ -52,6 +53,7 @@ pub(super) fn parse(contents: &[u8]) -> Result<Group, StorageError> {
         .map(str::to_owned)
         .collect();
     let mut requests = BTreeMap::new();
+    let mut duplicate_ids = BTreeSet::new();
     let mut unidentified: Option<(String, String)> = None;
     for member in &mut members {
         let raw = &map[member.value.clone()];
@@ -80,8 +82,11 @@ pub(super) fn parse(contents: &[u8]) -> Result<Group, StorageError> {
         };
         member.id = Some(id.clone());
         requests
-            .entry(id)
-            .and_modify(|previous| *previous = Err("duplicate request ID".into()))
+            .entry(id.clone())
+            .and_modify(|previous| {
+                duplicate_ids.insert(id);
+                *previous = Err("duplicate request ID".into());
+            })
             .or_insert(parsed);
     }
     Ok(Group {
@@ -90,6 +95,7 @@ pub(super) fn parse(contents: &[u8]) -> Result<Group, StorageError> {
         identity_issue: unidentified
             .map(|(key, error)| format!("request {key} has no usable ID: {error}")),
         duplicate_keys,
+        duplicate_ids,
         entries,
         members,
     })

@@ -1,11 +1,11 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::stored_enum::stored_enum;
 
-#[derive(Debug, Serialize, specta::Type)]
+#[derive(Debug, Deserialize, Eq, PartialEq, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CollectionSummary {
     pub id: String,
@@ -13,11 +13,20 @@ pub struct CollectionSummary {
     pub repository: Option<RepositoryLink>,
 }
 
-#[derive(Debug, Serialize, specta::Type)]
+#[derive(Debug, Deserialize, Eq, PartialEq, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RepositoryLink {
     pub root: String,
     pub issue: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RepositoryPublishScope {
+    pub environment_id: Option<String>,
+    pub name: String,
+    pub shared_keys: BTreeSet<String>,
+    pub secret_keys: BTreeSet<String>,
 }
 
 /// A collection with what it holds, for the settings page. Kept apart from
@@ -309,7 +318,7 @@ pub struct VariableEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<VariableOrigin>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub has_shared_value: Option<bool>,
+    pub presentation: Option<VariablePresentation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub required_secret: Option<bool>,
 }
@@ -320,6 +329,22 @@ pub enum VariableOrigin {
     Shared,
     Local,
     MissingSecret,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct VariablePresentation {
+    pub fixed_key: bool,
+    pub edit_shared: bool,
+    pub removal: VariableRemoval,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub enum VariableRemoval {
+    None,
+    Local,
+    UseShared,
 }
 
 /// What one editor changed in one target: keys to set and keys to remove.

@@ -1,4 +1,12 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  memo,
+  Suspense,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Pencil, Save } from "lucide-react";
 import {
   CellInput,
@@ -20,7 +28,6 @@ import { api } from "@/lib/tauri";
 import { pickOption } from "@/lib/options";
 import { variableNames } from "@/features/variables/variableTokens";
 import { useSaveVariables } from "@/features/variables/useSaveVariables";
-import { SharedVariableDialog } from "@/features/variables/SharedVariableDialog";
 import { VariableOrigin } from "@/features/variables/VariableOrigin";
 import {
   requestVariableChanges,
@@ -38,6 +45,32 @@ import {
   useActiveEnvironment,
   useWorkspaceStore,
 } from "@/features/workspace/workspaceStore";
+
+const SharedVariableDialog = lazy(() =>
+  import("./SharedVariableDialog").then(({ SharedVariableDialog }) => ({
+    default: SharedVariableDialog,
+  })),
+);
+
+export default function VariablesSection({ requestId }: { requestId: string }) {
+  const collectionId = useDraftValue(
+    requestId,
+    (request) => request.collectionId,
+  );
+  const linked = useDraftValue(requestId, (request) =>
+    Boolean(request.repositoryRevision),
+  );
+  const variableNames = useRequestVariableNames(requestId);
+  // Keyed so a request switch drops the previous request's unsaved edits.
+  return collectionId !== undefined ? (
+    <VariableEditor
+      key={requestId}
+      collectionId={collectionId}
+      variableNames={variableNames}
+      linked={Boolean(linked)}
+    />
+  ) : null;
+}
 
 const scopeOptions = [
   ["environment", "Environment"],
@@ -81,7 +114,7 @@ async function loadScopedVariables(
 
 // Memoized so typing in the URL re-renders this table only when the set of
 // referenced names actually changes.
-export const VariableEditor = memo(function VariableEditor({
+const VariableEditor = memo(function VariableEditor({
   collectionId,
   variableNames,
   linked,
@@ -278,11 +311,7 @@ export const VariableEditor = memo(function VariableEditor({
                   </div>
                   <Select
                     value={row.scope}
-                    disabled={Boolean(
-                      row.origin === "shared" ||
-                      row.hasSharedValue ||
-                      row.requiredSecret,
-                    )}
+                    disabled={row.presentation?.fixedKey}
                     onValueChange={(value) => {
                       const scope = pickOption(scopeOptions, value);
                       if (scope) updateRow(index, { scope });
@@ -330,7 +359,7 @@ export const VariableEditor = memo(function VariableEditor({
                     />
                   )}
                   <div className="flex items-center justify-end gap-0.5 pr-1">
-                    {linked && row.hasSharedValue && !row.requiredSecret ? (
+                    {row.presentation?.editShared ? (
                       <Button
                         variant="ghost"
                         size="icon"
@@ -347,7 +376,7 @@ export const VariableEditor = memo(function VariableEditor({
                         <Pencil className="size-3.5" />
                       </Button>
                     ) : null}
-                    {row.hasSharedValue && row.origin === "local" ? (
+                    {row.presentation?.removal === "useShared" ? (
                       <Button
                         variant="ghost"
                         size="sm"
@@ -356,13 +385,15 @@ export const VariableEditor = memo(function VariableEditor({
                       >
                         Use shared value
                       </Button>
-                    ) : row.origin !== "shared" &&
+                    ) : row.presentation?.removal !== "none" &&
                       (row.origin !== "missingSecret" || row.value) ? (
                       <RemoveButton
                         className="hover:text-destructive"
                         onClick={() => removeRow(index)}
                         title={
-                          row.origin ? "Remove local value" : "Remove variable"
+                          row.presentation
+                            ? "Remove local value"
+                            : "Remove variable"
                         }
                       />
                     ) : null}
@@ -378,11 +409,13 @@ export const VariableEditor = memo(function VariableEditor({
         </div>
       </ScrollArea>
       {sharedEdit ? (
-        <SharedVariableDialog
-          target={sharedEdit.target}
-          variableKey={sharedEdit.key}
-          onClose={() => setSharedEdit(undefined)}
-        />
+        <Suspense>
+          <SharedVariableDialog
+            target={sharedEdit.target}
+            variableKey={sharedEdit.key}
+            onClose={() => setSharedEdit(undefined)}
+          />
+        </Suspense>
       ) : null}
     </div>
   );
@@ -458,7 +491,7 @@ function scopedVariableId(scope: VariableScope, key: string) {
 // The variable names a request references, sorted. Each part is scanned only
 // when it changes, so a URL keystroke never rescans a large raw body, and the
 // same array comes back while the set of names is unchanged.
-export function useRequestVariableNames(requestId: string): string[] {
+function useRequestVariableNames(requestId: string): string[] {
   const name = useDraftValue(requestId, (request) => request.name);
   const url = useDraftValue(requestId, (request) => request.url);
   const headers = useDraftValue(requestId, (request) => request.headers);

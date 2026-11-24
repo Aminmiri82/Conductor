@@ -6,13 +6,11 @@ import { useAppHotkeys } from "@/app/hotkeys";
 
 export default function App() {
   const loadCollections = useWorkspaceStore((state) => state.loadCollections);
-  const collections = useWorkspaceStore((state) => state.collections);
-  const collectionsLoaded = useWorkspaceStore(
-    (state) => state.collectionsLoaded,
+  const linkedRepositoriesLoaded = useWorkspaceStore(
+    (state) =>
+      state.collectionsLoaded &&
+      state.collections.some((collection) => collection.repository),
   );
-  const linkedRepositoriesLoaded =
-    collectionsLoaded &&
-    collections.some((collection) => collection.repository);
   const refreshRepositories = useWorkspaceStore(
     (state) => state.refreshRepositories,
   );

@@ -13,10 +13,6 @@ import { RequestUrlBar } from "@/features/requests/RequestUrlBar";
 import { KeyValueTable } from "@/features/requests/KeyValueTable";
 import { BodyEditor } from "@/features/requests/BodyEditor";
 import { AuthEditor } from "@/features/requests/AuthEditor";
-import {
-  useRequestVariableNames,
-  VariableEditor,
-} from "@/features/variables/VariableEditor";
 import { RequestTabsBar } from "@/features/requests/RequestTabsBar";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { useDraftStore, useDraftValue } from "@/features/workspace/draftStore";
@@ -37,6 +33,9 @@ const ResponseViewer = lazy(() =>
   })),
 );
 
+const VariablesSection = lazy(
+  () => import("@/features/variables/VariableEditor"),
+);
 const RepositoryConflict = lazy(() => import("./RepositoryConflict"));
 
 // Split into sections that each select only the draft fields they render,
@@ -198,7 +197,9 @@ function RequestEditors({ requestId }: { requestId: string }) {
         <BodySection requestId={requestId} />
       </TabsContent>
       <TabsContent value="variables" className="min-h-0 flex-1 p-0">
-        <VariablesSection requestId={requestId} />
+        <Suspense>
+          <VariablesSection requestId={requestId} />
+        </Suspense>
       </TabsContent>
     </Tabs>
   );
@@ -281,27 +282,6 @@ function BodySection({ requestId }: { requestId: string }) {
       onChange={(body) => updateRequest({ body })}
     />
   );
-}
-
-function VariablesSection({ requestId }: { requestId: string }) {
-  const collectionId = useDraftValue(
-    requestId,
-    (request) => request.collectionId,
-  );
-  const linked = useDraftValue(requestId, (request) =>
-    Boolean(request.repositoryRevision),
-  );
-  const variableNames = useRequestVariableNames(requestId);
-  // Keyed so each request gets its own table; leaving one saves its pending
-  // edits.
-  return collectionId !== undefined ? (
-    <VariableEditor
-      key={requestId}
-      collectionId={collectionId}
-      variableNames={variableNames}
-      linked={Boolean(linked)}
-    />
-  ) : null;
 }
 
 // How long the app stays in the background before the response viewer lets

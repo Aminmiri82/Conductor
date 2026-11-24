@@ -23,7 +23,7 @@ fn refresh_reports_a_duplicate_shared_key_and_keeps_its_last_good_value() {
     );
     fs::write(&path, &duplicate).unwrap();
     let refresh = refresh_all(&mut connection).unwrap();
-    let issue = refresh.collections[0]
+    let issue = refresh.collections.as_ref().unwrap()[0]
         .repository
         .as_ref()
         .unwrap()
@@ -54,7 +54,7 @@ fn refresh_names_the_file_with_git_conflict_markers_and_keeps_its_requests() {
     fs::write(&path, conflicted).unwrap();
 
     let refresh = refresh_all(&mut connection).unwrap();
-    let issue = refresh.collections[0]
+    let issue = refresh.collections.as_ref().unwrap()[0]
         .repository
         .as_ref()
         .unwrap()
@@ -70,4 +70,31 @@ fn refresh_names_the_file_with_git_conflict_markers_and_keeps_its_requests() {
         request.repository_revision
     );
     assert_eq!(fs::read(path).unwrap(), conflicted);
+}
+
+#[test]
+fn review_regression_credential_headers_require_variable_references() {
+    for header in [
+        "X-Vault-Token",
+        "DD-API-KEY",
+        "X-Token",
+        "apikey",
+        "Authentication",
+    ] {
+        let request = serde_json::json!({
+            "id": Uuid::new_v4().to_string(),
+            "name": "Request",
+            "method": "GET",
+            "url": "/",
+            "headers": [{"key": header, "value": "private-default"}],
+        });
+        let literal = format::parse_request(&serde_json::to_vec(&request).unwrap());
+        let error = literal
+            .expect_err("literal credentials must be rejected")
+            .to_string();
+        assert!(error.contains(header), "{error}");
+        let mut reference = request;
+        reference["headers"][0]["value"] = serde_json::json!("{{token}}");
+        format::parse_request(&serde_json::to_vec(&reference).unwrap()).unwrap();
+    }
 }

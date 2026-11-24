@@ -13,7 +13,7 @@ export const commands = {
 	 *  Linked edits replace one local.json per repository. Other scopes use the
 	 *  SQLite transaction.
 	 */
-	applyVariableChanges: (changes: VariableChange[]) => __TAURI_INVOKE<null>("apply_variable_changes", { changes }),
+	applyVariableChanges: (changes: VariableChange[]) => __TAURI_INVOKE<boolean>("apply_variable_changes", { changes }),
 	/**
 	 *  Creates an empty collection, so a new user can start without a Postman file.
 	 *  Returns the same shape as an import so the sidebar can switch to it at once.
@@ -55,9 +55,10 @@ export const commands = {
 	 */
 	importPostmanCollection: (path: string) => __TAURI_INVOKE<ImportedCollection>("import_postman_collection", { path }),
 	inspectRepository: (root: string) => __TAURI_INVOKE<boolean>("inspect_repository", { root }),
-	openRepository: (root: string, create: boolean, sourceCollectionId: string | null) => __TAURI_INVOKE<ImportedCollection>("open_repository", { root, create, sourceCollectionId }),
-	refreshRepositories: () => __TAURI_INVOKE<RepositoryRefresh>("refresh_repositories"),
-	relinkRepository: (collectionId: string, root: string) => __TAURI_INVOKE<null>("relink_repository", { collectionId, root }),
+	openRepository: (root: string, create: boolean, sourceCollectionId: string | null, preview: RepositoryPublishScope[] | null) => __TAURI_INVOKE<ImportedCollection>("open_repository", { root, create, sourceCollectionId, preview }),
+	previewRepositoryPublish: (sourceCollectionId: string) => __TAURI_INVOKE<RepositoryPublishScope[]>("preview_repository_publish", { sourceCollectionId }),
+	refreshRepositories: (linkedCollections: CollectionSummary[]) => __TAURI_INVOKE<RepositoryRefresh>("refresh_repositories", { linkedCollections }),
+	relinkRepository: (collectionId: string, root: string) => __TAURI_INVOKE<CollectionSummary[]>("relink_repository", { collectionId, root }),
 	saveRepositoryRequestAsNew: (request: RequestDetail) => __TAURI_INVOKE<CreateRequestResult>("save_repository_request_as_new", { request }),
 	listCollectionStats: () => __TAURI_INVOKE<CollectionStats[]>("list_collection_stats"),
 	listCollections: () => __TAURI_INVOKE<CollectionSummary[]>("list_collections"),
@@ -309,8 +310,15 @@ export type RepositoryLink = {
 	issue: string | null,
 };
 
+export type RepositoryPublishScope = {
+	environmentId: string | null,
+	name: string,
+	sharedKeys: string[],
+	secretKeys: string[],
+};
+
 export type RepositoryRefresh = {
-	collections: CollectionSummary[],
+	collections: CollectionSummary[] | null,
 	changedRequests: RepositoryRequestChange[],
 	changedCollectionIds: string[],
 	changedEnvironmentIds: string[],
@@ -320,6 +328,8 @@ export type RepositoryRefresh = {
 export type RepositoryRequestChange = {
 	requestId: string,
 	revision: string | null,
+	name: string | null,
+	method: string | null,
 };
 
 export type RequestBody = {
@@ -423,11 +433,19 @@ export type VariableEntry = {
 	enabled: boolean,
 	sensitive: boolean,
 	origin?: VariableOrigin | null,
-	hasSharedValue?: boolean | null,
+	presentation?: VariablePresentation | null,
 	requiredSecret?: boolean | null,
 };
 
 export type VariableOrigin = "shared" | "local" | "missingSecret";
+
+export type VariablePresentation = {
+	fixedKey: boolean,
+	editShared: boolean,
+	removal: VariableRemoval,
+};
+
+export type VariableRemoval = "none" | "local" | "useShared";
 
 /**
  *  Which set of variables a command reads or writes. The ids it holds are the

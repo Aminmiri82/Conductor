@@ -76,6 +76,8 @@ shared branches so Git protects the file before Conductor refreshes.
 ```gitignore
 /local.json
 /.local.json-*.tmp
+.conductor-*.tmp
+.*.conductor-deleted-*.tmp
 ```
 
 Create `local.json` with your own token or enter it in the Variables tab.
@@ -114,12 +116,24 @@ Conductor, which reports a parse error and leaves the file intact. Variable
 edits preserve the bytes of untouched entries.
 
 Conductor verifies that the local file is ignored and untracked before
-writing. It syncs new private bytes outside the Git working tree and installs
-them atomically. Refresh removes interrupted temporary files created by older
-versions. Share private values through a password manager when needed.
-Structured auth fields and credential headers, including `Cookie`, require
-variable references in the shared files. Review free-form fields such as URLs,
-bodies, and scripts before committing. File upload paths are stripped.
+writing. It blocks private writes if `.conductor` is itself a Git checkout.
+It syncs new private bytes outside the Git working tree and installs them
+atomically. Share private values through a password manager when needed.
+Structured auth fields and recognized credential headers require variable
+references in the shared files. Before committing, review free-form fields
+such as URLs, bodies, and scripts, as well as custom or unrecognized headers.
+Conductor strips file upload paths.
+
+Publish stages its files in a sibling directory so it can install the
+collection with one rename. The staging directory writes its own ignore
+rules before placing collection files there.
+
+When publishing a copy, review which variable keys will carry shared values
+and which will be declared as required secrets. You can move any proposed
+shared key to the required list before confirming. When exporting a linked
+collection to Postman, Conductor includes shared defaults and required
+secret names. It omits values from `local.json`. Ordinary collections
+continue to export their stored variables.
 
 ## Request And Folder Identity
 
@@ -138,13 +152,17 @@ Only `conductorFormat: 2` is supported. Each linked checkout has its own
 SQLite cache and app-side IDs. **Remove from this device** removes the cache
 and link. The shared files and `local.json` remain in the repository folder.
 
+When you have unsaved request drafts, Conductor asks before discarding them
+as part of switching, importing, creating, or opening a collection. This
+applies to local and linked collections.
+
 ## Write Order And Refresh
 
 Each replacement compares the current bytes against the bytes read for the
 edit. It syncs a temporary file before installing it. Conductor serializes
 writers for a root. On Unix, an advisory directory lock also coordinates
-separate Conductor processes using that worktree, and directory entries are
-synced before subsequent file edits.
+separate Conductor processes using that worktree, and Conductor syncs
+affected directories between dependent edits and before reporting success.
 
 | Operation | Write order |
 | --- | --- |

@@ -753,34 +753,33 @@ pub(super) fn header_credential(header: &KeyValue) -> Option<&str> {
                 .map_or(value, |(_, credential)| credential.trim()),
         );
     }
+    sensitive_key(key).then_some(value)
+}
+
+pub(super) fn sensitive_key(key: &str) -> bool {
+    let normalized: String = key
+        .bytes()
+        .filter(u8::is_ascii_alphanumeric)
+        .map(|byte| char::from(byte.to_ascii_lowercase()))
+        .collect();
     [
-        "Cookie",
-        "Cookie2",
-        "Set-Cookie",
-        "Set-Cookie2",
-        "API-Key",
-        "X-API-Key",
-        "X-API-Token",
-        "X-Access-Token",
-        "X-Auth-Token",
-        "X-Auth-Key",
-        "X-Session-Token",
-        "X-Authorization",
-        "X-CSRF-Token",
-        "X-XSRF-Token",
-        "X-Amz-Security-Token",
-        "Private-Token",
-        "Job-Token",
-        "X-Shopify-Access-Token",
-        "X-Goog-Api-Key",
-        "Ocp-Apim-Subscription-Key",
-        "Cf-Access-Client-Id",
-        "Cf-Access-Client-Secret",
-        "Cf-Access-Jwt-Assertion",
+        "secret",
+        "token",
+        "key",
+        "password",
+        "passwd",
+        "pwd",
+        "jwt",
+        "auth",
+        "credential",
+        "session",
+        "cookie",
+        "private",
+        "connectionstring",
+        "clientid",
     ]
     .iter()
-    .any(|name| name.eq_ignore_ascii_case(key))
-    .then_some(value)
+    .any(|word| normalized.contains(word))
 }
 
 pub(super) fn variable_reference(value: &str) -> Option<&str> {
@@ -942,6 +941,8 @@ fn list_files(
 #[cfg(test)]
 thread_local! {
     pub(super) static FILE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    #[cfg(unix)]
+    pub(super) static FAIL_DIRECTORY_SYNC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 pub(super) fn read(root: &Path, relative: &str) -> Result<Option<Vec<u8>>, StorageError> {
@@ -1094,6 +1095,13 @@ pub(super) fn sync_directories<'a>(
             for directory in root.join(".conductor").join(path).ancestors().skip(1) {
                 if !synced.insert(directory.to_owned()) {
                     break;
+                }
+                #[cfg(test)]
+                if FAIL_DIRECTORY_SYNC.replace(false) {
+                    return Err(io_error(
+                        directory,
+                        io::Error::other("simulated directory sync failure"),
+                    ));
                 }
                 File::open(directory)
                     .and_then(|file| file.sync_all())

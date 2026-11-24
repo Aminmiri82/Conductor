@@ -8,11 +8,11 @@ use std::{
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{de, Deserialize, Deserializer, Serialize};
 use serde_json::Value;
-use uuid::Uuid;
 
 use crate::{
     commands::models::{
-        SharedVariableChange, VariableChange, VariableEntry, VariableOrigin, VariableTarget,
+        RepositoryPublishScope, SharedVariableChange, VariableChange, VariableEntry,
+        VariableOrigin, VariablePresentation, VariableRemoval, VariableTarget,
     },
     storage::StorageError,
 };
@@ -24,7 +24,12 @@ use super::{
 
 pub(crate) const LOCAL: &str = "local.json";
 pub(super) const IGNORE: &str = ".gitignore";
-const IGNORE_RULES: [&str; 2] = ["/local.json", "/.local.json-*.tmp"];
+const IGNORE_RULES: [&str; 4] = [
+    "/local.json",
+    "/.local.json-*.tmp",
+    ".conductor-*.tmp",
+    ".*.conductor-deleted-*.tmp",
+];
 
 type Entries = BTreeMap<String, LocalValue>;
 
@@ -153,7 +158,7 @@ pub(super) fn reserve_environment_paths(
     Ok(())
 }
 
-pub(super) fn report_orphans(files: &Files, local: &LocalValues, issues: &mut Vec<String>) {
+pub(super) fn report_orphans(files: &Files, local: &LocalValues, issues: &mut Vec<super::Issue>) {
     for stem in local.environments.keys() {
         if !matches!(
             files
@@ -163,7 +168,7 @@ pub(super) fn report_orphans(files: &Files, local: &LocalValues, issues: &mut Ve
         ) {
             issues.push(format!(
                 ".conductor/local.json: environment key {stem:?} is orphaned. Rename the key to match an environment filename stem to use its values."
-            ));
+            ).into());
         }
     }
 }
@@ -186,6 +191,7 @@ pub(super) fn ensure_ignore(root: &Path) -> Result<(), StorageError> {
     }
     if after != text {
         format::replace(root, IGNORE, before.as_deref(), Some(after.as_bytes()))?;
+        format::sync_directories(root, [IGNORE])?;
     }
     Ok(())
 }
@@ -203,6 +209,16 @@ fn git(root: &Path, arguments: &[&str]) -> std::io::Result<Output> {
 }
 
 pub(super) fn check_private(root: &Path, names: &[&str]) -> Result<(), StorageError> {
+    // A nested checkout may track the same local.json independently of its parent.
+    match fs::symlink_metadata(root.join(".conductor/.git")) {
+        Ok(_) => {
+            return Err(input(
+                "Cannot write private values because .conductor is itself a Git checkout.",
+            ))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return Err(private_error()),
+    }
     let paths: Vec<_> = names
         .iter()
         .map(|name| format!(".conductor/{name}"))
@@ -254,7 +270,7 @@ pub(super) fn check_private(root: &Path, names: &[&str]) -> Result<(), StorageEr
     {
         Ok(())
     } else {
-        // Without Git, only our two final unconditional rules establish that
+        // Without Git, only the final unconditional rules establish that
         // a preceding negation or wildcard cannot expose the file.
         Err(private_error())
     }
@@ -308,26 +324,6 @@ pub(super) fn staging_directories(root: &Path) -> Result<Vec<PathBuf>, StorageEr
         }
     }
     Ok(directories)
-}
-
-pub(super) fn clean_legacy_staging(root: &Path) -> Result<(), StorageError> {
-    let Some(directory) = format::real_directory(root.join(".conductor"), false)? else {
-        return Ok(());
-    };
-    let entries = fs::read_dir(&directory).map_err(super::io)?;
-    for entry in entries {
-        let entry = entry.map_err(super::io)?;
-        let name = entry.file_name();
-        let legacy = name
-            .to_str()
-            .and_then(|name| name.strip_prefix(".local.json-"))
-            .and_then(|name| name.strip_suffix(".tmp"))
-            .is_some_and(|id| Uuid::parse_str(id).is_ok());
-        if legacy && entry.file_type().map_err(super::io)?.is_file() {
-            fs::remove_file(entry.path()).map_err(super::io)?;
-        }
-    }
-    Ok(())
 }
 
 fn private_error() -> StorageError {
@@ -569,11 +565,14 @@ pub(super) fn cache(
             values,
             secrets,
             local.entries(environment.map(|environment| environment.stem)),
+            None,
         )?;
     }
     Ok(updated)
 }
 
+// When an editor submits a change, report whether its table differs from
+// the stored result. A normal refresh reports any change to the cache.
 fn cache_scope(
     connection: &Connection,
     collection_id: &str,
@@ -581,7 +580,21 @@ fn cache_scope(
     values: &BTreeMap<String, String>,
     secrets: &BTreeSet<String>,
     local: Option<&Entries>,
+    edit: Option<&VariableChange>,
 ) -> Result<bool, StorageError> {
+    let submitted = edit.map(|edit| {
+        let upserts = edit
+            .upserts
+            .iter()
+            .map(|row| (row.key.trim(), row))
+            .collect::<BTreeMap<_, _>>();
+        let deletes = edit
+            .deletes
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        (upserts, deletes)
+    });
     let local_keys = local.into_iter().flat_map(BTreeMap::keys);
     let keys: BTreeSet<_> = values.keys().chain(secrets).chain(local_keys).collect();
     let mut existing = connection.prepare_cached(
@@ -595,7 +608,11 @@ fn cache_scope(
         "DELETE FROM repository_variables WHERE collection_id = ? AND scope_id = ? AND key = ?",
     )?;
     for key in old_keys.iter().filter(|key| !keys.contains(key)) {
-        changed |= remove.execute(params![collection_id, scope, key])? > 0;
+        let removed = remove.execute(params![collection_id, scope, key])? > 0;
+        changed |= removed
+            && submitted
+                .as_ref()
+                .is_none_or(|(_, deletes)| !deletes.contains(key.as_str()));
     }
     let mut upsert = connection.prepare_cached(
         "INSERT INTO repository_variables
@@ -619,7 +636,7 @@ fn cache_scope(
             }
             None => (shared, shared.is_some(), required),
         };
-        changed |= upsert.execute(params![
+        let updated = upsert.execute(params![
             collection_id,
             scope,
             key,
@@ -630,6 +647,28 @@ fn cache_scope(
             shared,
             required
         ])? > 0;
+        changed |= match &submitted {
+            Some((upserts, deletes)) => match upserts.get(key.as_str()) {
+                Some(row) => {
+                    let shown_value = effective.unwrap_or_default();
+                    let (origin, presentation) = display(
+                        shown_value,
+                        enabled,
+                        value.is_some(),
+                        shared.is_some(),
+                        required,
+                    );
+                    row.value != shown_value
+                        || row.enabled != enabled
+                        || row.sensitive != sensitive
+                        || row.origin != Some(origin)
+                        || row.presentation.as_ref() != Some(&presentation)
+                        || row.required_secret != Some(required)
+                }
+                None => updated || deletes.contains(key.as_str()),
+            },
+            None => updated,
+        };
     }
     Ok(changed)
 }
@@ -764,25 +803,48 @@ pub(crate) fn list(
     let rows = statement.query_map(params![target.collection_id, target.scope_id], |row| {
         let value = row.get::<_, Option<String>>(1)?.unwrap_or_default();
         let enabled: bool = row.get(2)?;
+        let has_shared: bool = row.get(5)?;
         let required = row.get(6)?;
-        let origin = if required && (!enabled || value.is_empty()) {
-            VariableOrigin::MissingSecret
-        } else if row.get(4)? {
-            VariableOrigin::Local
-        } else {
-            VariableOrigin::Shared
-        };
+        let (origin, presentation) = display(&value, enabled, row.get(4)?, has_shared, required);
         Ok(VariableEntry {
             key: row.get(0)?,
             value,
             enabled,
             sensitive: row.get(3)?,
             origin: Some(origin),
-            has_shared_value: Some(row.get(5)?),
+            presentation: Some(presentation),
             required_secret: Some(required),
         })
     })?;
     Ok(rows.collect::<Result<_, _>>()?)
+}
+
+fn display(
+    value: &str,
+    enabled: bool,
+    local: bool,
+    has_shared: bool,
+    required: bool,
+) -> (VariableOrigin, VariablePresentation) {
+    let origin = if required && (!enabled || value.is_empty()) {
+        VariableOrigin::MissingSecret
+    } else if local {
+        VariableOrigin::Local
+    } else {
+        VariableOrigin::Shared
+    };
+    (
+        origin,
+        VariablePresentation {
+            fixed_key: has_shared || required,
+            edit_shared: has_shared && !required,
+            removal: match origin {
+                VariableOrigin::Shared => VariableRemoval::None,
+                VariableOrigin::Local if has_shared => VariableRemoval::UseShared,
+                _ => VariableRemoval::Local,
+            },
+        },
+    )
 }
 
 impl Target {
@@ -916,8 +978,9 @@ fn update<'a>(
     connection: &Connection,
     target: &Target,
     targets: impl Iterator<Item = &'a Target>,
+    edits: &[(&Target, &VariableChange)],
     operation: impl FnOnce(&mut LocalValues, &BTreeMap<&str, Option<&str>>) -> Result<(), StorageError>,
-) -> Result<(), StorageError> {
+) -> Result<bool, StorageError> {
     let _lock = lock_root(&target.root)?;
     read_manifest(&target.root, Some(&target.manifest_id))?;
     let (bytes, before) = read_document(&target.root)?;
@@ -938,28 +1001,34 @@ fn update<'a>(
     write(&target.root, bytes.as_deref(), &before, &local)?;
     // Leave the watch stamp stale so the next refresh still notices a
     // concurrent shared edit or unrelated changes read from local.json.
+    let mut needs_reload = false;
     for (scope, stem) in std::iter::once((target.collection_id.as_str(), None)).chain(
         paths
             .iter()
             .map(|(scope, path)| (scope.as_str(), Some(environment_stem(path)))),
     ) {
         let shared = projection(connection, &target.collection_id, scope)?;
-        cache_scope(
+        let edit = edits
+            .iter()
+            .find_map(|(target, edit)| (target.scope_id == scope).then_some(*edit));
+        let changed = cache_scope(
             connection,
             &target.collection_id,
             scope,
             &shared.values,
             &shared.secrets,
             local.entries(stem),
+            edit,
         )?;
+        needs_reload |= edit.is_some() && changed;
     }
-    Ok(())
+    Ok(needs_reload)
 }
 
 pub(crate) fn edit(
     connection: &Connection,
     changes: &[(Target, &VariableChange)],
-) -> Result<(), StorageError> {
+) -> Result<bool, StorageError> {
     let mut by_root: BTreeMap<&Path, Vec<_>> = BTreeMap::new();
     for (target, change) in changes {
         by_root
@@ -976,77 +1045,85 @@ pub(crate) fn edit(
             }
         }
     }
+    let mut needs_reload = false;
     for changes in by_root.values() {
-        edit_file(connection, changes, true)?;
+        needs_reload |= edit_file(connection, changes, true)?;
     }
-    Ok(())
+    Ok(needs_reload)
 }
 
 fn edit_file(
     connection: &Connection,
     changes: &[(&Target, &VariableChange)],
     apply_deletes: bool,
-) -> Result<(), StorageError> {
+) -> Result<bool, StorageError> {
     let targets = changes.iter().map(|(target, _)| *target);
-    update(connection, changes[0].0, targets, |local, stems| {
-        for (target, change) in changes {
-            let required = projection(connection, &target.collection_id, &target.scope_id)?.secrets;
-            let baseline: BTreeMap<_, _> = change
-                .baseline
-                .iter()
-                .flatten()
-                .map(|row| (row.key.as_str(), row))
-                .collect();
-            let entries = local.entries_mut(stems[target.scope_id.as_str()]);
-            if apply_deletes {
-                for key in &change.deletes {
-                    entries.remove(key);
-                }
-            }
-            for variable in &change.upserts {
-                let key = variable.key.trim();
-                if key.is_empty() {
-                    continue;
-                }
-                let (mut value, mut enabled, mut sensitive) = (
-                    variable.value.as_str(),
-                    variable.enabled,
-                    variable.sensitive,
-                );
-                if let Some(prior) = baseline.get(key) {
-                    if let Some(latest) = entries.get(key) {
-                        let (latest_value, latest_enabled, latest_sensitive) = latest.fields();
-                        if value == prior.value {
-                            value = latest_value;
-                        }
-                        if enabled == prior.enabled {
-                            enabled = latest_enabled;
-                        }
-                        if sensitive == prior.sensitive {
-                            sensitive = latest_sensitive;
-                        }
-                    } else if prior.origin == Some(VariableOrigin::Local)
-                        && value == prior.value
-                        && !change.deletes.iter().any(|removed| removed == key)
-                    {
-                        return Err(input(format!(
-                            "Local variable {key:?} was removed on disk. Refresh the repository before editing it."
-                        )));
+    update(
+        connection,
+        changes[0].0,
+        targets,
+        changes,
+        |local, stems| {
+            for (target, change) in changes {
+                let required =
+                    projection(connection, &target.collection_id, &target.scope_id)?.secrets;
+                let baseline: BTreeMap<_, _> = change
+                    .baseline
+                    .iter()
+                    .flatten()
+                    .map(|row| (row.key.as_str(), row))
+                    .collect();
+                let entries = local.entries_mut(stems[target.scope_id.as_str()]);
+                if apply_deletes {
+                    for key in &change.deletes {
+                        entries.remove(key);
                     }
                 }
-                entries.insert(
-                    key.into(),
-                    LocalValue::new(
-                        value.to_owned(),
-                        enabled,
-                        sensitive || required.contains(key),
-                    ),
-                );
+                for variable in &change.upserts {
+                    let key = variable.key.trim();
+                    if key.is_empty() {
+                        continue;
+                    }
+                    let (mut value, mut enabled, mut sensitive) = (
+                        variable.value.as_str(),
+                        variable.enabled,
+                        variable.sensitive,
+                    );
+                    if let Some(prior) = baseline.get(key) {
+                        if let Some(latest) = entries.get(key) {
+                            let (latest_value, latest_enabled, latest_sensitive) = latest.fields();
+                            if value == prior.value {
+                                value = latest_value;
+                            }
+                            if enabled == prior.enabled {
+                                enabled = latest_enabled;
+                            }
+                            if sensitive == prior.sensitive {
+                                sensitive = latest_sensitive;
+                            }
+                        } else if prior.origin == Some(VariableOrigin::Local)
+                            && value == prior.value
+                            && !change.deletes.iter().any(|removed| removed == key)
+                        {
+                            return Err(input(format!(
+                            "Local variable {key:?} was removed on disk. Refresh the repository before editing it."
+                        )));
+                        }
+                    }
+                    entries.insert(
+                        key.into(),
+                        LocalValue::new(
+                            value.to_owned(),
+                            enabled,
+                            sensitive || required.contains(key),
+                        ),
+                    );
+                }
+                validate_entries(entries)?;
             }
-            validate_entries(entries)?;
-        }
-        Ok(())
-    })
+            Ok(())
+        },
+    )
 }
 
 pub(crate) fn set_script_values(
@@ -1057,7 +1134,7 @@ pub(crate) fn set_script_values(
         return Ok(());
     };
     let targets = writes.iter().map(|(target, _, _)| target);
-    update(connection, collection, targets, |local, stems| {
+    update(connection, collection, targets, &[], |local, stems| {
         for (target, key, value) in writes {
             let required = projection(connection, &target.collection_id, &target.scope_id)?.secrets;
             let entries = local.entries_mut(stems[target.scope_id.as_str()]);
@@ -1070,7 +1147,8 @@ pub(crate) fn set_script_values(
             validate_entries(entries)?;
         }
         Ok(())
-    })
+    })?;
+    Ok(())
 }
 
 pub(crate) fn stage_environment_copy(
@@ -1089,6 +1167,7 @@ pub(crate) fn stage_environment_copy(
         &shared.values,
         &shared.secrets,
         local.entries(stem),
+        None,
     )?;
     Ok(())
 }
@@ -1114,6 +1193,7 @@ pub(crate) fn stage_environment_import(
         &shared.values,
         &shared.secrets,
         Some(&entries),
+        None,
     )?;
     Ok(())
 }
@@ -1156,27 +1236,6 @@ fn auth_keys(auth: &crate::commands::models::AuthConfig) -> impl Iterator<Item =
     format::auth_credentials(auth).filter_map(|(_, value)| format::variable_reference(value))
 }
 
-fn sensitive_key(key: &str) -> bool {
-    let key: String = key
-        .chars()
-        .filter(char::is_ascii_alphanumeric)
-        .map(|c| c.to_ascii_lowercase())
-        .collect();
-    [
-        "token",
-        "password",
-        "secret",
-        "apikey",
-        "privatekey",
-        "credential",
-        "authorization",
-        "cookie",
-        "connectionstring",
-    ]
-    .iter()
-    .any(|suffix| key.ends_with(suffix))
-}
-
 fn source_values(
     connection: &Connection,
     source: &str,
@@ -1198,53 +1257,81 @@ fn source_values(
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
-fn share(
-    source: Entries,
-    credentials: &BTreeSet<String>,
-    values: &mut BTreeMap<String, String>,
-    secrets: &mut BTreeSet<String>,
-) {
-    for (key, value) in source {
-        let (value, enabled, sensitive) = value.fields();
-        if sensitive || credentials.contains(&key) || sensitive_key(&key) {
-            secrets.insert(key);
-        } else if enabled {
-            values.insert(key, value.into());
-        }
-    }
-}
-
 pub(super) fn share_source(
     connection: &Connection,
     source: &str,
     files: &mut Files,
-) -> Result<(), StorageError> {
+    approved: Option<&[RepositoryPublishScope]>,
+) -> Result<Vec<RepositoryPublishScope>, StorageError> {
     let credentials = credential_keys(files);
+    let mut scopes = Vec::new();
     for file in files.values_mut() {
-        match &mut file.entity {
-            Entity::Manifest(manifest) => {
-                share(
-                    source_values(connection, source, None)?,
-                    &credentials,
-                    &mut manifest.values,
-                    &mut manifest.secrets,
-                );
-                format::validate_manifest(manifest)?;
-            }
-            Entity::Environment(environment) => {
-                share(
-                    source_values(connection, source, Some(&environment.id))?,
-                    &credentials,
-                    &mut environment.values,
-                    &mut environment.secrets,
-                );
-                format::validate_environment(environment)?;
-            }
+        let (id, name, values, secrets) = match &mut file.entity {
+            Entity::Manifest(manifest) => (
+                None,
+                &manifest.name,
+                &mut manifest.values,
+                &mut manifest.secrets,
+            ),
+            Entity::Environment(environment) => (
+                Some(environment.id.as_str()),
+                &environment.name,
+                &mut environment.values,
+                &mut environment.secrets,
+            ),
             Entity::Request(_) => continue,
+        };
+        let selected = approved
+            .and_then(|approved| approved.get(scopes.len()))
+            .filter(|scope| scope.environment_id.as_deref() == id)
+            .map(|scope| &scope.secret_keys);
+        for (key, value) in source_values(connection, source, id)? {
+            let (value, enabled, sensitive) = value.fields();
+            if sensitive
+                || credentials.contains(&key)
+                || format::sensitive_key(&key)
+                || (enabled && selected.is_some_and(|keys| keys.contains(&key)))
+            {
+                secrets.insert(key);
+            } else if enabled {
+                values.insert(key, value.into());
+            }
+        }
+        scopes.push(RepositoryPublishScope {
+            environment_id: id.map(str::to_owned),
+            name: name.clone(),
+            shared_keys: values.keys().cloned().collect(),
+            secret_keys: secrets.clone(),
+        });
+        match &file.entity {
+            Entity::Manifest(manifest) => format::validate_manifest(manifest)?,
+            Entity::Environment(environment) => format::validate_environment(environment)?,
+            Entity::Request(_) => unreachable!(),
         }
         file.contents = format::encode(&file.entity)?;
     }
-    Ok(())
+    if approved.is_some_and(|approved| approved != scopes) {
+        return Err(input(
+            "The collection's variables changed. Review them again before publishing.",
+        ));
+    }
+    Ok(scopes)
+}
+
+pub(super) fn matches_published_scopes(files: &Files, approved: &[RepositoryPublishScope]) -> bool {
+    let mut scopes: BTreeMap<_, _> = approved
+        .iter()
+        .map(|scope| (scope.environment_id.as_deref(), scope))
+        .collect();
+    scopes.len() == approved.len()
+        && shared_scopes(files).all(|(environment, values, secrets)| {
+            scopes
+                .remove(&environment.map(|environment| environment.id))
+                .is_some_and(|scope| {
+                    scope.shared_keys.iter().eq(values.keys()) && &scope.secret_keys == secrets
+                })
+        })
+        && scopes.is_empty()
 }
 
 pub(super) fn publish_local(

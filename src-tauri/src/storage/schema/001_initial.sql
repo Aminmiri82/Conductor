@@ -161,7 +161,7 @@ CREATE TABLE IF NOT EXISTS repository_variables (
     PRIMARY KEY (collection_id, scope_id, key)
 ) WITHOUT ROWID;
 
-CREATE TABLE repository_pending_publishes (
+CREATE TABLE IF NOT EXISTS repository_pending_publishes (
     root TEXT PRIMARY KEY NOT NULL,
     manifest_id TEXT NOT NULL,
     source_collection_id TEXT

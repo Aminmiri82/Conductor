@@ -1057,7 +1057,8 @@ mod tests {
                 "collectionToken",
                 "fixture-source-token",
             );
-            let linked = super::super::repository::connect(connection, &root, true, Some(&source))
+            let preview = repository::publish_preview(connection, &source).unwrap();
+            let linked = repository::connect(connection, &root, true, Some((&source, &preview)))
                 .unwrap();
             std::fs::write(
                 root.join(".conductor/local.json"),

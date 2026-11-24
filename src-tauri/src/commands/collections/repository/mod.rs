@@ -1,6 +1,7 @@
 mod cache;
 mod format;
 mod group;
+mod request_save;
 #[cfg(test)]
 mod tests;
 pub(crate) mod values;
@@ -9,19 +10,20 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fs,
     hash::{DefaultHasher, Hash, Hasher},
+    io::Write,
     path::{Path, PathBuf},
 };
 
 use chrono::Utc;
-use rusqlite::{params, Connection, OptionalExtension};
-use serde::Serialize;
+use rusqlite::{params, Connection, OptionalExtension, Row};
+use serde::{Deserialize, Serialize};
 use tauri::State;
 use uuid::Uuid;
 
 use crate::{
     commands::{
         error::CommandError,
-        models::{CollectionSummary, ImportedCollection, RepositoryLink},
+        models::{CollectionSummary, ImportedCollection, RepositoryLink, RepositoryPublishScope},
     },
     storage::StorageError,
     AppState,
@@ -85,7 +87,59 @@ struct Link {
     root: String,
     manifest_id: String,
     issue: Option<String>,
-    watch_stamp: Option<String>,
+    watch: Option<WatchState>,
+}
+
+impl Link {
+    fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        let watch: Option<String> = row.get(3)?;
+        Ok(Self {
+            root: row.get(0)?,
+            manifest_id: row.get(1)?,
+            issue: row.get(2)?,
+            // An older stamp cannot establish whether a safety gate applies.
+            watch: watch.and_then(|watch| serde_json::from_str(&watch).ok()),
+        })
+    }
+
+    fn has_issue(&self, kind: &IssueKind) -> bool {
+        self.watch
+            .as_ref()
+            .is_some_and(|watch| watch.issues.contains(kind))
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+enum IssueKind {
+    DuplicateRequest(String),
+    DuplicateGroup,
+    DuplicateKey,
+    InvalidLocal,
+    Other,
+}
+
+struct Issue {
+    kind: IssueKind,
+    message: String,
+}
+
+impl Issue {
+    fn new(kind: IssueKind, message: String) -> Self {
+        Self { kind, message }
+    }
+}
+
+impl From<String> for Issue {
+    fn from(message: String) -> Self {
+        Self::new(IssueKind::Other, message)
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+struct WatchState {
+    stamp: u64,
+    local: Option<u64>,
+    issues: Vec<IssueKind>,
 }
 
 #[derive(Debug, Serialize, specta::Type)]
@@ -93,19 +147,21 @@ struct Link {
 pub struct RepositoryRequestChange {
     pub request_id: String,
     pub revision: Option<String>,
+    pub name: Option<String>,
+    pub method: Option<String>,
 }
 
 #[derive(Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RepositoryRefresh {
-    pub collections: Vec<CollectionSummary>,
+    pub collections: Option<Vec<CollectionSummary>>,
     pub changed_requests: Vec<RepositoryRequestChange>,
     pub changed_collection_ids: Vec<String>,
     pub changed_environment_ids: Vec<String>,
     pub changed_variable_collection_ids: Vec<String>,
 }
 
-pub(crate) use cache::revision;
+pub(crate) use request_save::save_linked_request;
 
 pub(crate) fn linked(connection: &Connection, collection_id: &str) -> Result<bool, StorageError> {
     Ok(connection.query_row(
@@ -119,7 +175,7 @@ fn read_link(connection: &Connection, collection_id: &str) -> Result<Option<Link
     Ok(connection.query_row(
         "SELECT root, manifest_id, issue, watch_stamp FROM repository_links WHERE collection_id = ?",
         [collection_id],
-        |row| Ok(Link { root: row.get(0)?, manifest_id: row.get(1)?, issue: row.get(2)?, watch_stamp: row.get(3)? }),
+        Link::from_row,
     ).optional()?)
 }
 
@@ -209,23 +265,62 @@ fn repository_exists(root: &Path) -> Result<bool, StorageError> {
 
 #[tauri::command(async)]
 #[specta::specta]
+pub fn preview_repository_publish(
+    source_collection_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<RepositoryPublishScope>, CommandError> {
+    Ok(state
+        .database
+        .with_read_connection(|connection| publish_preview(connection, &source_collection_id))?)
+}
+
+pub(crate) fn publish_preview(
+    connection: &Connection,
+    source: &str,
+) -> Result<Vec<RepositoryPublishScope>, StorageError> {
+    let (_, preview) = publish_projection(connection, source, &Uuid::new_v4().to_string(), None)?;
+    Ok(preview)
+}
+
+fn publish_projection(
+    connection: &Connection,
+    source: &str,
+    manifest_id: &str,
+    approved: Option<&[RepositoryPublishScope]>,
+) -> Result<(Files, Vec<RepositoryPublishScope>), StorageError> {
+    if linked(connection, source)? {
+        return Err(input("Choose a local collection to publish."));
+    }
+    let mut files = cache::project(connection, source, manifest_id, &StoredFiles::new(), None)?;
+    let scopes = values::share_source(connection, source, &mut files, approved)?;
+    Ok((files, scopes))
+}
+
+#[tauri::command(async)]
+#[specta::specta]
 pub fn open_repository(
     root: String,
     create: bool,
     source_collection_id: Option<String>,
+    preview: Option<Vec<RepositoryPublishScope>>,
     state: State<'_, AppState>,
 ) -> Result<ImportedCollection, CommandError> {
+    let source = match (source_collection_id.as_deref(), preview.as_deref()) {
+        (None, None) => None,
+        (Some(id), Some(preview)) if create => Some((id, preview)),
+        _ => return Err(input("Review the collection's variables before publishing.").into()),
+    };
     let root = canonical_root(&root)?;
-    Ok(state.database.with_connection(|connection| {
-        connect(connection, &root, create, source_collection_id.as_deref())
-    })?)
+    Ok(state
+        .database
+        .with_connection(|connection| connect(connection, &root, create, source))?)
 }
 
 pub(crate) fn connect(
     connection: &mut Connection,
     root: &Path,
     create: bool,
-    source: Option<&str>,
+    source: Option<(&str, &[RepositoryPublishScope])>,
 ) -> Result<ImportedCollection, StorageError> {
     let root_text = root_string(root)?;
     let existing: Option<String> = connection
@@ -237,6 +332,11 @@ pub(crate) fn connect(
         .optional()?;
     let collection_id = match existing {
         Some(id) => {
+            if create && source.is_some() {
+                return Err(input(
+                    "This repository is already linked. Choose it from the collection list.",
+                ));
+            }
             if create && !repository_exists(root)? {
                 return Err(input("This repository is already linked. Restore its .conductor directory or relink the collection."));
             }
@@ -253,13 +353,13 @@ pub(crate) fn connect(
                 |row| Ok((row.get(0)?, row.get(1)?)),
             ).optional()?;
             clean_staging(root)?;
-            values::clean_legacy_staging(root)?;
+            let source_id = source.map(|(id, _)| id);
             let has_repository = repository_exists(root)?;
             let mut expected = None;
             let mut publish_source = None;
             if has_repository {
                 if let Some((id, previous_source)) = pending {
-                    if create && source != previous_source.as_deref() {
+                    if create && source_id != previous_source.as_deref() {
                         return Err(input("A different collection was already published here. Open the repository to finish linking it."));
                     }
                     if read_manifest(root, None)?.entity.id() == id {
@@ -276,22 +376,8 @@ pub(crate) fn connect(
                 }
             } else if create {
                 let manifest_id = Uuid::new_v4().to_string();
-                let staging = Publish::new(root)?;
-                values::ensure_ignore(&staging.path)?;
-                let files = if let Some(source) = source {
-                    if linked(connection, source)? {
-                        return Err(input("Choose a local collection to publish."));
-                    }
-                    let mut files = cache::project(
-                        connection,
-                        source,
-                        &manifest_id,
-                        &StoredFiles::new(),
-                        None,
-                        None,
-                    )?;
-                    values::share_source(connection, source, &mut files)?;
-                    files
+                let files = if let Some((source, preview)) = source {
+                    publish_projection(connection, source, &manifest_id, Some(preview))?.0
                 } else {
                     let manifest = Entity::Manifest(format::Manifest {
                         conductor_format: format::READABLE_FORMAT,
@@ -310,6 +396,8 @@ pub(crate) fn connect(
                     cache::put(&mut files, MANIFEST.into(), manifest)?;
                     files
                 };
+                let staging = Publish::new(root)?;
+                values::ensure_ignore(&staging.path)?;
                 let (_, _, edits) = plan_projection(
                     &staging.path,
                     &Files::new(),
@@ -331,15 +419,15 @@ pub(crate) fn connect(
                     &StoredFiles::new(),
                     &Groups::new(),
                 )?;
-                if !issues.is_empty() {
-                    return Err(input(issues.join("\n")));
+                if let Some(issue) = issue_text(&issues) {
+                    return Err(input(issue));
                 }
                 // Record only the identity needed to finish linking if the app
                 // exits after installing the directory.
                 connection.execute(
                     "INSERT OR REPLACE INTO repository_pending_publishes
                      (root, manifest_id, source_collection_id) VALUES (?, ?, ?)",
-                    params![root_text, manifest_id, source],
+                    params![root_text, manifest_id, source_id],
                 )?;
                 if repository_exists(root)? {
                     return Err(input("This folder already contains .conductor."));
@@ -347,7 +435,7 @@ pub(crate) fn connect(
                 fs::rename(staging.path.join(".conductor"), root.join(".conductor")).map_err(io)?;
                 format::sync_directories(root, [MANIFEST])?;
                 expected = Some(manifest_id);
-                publish_source = source.map(str::to_owned);
+                publish_source = source_id.map(str::to_owned);
             }
 
             let before = Watch::read(root)?;
@@ -357,6 +445,13 @@ pub(crate) fn connect(
                 &StoredFiles::new(),
                 &Groups::new(),
             )?;
+            if has_repository {
+                if let Some((_, approved)) = source {
+                    if !values::matches_published_scopes(&files, approved) {
+                        return Err(input("This collection was already published with different variable settings. Open the repository to finish linking it."));
+                    }
+                }
+            }
             values::ensure_ignore(root)?;
             if let Some(source) = publish_source {
                 let local = values::publish_local(connection, &source, &files)?;
@@ -367,15 +462,16 @@ pub(crate) fn connect(
             values::report_orphans(&files, &local, &mut issues);
             if watch.0.contains_key(values::LOCAL) {
                 if let Err(error) = values::check_private(root, &[values::LOCAL]) {
-                    issues.push(error.to_string());
+                    issues.push(error.to_string().into());
                 }
             }
-            if !before.shared().eq(watch.shared()) || watch_stamp(root)? != watch.stamp() {
+            if !before.shared().eq(watch.shared()) || Watch::read(root)?.stamp() != watch.stamp() {
                 return Err(input(
                     "The repository changed while opening. Try opening it again.",
                 ));
             }
-            let stamp = watch.stamp();
+            let issue = issue_text(&issues);
+            let stamp = watch.encode(issue_kinds(issues))?;
             let Entity::Manifest(manifest) = &files[MANIFEST].entity else {
                 unreachable!()
             };
@@ -388,7 +484,7 @@ pub(crate) fn connect(
             )?;
             tx.execute(
                 "INSERT INTO repository_links (collection_id, root, manifest_id, issue, watch_stamp) VALUES (?, ?, ?, ?, ?)",
-                params![id, root_text, manifest.id, issue_text(&issues), stamp],
+                params![id, root_text, manifest.id, issue, stamp],
             )?;
             cache::apply(&tx, &id, &files, &StoredFiles::new())?;
             cache::record_groups(&tx, &id, &Groups::new(), &groups)?;
@@ -409,7 +505,8 @@ pub(crate) fn connect(
     })
 }
 
-const PUBLISH_MARKER: &str = ".conductor-staging";
+const PUBLISH_MARKER: &str = ".gitignore";
+const PUBLISH_IGNORE: &[u8] = b"# Conductor publish staging\n/*\n";
 
 struct Publish {
     path: PathBuf,
@@ -421,7 +518,7 @@ impl Publish {
         let path = root.join(format!(".conductor-publish-{}", Uuid::new_v4()));
         fs::create_dir(&path).map_err(io)?;
         let mut staging = Self { path, marker: None };
-        let marker = fs::OpenOptions::new()
+        let mut marker = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(staging.path.join(PUBLISH_MARKER))
@@ -429,8 +526,13 @@ impl Publish {
         marker
             .try_lock()
             .map_err(|_| input("Could not lock the staging directory."))?;
+        // This root-level directory needs its own ignore rules before it
+        // holds any staged files. It stays on the same volume for rename.
+        marker.write_all(PUBLISH_IGNORE).map_err(io)?;
+        marker.sync_all().map_err(io)?;
         staging.marker = Some(marker);
         fs::create_dir(staging.path.join(".conductor")).map_err(io)?;
+        format::sync_directories(&staging.path, [MANIFEST])?;
         Ok(staging)
     }
 }
@@ -438,7 +540,7 @@ impl Publish {
 impl Drop for Publish {
     fn drop(&mut self) {
         drop(self.marker.take());
-        let _ = fs::remove_dir_all(&self.path);
+        let _ = remove_staging(&self.path);
     }
 }
 
@@ -455,7 +557,10 @@ fn clean_staging(root: &Path) -> Result<(), StorageError> {
         }
         let path = entry.path();
         let marker_path = path.join(PUBLISH_MARKER);
-        if !fs::symlink_metadata(&marker_path).is_ok_and(|metadata| metadata.is_file()) {
+        if !fs::symlink_metadata(&marker_path).is_ok_and(|metadata| {
+            metadata.is_file() && metadata.len() == PUBLISH_IGNORE.len() as u64
+        }) || !fs::read(&marker_path).is_ok_and(|contents| contents == PUBLISH_IGNORE)
+        {
             continue;
         }
         let marker = match fs::OpenOptions::new().write(true).open(&marker_path) {
@@ -466,9 +571,23 @@ fn clean_staging(root: &Path) -> Result<(), StorageError> {
         if marker.try_lock().is_err() {
             continue;
         }
-        fs::remove_dir_all(&path).map_err(io)?;
+        remove_staging(&path)?;
     }
     Ok(())
+}
+
+fn remove_staging(path: &Path) -> Result<(), StorageError> {
+    // Leave the ignore file in place until there is no staged content.
+    match fs::remove_dir_all(path.join(".conductor")) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(io(error)),
+    }
+    #[cfg(unix)]
+    fs::File::open(path)
+        .and_then(|directory| directory.sync_all())
+        .map_err(io)?;
+    fs::remove_dir_all(path).map_err(io)
 }
 
 #[tauri::command(async)]
@@ -477,7 +596,7 @@ pub fn relink_repository(
     collection_id: String,
     root: String,
     state: State<'_, AppState>,
-) -> Result<(), CommandError> {
+) -> Result<Vec<CollectionSummary>, CommandError> {
     let root = canonical_root(&root)?;
     Ok(state
         .database
@@ -488,10 +607,10 @@ fn relocate(
     connection: &mut Connection,
     collection_id: &str,
     root: &Path,
-) -> Result<(), StorageError> {
+) -> Result<Vec<CollectionSummary>, StorageError> {
     let link = read_link(connection, collection_id)?
         .ok_or_else(|| input("This collection has no repository."))?;
-    let stored = cache::stored_files(connection, collection_id, None)?;
+    let stored = cache::stored_files(connection, collection_id)?;
     let groups = cache::groups(connection, collection_id)?;
     let _lock = lock_root(root)?;
     let (_, _, issues) = scan(root, Some(&link.manifest_id), &stored, &groups)?;
@@ -503,48 +622,70 @@ fn relocate(
     )?;
     // The next workspace refresh delivers changes to any open editors.
     tx.commit()?;
-    Ok(())
+    read_collections(connection)
 }
 
 #[tauri::command(async)]
 #[specta::specta]
-pub fn refresh_repositories(state: State<'_, AppState>) -> Result<RepositoryRefresh, CommandError> {
-    Ok(state.database.with_connection(refresh_all)?)
+pub fn refresh_repositories(
+    linked_collections: Vec<CollectionSummary>,
+    state: State<'_, AppState>,
+) -> Result<RepositoryRefresh, CommandError> {
+    Ok(state
+        .database
+        .with_connection(|connection| refresh_workspace(connection, &linked_collections))?)
+}
+
+fn refresh_workspace(
+    connection: &mut Connection,
+    linked_collections: &[CollectionSummary],
+) -> Result<RepositoryRefresh, StorageError> {
+    let mut refresh = refresh_all(connection)?;
+    let current = match refresh.collections.take() {
+        Some(current) => current,
+        None => read_collections(connection)?,
+    };
+    // A send can refresh private values without updating the workspace.
+    refresh.collections = current
+        .iter()
+        .filter(|collection| collection.repository.is_some())
+        .ne(linked_collections)
+        .then_some(current);
+    Ok(refresh)
 }
 
 pub(crate) fn refresh_all(connection: &mut Connection) -> Result<RepositoryRefresh, StorageError> {
+    refresh_after(connection, None)
+}
+
+fn refresh_after(
+    connection: &mut Connection,
+    mut first: Option<(&str, Changes)>,
+) -> Result<RepositoryRefresh, StorageError> {
     let links = {
         let mut statement = connection.prepare(
-            "SELECT collection_id, root, manifest_id, issue, watch_stamp FROM repository_links",
+            "SELECT root, manifest_id, issue, watch_stamp, collection_id FROM repository_links",
         )?;
         let rows = statement.query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                Link {
-                    root: row.get(1)?,
-                    manifest_id: row.get(2)?,
-                    issue: row.get(3)?,
-                    watch_stamp: row.get(4)?,
-                },
-            ))
+            Ok((row.get::<_, String>(4)?, Link::from_row(row)?))
         })?;
         rows.collect::<Result<Vec<_>, _>>()?
     };
+    let mut summary_changed = false;
     let mut changed_collection_ids = Vec::new();
     let mut changed_requests = Vec::new();
     let mut changed_environment_ids = Vec::new();
     let mut changed_variable_collection_ids = Vec::new();
     for (id, link) in links {
-        let mut changes = match refresh_link(connection, &id, &link) {
-            Ok(changes) => changes,
-            Err(error) => {
-                set_issue(connection, &id, Some(&error.to_string()))?;
-                Changes {
-                    shared: true,
-                    ..Default::default()
-                }
+        let mut changes = if first.as_ref().is_some_and(|(saved, _)| *saved == id) {
+            first.take().expect("checked the changed collection").1
+        } else {
+            match refresh_link(connection, &id, &link) {
+                Ok(changes) => changes,
+                Err(error) => report_refresh_error(connection, &id, &link, error)?,
             }
         };
+        summary_changed |= changes.summary;
         if changes.shared {
             changed_collection_ids.push(id.clone());
         }
@@ -555,7 +696,9 @@ pub(crate) fn refresh_all(connection: &mut Connection) -> Result<RepositoryRefre
         changed_environment_ids.append(&mut changes.environments);
     }
     Ok(RepositoryRefresh {
-        collections: read_collections(connection)?,
+        collections: summary_changed
+            .then(|| read_collections(connection))
+            .transpose()?,
         changed_requests,
         changed_collection_ids,
         changed_environment_ids,
@@ -566,6 +709,7 @@ pub(crate) fn refresh_all(connection: &mut Connection) -> Result<RepositoryRefre
 #[derive(Default)]
 struct Changes {
     shared: bool,
+    summary: bool,
     variables: bool,
     requests: Vec<RepositoryRequestChange>,
     environments: Vec<String>,
@@ -577,16 +721,46 @@ fn refresh_link(
     link: &Link,
 ) -> Result<Changes, StorageError> {
     let root = Path::new(&link.root);
+    let lock = lock_root(root);
+    match lock {
+        Ok(_lock) => refresh_locked(connection, collection_id, link, Watch::read(root))
+            .map(|(changes, _)| changes),
+        Err(error) => report_refresh_error(connection, collection_id, link, error),
+    }
+}
+
+fn report_refresh_error(
+    connection: &Connection,
+    id: &str,
+    link: &Link,
+    error: StorageError,
+) -> Result<Changes, StorageError> {
+    let issue = Some(error.to_string());
+    let changed = issue != link.issue;
+    if changed || link.watch.is_some() {
+        set_issue(connection, id, issue.as_deref())?;
+    }
+    Ok(Changes {
+        shared: changed,
+        summary: changed,
+        ..Default::default()
+    })
+}
+
+fn refresh_locked(
+    connection: &mut Connection,
+    collection_id: &str,
+    link: &Link,
+    watch: Result<Watch, StorageError>,
+) -> Result<(Changes, Option<Watch>), StorageError> {
+    let root = Path::new(&link.root);
+    if watch
+        .as_ref()
+        .is_ok_and(|watch| watch.matches(link.watch.as_ref()))
+    {
+        return Ok((Changes::default(), watch.ok()));
+    }
     let snapshot = (|| {
-        let lock = lock_root(root)?;
-        let watch = Watch::read(root);
-        if watch
-            .as_ref()
-            .is_ok_and(|watch| link.watch_stamp.as_deref() == Some(watch.stamp().as_str()))
-        {
-            return Ok(None);
-        }
-        values::clean_legacy_staging(root)?;
         // A branch can remove the tracked ignore file while leaving local.json.
         let protection = if file_stamp(root, values::LOCAL)?.is_some() {
             values::ensure_ignore(root).and_then(|()| values::check_private(root, &[values::LOCAL]))
@@ -599,7 +773,7 @@ fn refresh_link(
             Ok(()) => error,
             Err(protection) => input(format!("{error}\n{protection}")),
         })?;
-        let stored = cache::stored_files(connection, collection_id, None)?;
+        let stored = cache::stored_files(connection, collection_id)?;
         let old_groups = cache::groups(connection, collection_id)?;
         let (files, groups, mut issues) =
             scan(root, Some(&link.manifest_id), &stored, &old_groups)?;
@@ -609,12 +783,15 @@ fn refresh_link(
                 local
             }
             Err(error) => {
-                issues.push(format!("{INVALID_LOCAL}: {error}"));
+                issues.push(Issue::new(
+                    IssueKind::InvalidLocal,
+                    format!("{INVALID_LOCAL}: {error}"),
+                ));
                 values::cached_local(connection, collection_id, &files)?
             }
         };
         if let Err(error) = protection {
-            issues.push(error.to_string());
+            issues.push(error.to_string().into());
         }
         let after = Watch::read(root)?;
         if !watch.contents().eq(after.contents()) {
@@ -622,33 +799,19 @@ fn refresh_link(
                 "The repository changed during refresh. Focus the window again to retry.",
             ));
         }
-        Ok(Some((
-            lock,
-            after.stamp(),
-            stored,
-            old_groups,
-            files,
-            groups,
-            issues,
-            local,
-        )))
+        Ok((after, stored, old_groups, files, groups, issues, local))
     })();
-    let (_lock, stamp, stored, old_groups, files, groups, issues, local) = match snapshot {
-        Ok(Some(snapshot)) => snapshot,
-        Ok(None) => return Ok(Changes::default()),
+    let (watch, stored, old_groups, files, groups, issues, local) = match snapshot {
+        Ok(snapshot) => snapshot,
         Err(error) => {
-            let issue = Some(error.to_string());
-            let changed = issue != link.issue;
-            if changed || link.watch_stamp.is_some() {
-                set_issue(connection, collection_id, issue.as_deref())?;
-            }
-            return Ok(Changes {
-                shared: changed,
-                ..Default::default()
-            });
+            return Ok((
+                report_refresh_error(connection, collection_id, link, error)?,
+                None,
+            ))
         }
     };
     let issue = issue_text(&issues);
+    let stamp = watch.encode(issue_kinds(issues))?;
     let tx = connection.savepoint()?;
     let mut changes = Changes::default();
     if files.len() != stored.len()
@@ -668,8 +831,9 @@ fn refresh_link(
         params![issue, stamp, collection_id],
     )?;
     tx.commit()?;
-    changes.shared |= issue != link.issue;
-    Ok(changes)
+    changes.summary |= issue != link.issue;
+    changes.shared |= changes.summary;
+    Ok((changes, Some(watch)))
 }
 
 const INVALID_LOCAL: &str = ".conductor/local.json is unreadable";
@@ -686,19 +850,14 @@ pub(crate) fn private_needs_refresh_for_send(
         return Ok(false);
     };
     let current = file_stamp(Path::new(&link.root), values::LOCAL).map_err(|_| repair_local())?;
-    let cached = link
-        .watch_stamp
-        .as_deref()
-        .and_then(|stamp| stamp.split_once(':'))
-        .map(|(_, local)| local);
-    if !cached.is_some_and(|cached| current == cached.parse().ok()) {
+    if !link
+        .watch
+        .as_ref()
+        .is_some_and(|watch| watch.local == current)
+    {
         return Ok(true);
     }
-    if link
-        .issue
-        .as_deref()
-        .is_some_and(|issue| issue.lines().any(|line| line.starts_with(INVALID_LOCAL)))
-    {
+    if link.has_issue(&IssueKind::InvalidLocal) {
         return Err(repair_local());
     }
     Ok(false)
@@ -716,14 +875,6 @@ pub(crate) fn refresh_private_for_send(
         }
     }
     Ok(())
-}
-
-fn local_stamp(stamp: Option<u64>) -> String {
-    stamp.map_or_else(String::new, |stamp| stamp.to_string())
-}
-
-fn watch_stamp(root: &Path) -> Result<String, StorageError> {
-    Ok(Watch::read(root)?.stamp())
 }
 
 struct Watch(BTreeMap<String, u64>);
@@ -766,14 +917,22 @@ impl Watch {
             .filter(|(path, _)| path.as_str() != values::IGNORE)
     }
 
-    fn stamp(&self) -> String {
+    fn stamp(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
         self.0.hash(&mut hasher);
-        format!(
-            "{}:{}",
-            hasher.finish(),
-            local_stamp(self.0.get(values::LOCAL).copied())
-        )
+        hasher.finish()
+    }
+
+    fn matches(&self, state: Option<&WatchState>) -> bool {
+        state.is_some_and(|state| state.stamp == self.stamp())
+    }
+
+    fn encode(&self, issues: Vec<IssueKind>) -> Result<String, StorageError> {
+        Ok(serde_json::to_string(&WatchState {
+            stamp: self.stamp(),
+            local: self.0.get(values::LOCAL).copied(),
+            issues,
+        })?)
     }
 
     fn matches_before(&self, root: &Path, edits: &[Edit]) -> bool {
@@ -782,7 +941,7 @@ impl Watch {
             .all(|edit| file_stamp(root, &edit.path).ok() == Some(self.0.get(&edit.path).copied()))
     }
 
-    fn after_edit(mut self, root: &Path, edits: &[Edit]) -> Option<String> {
+    fn after_edit(mut self, root: &Path, edits: &[Edit]) -> Option<Self> {
         for edit in edits {
             let stamp = file_stamp(root, &edit.path).ok()?;
             if format::read(root, &edit.path).ok()?.as_deref() != edit.next.as_deref()
@@ -796,7 +955,7 @@ impl Watch {
                 self.0.remove(&edit.path);
             }
         }
-        Some(self.stamp())
+        Some(self)
     }
 }
 
@@ -828,8 +987,22 @@ fn set_issue(connection: &Connection, id: &str, issue: Option<&str>) -> Result<(
     Ok(())
 }
 
-fn issue_text(issues: &[String]) -> Option<String> {
-    (!issues.is_empty()).then(|| issues.join("\n"))
+fn issue_text(issues: &[Issue]) -> Option<String> {
+    (!issues.is_empty()).then(|| {
+        issues
+            .iter()
+            .map(|issue| issue.message.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    })
+}
+
+fn issue_kinds(issues: Vec<Issue>) -> Vec<IssueKind> {
+    issues
+        .into_iter()
+        .map(|issue| issue.kind)
+        .filter(|kind| *kind != IssueKind::Other)
+        .collect()
 }
 
 fn ensure_same_root(root: &Path) -> Result<(), StorageError> {
@@ -871,7 +1044,7 @@ fn scan(
     expected_id: Option<&str>,
     stored: &StoredFiles,
     old_groups: &Groups,
-) -> Result<(Files, Groups, Vec<String>), StorageError> {
+) -> Result<(Files, Groups, Vec<Issue>), StorageError> {
     let manifest = read_manifest(root, expected_id)?;
     let Entity::Manifest(data) = &manifest.entity else {
         unreachable!()
@@ -901,7 +1074,7 @@ fn scan(
         .chain(format::list(root, "environments")?);
     for path in paths {
         if let Err(error) = format::validate_readable_path(&path) {
-            issues.push(error.to_string());
+            issues.push(error.to_string().into());
             unknown_group |= path.starts_with("requests/");
             continue;
         }
@@ -919,7 +1092,7 @@ fn scan(
             let file = match parsed {
                 Ok(file) => file,
                 Err(error) => {
-                    issues.push(format::at_path(&path, error).to_string());
+                    issues.push(format::at_path(&path, error).to_string().into());
                     let Some(old) = stored.get(&path) else {
                         continue;
                     };
@@ -949,7 +1122,7 @@ fn scan(
         let (byte_count, parsed) = match parsed {
             Ok(parsed) => parsed,
             Err(error) => {
-                issues.push(format::at_path(&path, error).to_string());
+                issues.push(format::at_path(&path, error).to_string().into());
                 if let Some(old) = old_groups.get(&path) {
                     if old.folder_id.is_empty() || parents.contains(old.folder_id.as_str()) {
                         failed_folders.insert(old.folder_id.clone());
@@ -964,20 +1137,29 @@ fn scan(
         let folder_id = parsed.folder_id.unwrap_or_default();
         if !folder_paths.insert(folder_id.clone()) {
             duplicate = true;
-            issues.push(format!("{path}: Folder has more than one request file."));
+            issues.push(Issue::new(
+                IssueKind::DuplicateGroup,
+                format!("{path}: Folder has more than one request file."),
+            ));
         }
         if let Some(error) = parsed.identity_issue {
             failed_folders.insert(folder_id.clone());
-            issues.push(format!("{path}: {error}"));
+            issues.push(format!("{path}: {error}").into());
         }
         for key in parsed.duplicate_keys {
-            issues.push(format!("{path}: Duplicate request key {key:?}. Saving the group will assign distinct keys."));
+            issues.push(Issue::new(IssueKind::DuplicateKey, format!("{path}: Duplicate request key {key:?}. Saving the group will assign distinct keys.")));
+        }
+        for id in parsed.duplicate_ids {
+            issues.push(Issue::new(
+                IssueKind::DuplicateRequest(id.clone()),
+                format!("{path} [{id}]: Duplicate request ID."),
+            ));
         }
         for (id, request) in parsed.requests {
             let request = match request {
                 Ok(request) => Some(request),
                 Err(error) => {
-                    issues.push(format!("{path} [{id}]: {error}"));
+                    issues.push(format!("{path} [{id}]: {error}").into());
                     invalid_requests
                         .entry(id.clone())
                         .or_insert_with(|| (!folder_id.is_empty()).then(|| folder_id.clone()));
@@ -1036,7 +1218,10 @@ fn scan(
             });
             for (index, (path, _)) in entries.iter().enumerate() {
                 if Some(index) != winner {
-                    issues.push(format!("{path} [{id}]: Duplicate request ID{selection}."));
+                    issues.push(Issue::new(
+                        IssueKind::DuplicateRequest(id.clone()),
+                        format!("{path} [{id}]: Duplicate request ID{selection}."),
+                    ));
                 }
             }
         }
@@ -1073,7 +1258,7 @@ fn scan(
             files.extend(entries);
         } else {
             for (path, _) in entries {
-                issues.push(format!("{path}: Duplicate environment ID {id}."));
+                issues.push(format!("{path}: Duplicate environment ID {id}.").into());
                 if let Some(old) = stored.get(&path).filter(|old| remote_id(&old.id) == id) {
                     files.insert(path, environment_file(old.contents.clone())?);
                 }
@@ -1084,7 +1269,7 @@ fn scan(
         return Err(input(REPOSITORY_SIZE_ERROR));
     }
     files.insert(MANIFEST.into(), manifest);
-    issues.sort();
+    issues.sort_unstable_by(|a, b| a.message.cmp(&b.message));
     Ok((files, groups, issues))
 }
 
@@ -1096,25 +1281,16 @@ pub(crate) fn mutate<T>(
     collection_id: &str,
     operation: impl FnOnce(&mut Connection) -> Result<T, StorageError>,
 ) -> Result<T, StorageError> {
-    mutate_scoped(connection, collection_id, None, operation).map(|(result, _)| result)
-}
-
-pub(crate) fn mutate_scoped<T>(
-    connection: &mut Connection,
-    collection_id: &str,
-    request_id: Option<&str>,
-    operation: impl FnOnce(&mut Connection) -> Result<T, StorageError>,
-) -> Result<(T, Option<String>), StorageError> {
     let Some(link) = read_link(connection, collection_id)? else {
-        return operation(connection).map(|result| (result, None));
+        return operation(connection);
     };
     let root = Path::new(&link.root);
     let _lock = lock_root(root)?;
-    let watch = link.watch_stamp.as_ref().and_then(|stamp| {
+    let watch = link.watch.as_ref().and_then(|state| {
         let watch = Watch::read(root).ok()?;
-        (watch.stamp().as_str() == stamp).then_some(watch)
+        watch.matches(Some(state)).then_some(watch)
     });
-    let stored = cache::stored_files(connection, collection_id, request_id)?;
+    let stored = cache::stored_files(connection, collection_id)?;
     let groups = cache::groups(connection, collection_id)?;
     let project = |connection: &Connection| {
         cache::project(
@@ -1122,10 +1298,10 @@ pub(crate) fn mutate_scoped<T>(
             collection_id,
             &link.manifest_id,
             &stored,
-            request_id,
             Some(root),
         )
     };
+    let duplicate_key = link.has_issue(&IssueKind::DuplicateKey);
     let before = project(connection)?;
     connection.execute_batch("SAVEPOINT repository_edit")?;
     let result = (|| {
@@ -1138,9 +1314,13 @@ pub(crate) fn mutate_scoped<T>(
             &stored,
             &groups,
             watch.is_none()
-                || link.issue.as_deref().is_some_and(|issue| {
-                    issue.contains(": Duplicate request ID")
-                        || issue.contains(": Folder has more than one request file")
+                || link.watch.as_ref().is_some_and(|watch| {
+                    watch.issues.iter().any(|kind| {
+                        matches!(
+                            kind,
+                            IssueKind::DuplicateRequest(_) | IssueKind::DuplicateGroup
+                        )
+                    })
                 }),
         )?;
         cache::record_groups(connection, collection_id, &groups, &next_groups)?;
@@ -1152,10 +1332,6 @@ pub(crate) fn mutate_scoped<T>(
                 None => cache::remove_file(connection, collection_id, &path)?,
             }
         }
-        let revision = request_id
-            .map(|id| cache::revision(connection, id))
-            .transpose()?
-            .flatten();
         // Local values for new environments are staged in the savepoint until
         // the projected files have unique stems and the shared writes are planned.
         let environment_edits = edits
@@ -1174,30 +1350,42 @@ pub(crate) fn mutate_scoped<T>(
             .clone()
             .any(|edit| edit.old.is_none() || edit.next.is_none());
         let watch = watch.filter(|watch| {
-            !membership_changed
-                && !link
-                    .issue
-                    .as_deref()
-                    .is_some_and(|issue| issue.contains(": Duplicate request key "))
-                && watch.matches_before(root, &edits)
+            !membership_changed && !duplicate_key && watch.matches_before(root, &edits)
         });
         apply_edits(root, &edits, || {
             if !edits.is_empty() {
-                let stamp = watch.and_then(|watch| watch.after_edit(root, &edits));
-                connection.execute(
-                    "UPDATE repository_links SET watch_stamp = ? WHERE collection_id = ?",
-                    params![stamp, collection_id],
+                record_watch(
+                    connection,
+                    collection_id,
+                    watch.and_then(|watch| watch.after_edit(root, &edits)),
+                    link.watch,
                 )?;
             }
             connection.execute_batch("RELEASE repository_edit")?;
             Ok(())
         })?;
-        Ok((result, revision))
+        Ok(result)
     })();
     if result.is_err() && !connection.is_autocommit() {
         connection.execute_batch("ROLLBACK TO repository_edit; RELEASE repository_edit;")?;
     }
     result
+}
+
+fn record_watch(
+    connection: &Connection,
+    collection_id: &str,
+    watch: Option<Watch>,
+    previous: Option<WatchState>,
+) -> Result<(), StorageError> {
+    let stamp = watch
+        .map(|watch| watch.encode(previous.map_or_else(Vec::new, |state| state.issues)))
+        .transpose()?;
+    connection.execute(
+        "UPDATE repository_links SET watch_stamp = ? WHERE collection_id = ?",
+        params![stamp, collection_id],
+    )?;
+    Ok(())
 }
 
 fn apply_edits(
@@ -1231,11 +1419,13 @@ fn apply_edits(
         Ok::<_, StorageError>(())
     })();
     if result.is_ok() {
+        let result = format::sync_directories(root, edits.last().map(|edit| edit.path.as_str()))
+            .and_then(|()| finish());
         if backups.is_empty() {
-            return finish();
+            return result;
         }
-        // Keep the recovery links through the manifest sync and cache commit.
-        if let Err(error) = format::sync_directories(root, [MANIFEST]).and_then(|()| finish()) {
+        // Keep the recovery links through the final directory sync and cache commit.
+        if let Err(error) = result {
             let locations: Vec<_> = backups
                 .iter()
                 .map(|(_, _, backup)| backup.display().to_string())
@@ -1289,11 +1479,6 @@ fn placeholder_group(path: &str) -> bool {
     let name = path.rsplit('/').next().unwrap_or(path);
     name.strip_suffix(".json")
         .is_some_and(|stem| placeholder_key(stem, "new-folder"))
-}
-
-fn is_duplicate(issue: Option<&str>, request_id: &str) -> bool {
-    let marker = format!(" [{}]: Duplicate request ID", remote_id(request_id));
-    issue.is_some_and(|issue| issue.lines().any(|line| line.contains(&marker)))
 }
 
 fn request(file: Option<&File>) -> Option<&format::Request> {
@@ -1740,46 +1925,6 @@ impl<'a> ReadablePaths<'a> {
         self.paths.insert(&folder.id, path.clone());
         path
     }
-}
-
-pub(crate) enum RequestBaseline {
-    Local,
-    Current {
-        refresh: Option<RepositoryRefresh>,
-    },
-    Conflict {
-        revision: Option<String>,
-        refresh: Option<RepositoryRefresh>,
-    },
-}
-
-pub(crate) fn check_request(
-    connection: &mut Connection,
-    collection_id: &str,
-    request_id: &str,
-    expected: Option<&str>,
-) -> Result<RequestBaseline, StorageError> {
-    let Some(link) = read_link(connection, collection_id)? else {
-        return Ok(RequestBaseline::Local);
-    };
-    let root = Path::new(&link.root);
-    let stamp = watch_stamp(root)?;
-    let (refresh, issue) = if link.watch_stamp.as_deref() == Some(stamp.as_str()) {
-        (None, link.issue)
-    } else {
-        let refresh = refresh_all(connection)?;
-        let current = read_link(connection, collection_id)?.expect("checked linked collection");
-        (Some(refresh), current.issue)
-    };
-    let duplicate = is_duplicate(issue.as_deref(), request_id);
-    let revision = cache::revision(connection, request_id)?;
-    Ok(
-        if duplicate || revision.is_none() || revision.as_deref() != expected {
-            RequestBaseline::Conflict { revision, refresh }
-        } else {
-            RequestBaseline::Current { refresh }
-        },
-    )
 }
 
 pub(super) fn summary_link(root: Option<String>, issue: Option<String>) -> Option<RepositoryLink> {

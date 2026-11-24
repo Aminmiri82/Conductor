@@ -6,7 +6,7 @@ import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 /**
  * The one save path for both variable editors: all changes go to Rust in one
  * transaction, a failure is shown in the app's error banner, and `saving`
- * always resets. Resolves to whether the save succeeded.
+ * always resets. On success reports whether linked rows need to be reloaded.
  */
 export function useSaveVariables() {
   const [saving, setSaving] = useState(false);
@@ -21,9 +21,11 @@ export function useSaveVariables() {
       const store = useWorkspaceStore.getState();
       setSaving(true);
       setError(undefined);
+      let needsReload = false;
       try {
         await prepare?.();
-        if (changes.length) await api.applyVariableChanges(changes);
+        if (changes.length)
+          needsReload = await api.applyVariableChanges(changes);
       } catch (error) {
         setError(String(error));
         store.setError(error);
@@ -32,7 +34,7 @@ export function useSaveVariables() {
         setSaving(false);
       }
       await store.resolveActiveRequest();
-      return true;
+      return { needsReload };
     },
     [],
   );

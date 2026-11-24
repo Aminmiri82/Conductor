@@ -468,7 +468,9 @@ mod tests {
                 "previous-token",
             );
             fixtures::request(connection, &source, None);
-            let published = repository::connect(connection, &root, true, Some(&source)).unwrap();
+            let preview = repository::publish_preview(connection, &source).unwrap();
+            let published =
+                repository::connect(connection, &root, true, Some((&source, &preview))).unwrap();
             let request_id = connection
                 .query_row(
                     "SELECT request_id FROM collection_nodes WHERE collection_id = ?",

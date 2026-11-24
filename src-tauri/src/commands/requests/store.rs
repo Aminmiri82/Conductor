@@ -293,55 +293,24 @@ pub(crate) fn store_request(
             }
         });
     };
-    let baseline = repository::check_request(
-        connection,
-        &owner,
-        &request.id,
-        request.repository_revision.as_deref(),
-    )?;
-
     // Local saves and repository files both leave file upload paths out.
     if let Some(request_body) = &mut request.body {
         body::strip_file_paths(request_body);
     }
-    let save = |connection: &mut Connection| -> Result<(), StorageError> {
-        let tx = connection.savepoint()?;
-        update_request(&tx, &request)?;
-        tx.commit()?;
-        Ok(())
-    };
-    match baseline {
-        repository::RequestBaseline::Conflict { revision, refresh } => {
-            Ok(SaveRequestResult::Conflict { revision, refresh })
-        }
-        repository::RequestBaseline::Local => {
-            save(connection)?;
-            Ok(SaveRequestResult::Saved {
-                revision: None,
-                refresh: None,
-            })
-        }
-        repository::RequestBaseline::Current { refresh } => {
-            let save_current = |connection: &mut Connection| {
-                if repository::revision(connection, &request.id)? != request.repository_revision {
-                    return Ok(false);
-                }
-                save(connection)?;
-                Ok(true)
-            };
-            match repository::mutate_scoped(connection, &owner, Some(&request.id), save_current) {
-                Ok((true, revision)) => Ok(SaveRequestResult::Saved { revision, refresh }),
-                Ok((false, revision)) => Ok(SaveRequestResult::Conflict { revision, refresh }),
-                Err(error) => match refresh {
-                    Some(refresh) => Ok(SaveRequestResult::Failed {
-                        message: error.to_string(),
-                        refresh,
-                    }),
-                    None => Err(error),
-                },
-            }
-        }
+    if let Some(result) =
+        repository::save_linked_request(connection, &owner, &request, |connection| {
+            update_request(connection, &request)
+        })?
+    {
+        return Ok(result);
     }
+    let tx = connection.savepoint()?;
+    update_request(&tx, &request)?;
+    tx.commit()?;
+    Ok(SaveRequestResult::Saved {
+        revision: None,
+        refresh: None,
+    })
 }
 
 #[tauri::command(async)]

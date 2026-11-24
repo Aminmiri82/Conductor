@@ -295,7 +295,7 @@ fn store_imported_environment(
                 enabled: variable.enabled,
                 sensitive: variable.sensitive,
                 origin: None,
-                has_shared_value: None,
+                presentation: None,
                 required_secret: None,
             }),
         )?;
@@ -354,7 +354,7 @@ pub(crate) fn read_variables(
             enabled: row.get::<_, i64>(2)? != 0,
             sensitive: row.get::<_, i64>(3)? != 0,
             origin: None,
-            has_shared_value: None,
+            presentation: None,
             required_secret: None,
         })
     })?;
@@ -405,7 +405,7 @@ pub fn save_shared_variable(
 pub fn apply_variable_changes(
     changes: Vec<VariableChange>,
     state: State<'_, AppState>,
-) -> Result<(), CommandError> {
+) -> Result<bool, CommandError> {
     let now = Utc::now().to_rfc3339();
     Ok(state
         .database
@@ -421,7 +421,7 @@ fn apply_changes(
     connection: &mut Connection,
     changes: &[VariableChange],
     now: &str,
-) -> Result<(), StorageError> {
+) -> Result<bool, StorageError> {
     let mut linked = Vec::new();
     let mut ordinary = Vec::new();
     for change in changes {
@@ -489,9 +489,9 @@ fn apply_changes(
         }
     }
     drop(delete);
-    values::edit(&tx, &linked)?;
+    let needs_reload = values::edit(&tx, &linked)?;
     tx.commit()?;
-    Ok(())
+    Ok(needs_reload)
 }
 
 fn write_entry(
@@ -864,7 +864,7 @@ mod tests {
             enabled: true,
             sensitive: false,
             origin: None,
-            has_shared_value: None,
+            presentation: None,
             required_secret: None,
         }
     }
@@ -1097,7 +1097,9 @@ mod tests {
     }
 
     #[test]
-    fn linked_variables_use_local_values_and_restore_the_shared_value_when_removed() {
+    fn linked_variable_editors_distinguish_defaults_overrides_and_required_secrets() {
+        use crate::commands::models::{VariableOrigin, VariableRemoval};
+
         let root = std::env::temp_dir().join(format!("conductor-vars-{}", Uuid::new_v4()));
         fs::create_dir(&root).unwrap();
         let root = fs::canonicalize(root).unwrap();
@@ -1124,16 +1126,16 @@ mod tests {
         assert_eq!(context.get("host").as_deref(), Some("shared"));
         assert_eq!(context.get("token"), None);
         let rows = read_variables(&connection, &target).unwrap();
-        assert_eq!(
-            rows[0].origin,
-            Some(crate::commands::models::VariableOrigin::Shared)
-        );
-        assert_eq!(
-            rows[1].origin,
-            Some(crate::commands::models::VariableOrigin::MissingSecret)
-        );
+        let shared = rows[0].presentation.as_ref().unwrap();
+        assert_eq!(rows[0].origin, Some(VariableOrigin::Shared));
+        assert!(shared.fixed_key && shared.edit_shared);
+        assert_eq!(shared.removal, VariableRemoval::None);
+        let required = rows[1].presentation.as_ref().unwrap();
+        assert_eq!(rows[1].origin, Some(VariableOrigin::MissingSecret));
+        assert_eq!(rows[1].required_secret, Some(true));
+        assert!(required.fixed_key && !required.edit_shared);
 
-        apply_changes(
+        assert!(apply_changes(
             &mut connection,
             &[VariableChange {
                 baseline: None,
@@ -1143,7 +1145,7 @@ mod tests {
             }],
             "now",
         )
-        .unwrap();
+        .unwrap());
         assert_eq!(fs::read(&manifest_path).unwrap(), manifest_bytes);
         assert!(fs::read_to_string(root.join(".conductor/local.json"))
             .unwrap()
@@ -1152,6 +1154,17 @@ mod tests {
         assert_eq!(context.get("host").as_deref(), Some("private"));
         assert_eq!(context.get("token").as_deref(), Some("private-token"));
         assert!(context.is_sensitive("token"));
+        let rows = read_variables(&connection, &target).unwrap();
+        assert_eq!(rows[0].origin, Some(VariableOrigin::Local));
+        assert_eq!(
+            rows[0].presentation.as_ref().unwrap().removal,
+            VariableRemoval::UseShared,
+        );
+        assert_eq!(rows[1].origin, Some(VariableOrigin::Local));
+        assert_eq!(
+            rows[1].presentation.as_ref().unwrap().removal,
+            VariableRemoval::Local,
+        );
 
         fs::write(
             root.join(".conductor/local.json"),
@@ -1164,7 +1177,7 @@ mod tests {
             [pair("host", "editor"), pair("token", "editor-token")]
         );
 
-        apply_changes(
+        assert!(apply_changes(
             &mut connection,
             &[VariableChange {
                 baseline: None,
@@ -1174,7 +1187,7 @@ mod tests {
             }],
             "now",
         )
-        .unwrap();
+        .unwrap());
         assert_eq!(
             listed(&connection, &target),
             [pair("host", "shared"), pair("token", "editor-token")]

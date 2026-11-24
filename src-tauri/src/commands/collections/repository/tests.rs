@@ -126,7 +126,7 @@ fn refresh_loads_valid_siblings_and_prunes_confirmed_removals() {
     fs::write(&path, format!(r#"{{"requests":{{"bad-input":{{"id":"{}","name":false}},"valid":{{"id":"{}","name":"Updated","method":"GET","url":"/hand-edited"}}}}}}"#,
         remote_id(&bad.id), remote_id(&good.id))).unwrap();
     let refreshed = refresh_all(&mut connection).unwrap();
-    let issue = refreshed.collections[0]
+    let issue = refreshed.collections.as_ref().unwrap()[0]
         .repository
         .as_ref()
         .unwrap()
@@ -250,20 +250,16 @@ fn moves_keep_request_identity_and_relink_preserves_local_values() {
     .unwrap();
     fs::rename(&root, &moved).unwrap();
     let refresh = refresh_all(&mut connection).unwrap();
-    assert!(refresh.collections[0]
+    assert!(refresh.collections.as_ref().unwrap()[0]
         .repository
         .as_ref()
         .unwrap()
         .issue
         .is_some());
     assert_eq!(read_tree(&connection, id).unwrap().len(), 2);
-    relocate(&mut connection, id, &moved).unwrap();
-    assert!(refresh_all(&mut connection).unwrap().collections[0]
-        .repository
-        .as_ref()
-        .unwrap()
-        .issue
-        .is_none());
+    let collections = relocate(&mut connection, id, &moved).unwrap();
+    assert!(collections[0].repository.as_ref().unwrap().issue.is_none());
+    refresh_all(&mut connection).unwrap();
     let value: String = connection
         .query_row(
             "SELECT value FROM repository_variables WHERE collection_id = ? AND scope_id = collection_id",
@@ -343,6 +339,108 @@ fn missing_identity_retains_the_last_good_group_and_blocks_replacement() {
 }
 
 #[test]
+fn review_regression_publishing_keeps_secret_named_defaults_out_of_the_shared_manifest() {
+    use crate::commands::models::VariableTarget;
+
+    let root = Scratch::new();
+    let mut connection = test_connection();
+    let source = fixtures::collection(&connection);
+    let target = VariableTarget::Collection {
+        collection_id: source.clone(),
+    };
+    let keys = [
+        "SECRET_KEY",
+        "AWS_SECRET_ACCESS_KEY",
+        "accessKey",
+        "apiKeyProd",
+        "jwt",
+        "passwd",
+    ];
+    for key in keys {
+        fixtures::variable(&connection, &target, key, "private-default");
+    }
+    fixtures::variable(&connection, &target, "host", "example.test");
+    let preview = publish_preview(&connection, &source).unwrap();
+    connect(&mut connection, &root.0, true, Some((&source, &preview))).unwrap();
+
+    let manifest =
+        format::parse_manifest(&fs::read(root.0.join(".conductor/collection.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        manifest.secrets,
+        keys.into_iter().map(str::to_owned).collect()
+    );
+    assert_eq!(
+        manifest.values,
+        BTreeMap::from([("host".into(), "example.test".into())])
+    );
+}
+
+#[test]
+fn review_regression_publish_preview_keeps_user_selected_keys_private() {
+    use crate::commands::models::VariableTarget;
+
+    let root = Scratch::new();
+    let mut connection = test_connection();
+    let source = fixtures::collection(&connection);
+    let target = VariableTarget::Collection {
+        collection_id: source.clone(),
+    };
+    let env_id = fixtures::environment(&connection, &source);
+    let environment = VariableTarget::Environment {
+        environment_id: env_id.clone(),
+    };
+    fixtures::variable(&connection, &target, "host", "private-host");
+    fixtures::variable(&connection, &target, "apiKeyProd", "private-key");
+    fixtures::variable(&connection, &environment, "host", "shared-env-host");
+
+    let mut preview = publish_preview(&connection, &source).unwrap();
+    assert_eq!(preview[0].environment_id, None);
+    assert!(preview[0].shared_keys.remove("host"));
+    assert!(preview[0].secret_keys.contains("apiKeyProd"));
+    preview[0].secret_keys.insert("host".into());
+    assert_eq!(preview[1].environment_id.as_deref(), Some(env_id.as_str()));
+    assert!(preview[1].shared_keys.contains("host"));
+    assert!(!root.0.join(".conductor").exists());
+
+    connect(&mut connection, &root.0, true, Some((&source, &preview))).unwrap();
+    let manifest =
+        format::parse_manifest(&fs::read(root.0.join(".conductor/collection.json")).unwrap())
+            .unwrap();
+    assert!(manifest.values.is_empty());
+    assert_eq!(manifest.secrets, preview[0].secret_keys);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(
+            &fs::read(root.0.join(".conductor/local.json")).unwrap()
+        )
+        .unwrap()["collection"]["host"]["value"],
+        "private-host",
+    );
+}
+
+#[test]
+fn review_regression_a_stale_publish_preview_requires_review_before_writing() {
+    use crate::commands::models::VariableTarget;
+
+    let root = Scratch::new();
+    let mut connection = test_connection();
+    let source = fixtures::collection(&connection);
+    let preview = publish_preview(&connection, &source).unwrap();
+    fixtures::variable(
+        &connection,
+        &VariableTarget::Collection {
+            collection_id: source.clone(),
+        },
+        "host",
+        "new-default",
+    );
+
+    let error = connect(&mut connection, &root.0, true, Some((&source, &preview))).unwrap_err();
+    assert!(error.to_string().contains("Review them again"));
+    assert!(fs::read_dir(&root.0).unwrap().next().is_none());
+}
+
+#[test]
 fn publishing_shares_public_values_and_keeps_private_values_in_local_json() {
     let root = Scratch::new();
     git_init(&root.0);
@@ -354,7 +452,8 @@ fn publishing_shares_public_values_and_keeps_private_values_in_local_json() {
          VALUES ('environment',?,'token','private-token',1,'',''), ('environment',?,'host','current-host',0,'','')",
         [&environment, &environment],
     ).unwrap();
-    let link = connect(&mut connection, &root.0, true, Some(&source)).unwrap();
+    let preview = publish_preview(&connection, &source).unwrap();
+    let link = connect(&mut connection, &root.0, true, Some((&source, &preview))).unwrap();
     let path = format::list(&root.0, "environments")
         .unwrap()
         .pop()
@@ -406,6 +505,59 @@ fn unignored_files(root: &Path) -> String {
     String::from_utf8(output.stdout).unwrap()
 }
 
+#[test]
+fn review_regression_rejects_private_writes_to_a_tracked_file_in_a_nested_checkout() {
+    let root = Scratch::new();
+    let mut connection = test_connection();
+    connect(&mut connection, &root.0, true, None).unwrap();
+    let directory = root.0.join(".conductor");
+    git_init(&directory);
+    let placeholder = b"{}";
+    let path = directory.join("local.json");
+    fs::write(&path, placeholder).unwrap();
+    assert!(std::process::Command::new("git")
+        .args(["add", "-f", "--", "local.json"])
+        .current_dir(&directory)
+        .status()
+        .unwrap()
+        .success());
+
+    let selected = canonical_root(directory.to_str().unwrap()).unwrap();
+    let local = serde_json::from_slice(QA_PRIVATE_BYTES).unwrap();
+    let error = values::write_local(&selected, &local).unwrap_err();
+    assert!(error
+        .to_string()
+        .contains(".conductor is itself a Git checkout"));
+    assert_eq!(fs::read(path).unwrap(), placeholder);
+}
+
+#[test]
+fn review_regression_git_hides_shared_write_and_publish_staging_leftovers() {
+    let root = Scratch::new();
+    git_init(&root.0);
+    connect(&mut test_connection(), &root.0, true, None).unwrap();
+    let group = root.0.join(".conductor/requests/nested");
+    fs::create_dir_all(&group).unwrap();
+    fs::write(
+        group.join(format!(".conductor-{}.tmp", Uuid::new_v4())),
+        b"{}",
+    )
+    .unwrap();
+    fs::write(
+        group.join(format!(
+            ".group.json.conductor-deleted-{}.tmp",
+            Uuid::new_v4()
+        )),
+        b"{}",
+    )
+    .unwrap();
+    let staging = Publish::new(&root.0).unwrap();
+    fs::write(staging.path.join(".conductor/collection.json"), b"{}").unwrap();
+
+    let visible = unignored_files(&root.0);
+    assert!(!visible.contains(".conductor-"), "{visible}");
+}
+
 const QA_INTERRUPTED_LOCAL: &str =
     ".conductor/.local.json-2cace730-9dac-4381-b33d-2da1c4215d8e.tmp";
 const QA_PRIVATE_BYTES: &[u8] = br#"{"collection":{"token":"qa-private-atomic-write-token"}}"#;
@@ -421,27 +573,6 @@ fn qa_interrupted_initial_private_write_is_ignored_while_rules_are_present() {
     fs::write(root.0.join(QA_INTERRUPTED_LOCAL), QA_PRIVATE_BYTES).unwrap();
     assert!(!root.0.join(".conductor/local.json").exists());
     assert!(!unignored_files(&root.0).contains(QA_INTERRUPTED_LOCAL));
-}
-
-#[test]
-fn qa_refresh_protects_interrupted_initial_private_write_on_branch_without_manifest() {
-    let root = Scratch::new();
-    git_init(&root.0);
-    let mut connection = test_connection();
-    connect(&mut connection, &root.0, true, None).unwrap();
-    let temporary = root.0.join(QA_INTERRUPTED_LOCAL);
-    fs::write(&temporary, QA_PRIVATE_BYTES).unwrap();
-    assert!(!unignored_files(&root.0).contains(QA_INTERRUPTED_LOCAL));
-
-    // Match the on-disk state after switching to a branch predating the
-    // collection. Git removes the shared files and leaves the ignored temp.
-    fs::remove_file(root.0.join(".conductor/collection.json")).unwrap();
-    fs::remove_file(root.0.join(".conductor/.gitignore")).unwrap();
-    refresh_all(&mut connection).unwrap();
-    assert!(
-        !unignored_files(&root.0).contains(QA_INTERRUPTED_LOCAL),
-        "Git lists the secret-bearing temporary file after Conductor refresh: {QA_INTERRUPTED_LOCAL}"
-    );
 }
 
 #[test]
@@ -628,9 +759,9 @@ fn refresh_and_relink_keep_the_destination_after_an_interrupted_move() {
 
     let renamed = scratch.0.join("renamed");
     fs::rename(&root, &renamed).unwrap();
-    relocate(&mut connection, &link.collection_id, &renamed).unwrap();
-    let refresh = refresh_all(&mut connection).unwrap();
-    let issue = refresh.collections[0]
+    let collections = relocate(&mut connection, &link.collection_id, &renamed).unwrap();
+    refresh_all(&mut connection).unwrap();
+    let issue = collections[0]
         .repository
         .as_ref()
         .unwrap()
@@ -705,7 +836,7 @@ fn a_badly_named_group_is_reported_without_blocking_valid_edits() {
     else {
         panic!("valid group should remain editable");
     };
-    assert!(refresh.collections[0]
+    assert!(refresh.collections.as_ref().unwrap()[0]
         .repository
         .as_ref()
         .unwrap()
@@ -868,7 +999,8 @@ fn publishing_can_be_retried_when_the_initial_database_write_fails() {
     let source = fixtures::collection(&connection);
     connection.execute(
         "INSERT INTO variables (scope,collection_id,key,current_value,sensitive,created_at,updated_at)
-         VALUES ('collection',?,'token','retry-secret',1,'','')", [&source],
+         VALUES ('collection',?1,'token','retry-secret',1,'',''),
+                ('collection',?1,'host','public-default',0,'','')", [&source],
     ).unwrap();
     connection
         .execute_batch(
@@ -877,7 +1009,8 @@ fn publishing_can_be_retried_when_the_initial_database_write_fails() {
         )
         .unwrap();
 
-    let error = connect(&mut connection, &root.0, true, Some(&source))
+    let mut preview = publish_preview(&connection, &source).unwrap();
+    let error = connect(&mut connection, &root.0, true, Some((&source, &preview)))
         .err()
         .unwrap();
     assert!(error.to_string().contains("simulated link write failure"));
@@ -886,6 +1019,14 @@ fn publishing_can_be_retried_when_the_initial_database_write_fails() {
     connection
         .execute_batch("DROP TRIGGER reject_link_write")
         .unwrap();
+    assert!(preview[0].shared_keys.remove("host"));
+    preview[0].secret_keys.insert("host".into());
+    let Err(error) = connect(&mut connection, &root.0, true, Some((&source, &preview))) else {
+        panic!("the installed key is still shared");
+    };
+    assert!(error.to_string().contains("already published"));
+    assert!(!root.0.join(".conductor/local.json").exists());
+
     let retry = connect(&mut connection, &root.0, false, None);
     assert!(retry.is_ok(), "retry failed: {:?}", retry.err());
     assert!(fs::read_to_string(root.0.join(".conductor/local.json"))
@@ -1104,7 +1245,7 @@ fn local_stems_survive_display_renames_and_report_file_renames() {
     assert_eq!(fs::read(&local_path).unwrap(), local);
 
     let refresh = refresh_all(&mut connection).unwrap();
-    let issue = refresh.collections[0]
+    let issue = refresh.collections.as_ref().unwrap()[0]
         .repository
         .as_ref()
         .unwrap()
@@ -1122,7 +1263,7 @@ fn local_stems_survive_display_renames_and_report_file_renames() {
     )
     .unwrap();
     let refresh = refresh_all(&mut connection).unwrap();
-    assert!(refresh.collections[0]
+    assert!(refresh.collections.as_ref().unwrap()[0]
         .repository
         .as_ref()
         .unwrap()
@@ -1226,7 +1367,7 @@ fn local_stems_reject_duplicate_json_keys_without_rewriting_the_file() {
     let duplicate = br#"{"environments":{"development":{"token":"first"},"developm\u0065nt":{"token":"second"}}}"#;
     fs::write(&local_path, duplicate).unwrap();
     let refresh = refresh_all(&mut connection).unwrap();
-    let issue = refresh.collections[0]
+    let issue = refresh.collections.as_ref().unwrap()[0]
         .repository
         .as_ref()
         .unwrap()
@@ -1236,4 +1377,142 @@ fn local_stems_reject_duplicate_json_keys_without_rewriting_the_file() {
     assert!(issue.contains("invalid local values"));
     assert!(!issue.contains("first") && !issue.contains("second"));
     assert_eq!(fs::read(local_path).unwrap(), duplicate);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_single_file_save_reports_directory_sync_failure_before_committing_the_cache() {
+    let root = Scratch::new();
+    let mut connection = test_connection();
+    let linked = connect(&mut connection, &root.0, true, None).unwrap();
+    let mut request = add(&mut connection, &linked.collection_id, "Ping", None);
+    request.url = "/not-yet-durable".into();
+
+    format::FAIL_DIRECTORY_SYNC.set(true);
+    let saved = store_request(&mut connection, request.clone());
+    let sync_was_attempted = !format::FAIL_DIRECTORY_SYNC.replace(false);
+
+    assert!(sync_was_attempted);
+    let Err(error) = saved else {
+        panic!("save must report directory sync failure");
+    };
+    assert!(error
+        .to_string()
+        .contains("simulated directory sync failure"));
+    assert_eq!(
+        cache::revision(&connection, &request.id).unwrap(),
+        request.repository_revision
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_malformed_filename_can_report_an_issue_without_faking_a_duplicate_request() {
+    let root = Scratch::new();
+    let mut connection = test_connection();
+    let linked = connect(&mut connection, &root.0, true, None).unwrap();
+    let mut request = add(&mut connection, &linked.collection_id, "Ping", None);
+    let misleading = format!(
+        "fake [{}]: Duplicate request ID.json",
+        remote_id(&request.id)
+    );
+    fs::write(root.0.join(".conductor/requests").join(&misleading), b"{}").unwrap();
+
+    let refresh = refresh_all(&mut connection).unwrap();
+    assert!(refresh.collections.unwrap()[0]
+        .repository
+        .as_ref()
+        .unwrap()
+        .issue
+        .as_ref()
+        .unwrap()
+        .contains(&misleading));
+    request.url = "/still-editable".into();
+    assert!(matches!(
+        store_request(&mut connection, request).unwrap(),
+        SaveRequestResult::Saved { .. }
+    ));
+}
+
+#[test]
+fn refresh_sends_tab_labels_and_only_replaces_changed_collection_summaries() {
+    let root = Scratch::new();
+    let mut connection = test_connection();
+    let linked = connect(&mut connection, &root.0, true, None).unwrap();
+    let request = add(&mut connection, &linked.collection_id, "Ping", None);
+    let data = root.0.join(".conductor");
+    let group_path = data.join("requests/root.json");
+    let mut group: serde_json::Value =
+        serde_json::from_slice(&fs::read(&group_path).unwrap()).unwrap();
+    group["requests"]["ping"]["name"] = serde_json::json!("Write health");
+    group["requests"]["ping"]["method"] = serde_json::json!("POST");
+    fs::write(group_path, serde_json::to_vec(&group).unwrap()).unwrap();
+
+    let refresh = refresh_all(&mut connection).unwrap();
+    assert!(refresh.collections.is_none());
+    let [change] = refresh.changed_requests.as_slice() else {
+        panic!("refresh must report the edited request");
+    };
+    assert_eq!(change.request_id, request.id);
+    assert_eq!(change.name.as_deref(), Some("Write health"));
+    assert_eq!(change.method.as_deref(), Some("POST"));
+
+    let path = data.join(MANIFEST);
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    manifest["name"] = serde_json::json!("Health checks");
+    fs::write(path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    assert_eq!(
+        refresh_all(&mut connection).unwrap().collections.unwrap()[0].name,
+        "Health checks"
+    );
+    assert!(refresh_all(&mut connection).unwrap().collections.is_none());
+}
+
+#[test]
+fn saving_one_request_has_a_constant_shared_file_read_budget() {
+    let root = Scratch::new();
+    let mut connection = test_connection();
+    let linked = connect(&mut connection, &root.0, true, None).unwrap();
+    let folder = add_users_folder(&mut connection, &linked.collection_id);
+    add(
+        &mut connection,
+        &linked.collection_id,
+        "Other request",
+        Some(folder),
+    );
+    let mut request = add(&mut connection, &linked.collection_id, "Ping", None);
+    request.url = "/edited".into();
+
+    format::FILE_READS.set(0);
+    assert!(matches!(
+        store_request(&mut connection, request).unwrap(),
+        SaveRequestResult::Saved { refresh: None, .. }
+    ));
+    // The target group is loaded, rechecked at replacement, and verified
+    // before its metadata stamp is cached.
+    assert!(format::FILE_READS.get() <= 3);
+}
+
+#[test]
+fn a_private_refresh_during_send_does_not_hide_a_collection_rename_from_the_sidebar() {
+    let root = Scratch::new();
+    let mut connection = test_connection();
+    let linked = connect(&mut connection, &root.0, true, None).unwrap();
+    let data = root.0.join(".conductor");
+    let path = data.join(MANIFEST);
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    manifest["name"] = serde_json::json!("Renamed collection");
+    fs::write(path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    fs::write(
+        data.join(values::LOCAL),
+        br#"{"collection":{"token":"test-fixture"}}"#,
+    )
+    .unwrap();
+
+    refresh_private_for_send(&mut connection, &linked.collection_id).unwrap();
+    let refresh = refresh_workspace(&mut connection, &linked.collections).unwrap();
+
+    assert_eq!(refresh.collections.unwrap()[0].name, "Renamed collection");
 }

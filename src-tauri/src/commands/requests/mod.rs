@@ -23,7 +23,6 @@ pub use response_files::{
     discard_responses, get_response_body, save_response_body, ResponseBodies,
 };
 pub use sender::{resolve_request, send_request};
-#[cfg(test)]
 pub(crate) use store::SaveRequestResult;
 #[cfg(test)]
 pub(crate) use store::{add_request, store_request};

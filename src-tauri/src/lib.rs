@@ -17,8 +17,8 @@ use commands::collections::{
     create_collection, create_folder, delete_collection, delete_node, export_postman_collection,
     get_collection_profile, get_collection_tree, import_postman_collection, inspect_repository,
     list_collection_stats, list_collections, move_node, open_repository,
-    pick_and_import_postman_collection, refresh_repositories, relink_repository, rename_collection,
-    rename_folder,
+    pick_and_import_postman_collection, preview_repository_publish, refresh_repositories,
+    relink_repository, rename_collection, rename_folder,
 };
 use commands::requests::{
     create_request, discard_responses, duplicate_request, get_request, get_response_body,
@@ -119,6 +119,7 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             import_postman_collection,
             inspect_repository,
             open_repository,
+            preview_repository_publish,
             refresh_repositories,
             relink_repository,
             save_repository_request_as_new,

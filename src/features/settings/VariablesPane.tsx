@@ -93,6 +93,7 @@ type Session = {
   repositoryBacked: boolean;
   saved: VariableEntry[];
   rows: VariableEntry[];
+  needsReload: boolean;
 };
 
 type Renaming = { environmentId: string; at: "title" | "drawer" };
@@ -167,23 +168,27 @@ export function VariablesPane({
     if (duplicateKeys(current.rows).size) return;
     const rows = current.rows;
     const changes = diffVariables(current.saved, rows);
-    if (!changes.upserts.length && !changes.deletes.length) return;
-    const sent = normalizeVariables(rows);
     const isShown = () => session.current === current;
-    if (isShown()) setStatus("saving");
-    const updatedKeys = new Set(changes.upserts.map((row) => row.key));
-    const baseline = current.repositoryBacked
-      ? current.saved.filter((row) => updatedKeys.has(row.key))
-      : undefined;
-    const saved = await saveVariables([
-      { target: current.target, ...changes, baseline },
-    ]);
-    if (saved) current.saved = sent;
-    if (isShown()) setStatus(saved ? "saved" : "failed");
-    if (!saved || !current.repositoryBacked || !isShown()) return;
+    if (changes.upserts.length || changes.deletes.length) {
+      const sent = normalizeVariables(rows);
+      if (isShown()) setStatus("saving");
+      const updatedKeys = new Set(changes.upserts.map((row) => row.key));
+      const baseline = current.repositoryBacked
+        ? current.saved.filter((row) => updatedKeys.has(row.key))
+        : undefined;
+      const result = await saveVariables([
+        { target: current.target, ...changes, baseline },
+      ]);
+      if (isShown()) setStatus(result ? "saved" : "failed");
+      if (!result) return;
+      current.saved = sent;
+      current.needsReload ||= result.needsReload;
+    }
+    if (!current.needsReload || !isShown()) return;
     try {
       const loaded = await api.listVariables(current.target);
       if (!isShown() || current.rows !== rows) return;
+      current.needsReload = false;
       current.saved = loaded;
       current.rows = [...loaded, ...rows.filter((row) => !row.key.trim())];
       setVariables(current.rows);
@@ -222,7 +227,13 @@ export function VariablesPane({
     setStatus("idle");
     const show = (rows: VariableEntry[]) => {
       if (target)
-        session.current = { target, repositoryBacked, saved: rows, rows };
+        session.current = {
+          target,
+          repositoryBacked,
+          saved: rows,
+          rows,
+          needsReload: false,
+        };
       setVariables(rows);
       setRevealed({});
     };
@@ -265,6 +276,7 @@ export function VariablesPane({
       const rows = await api.listVariables(current.target);
       if (!mounted || session.current !== current || current.rows !== before)
         return;
+      current.needsReload = false;
       current.rows = rows;
       current.saved = rows;
       setVariables(rows);
@@ -321,7 +333,7 @@ export function VariablesPane({
     const row = rows[index];
     if (
       !row ||
-      row.origin === "shared" ||
+      row.presentation?.removal === "none" ||
       (row.origin === "missingSecret" && !row.value)
     )
       return;
@@ -572,7 +584,6 @@ export function VariablesPane({
           const duplicate = duplicates.has(variable.key.trim());
           const masked = variable.sensitive && !revealed[index];
           const missingSecret = variable.origin === "missingSecret";
-          const shared = variable.origin === "shared";
           const unfilled = missingSecret && !variable.value;
           return (
             <Row
@@ -589,9 +600,7 @@ export function VariablesPane({
                 value={variable.key}
                 placeholder="Key"
                 title={duplicate ? "This key is used twice" : undefined}
-                readOnly={Boolean(
-                  shared || variable.hasSharedValue || variable.requiredSecret,
-                )}
+                readOnly={variable.presentation?.fixedKey}
                 onChange={(event) =>
                   updateVariable(index, { key: event.target.value }, "typing")
                 }
@@ -694,9 +703,7 @@ export function VariablesPane({
                     <Power />
                   </RowAction>
                 )}
-                {repositoryBacked &&
-                variable.hasSharedValue &&
-                !variable.requiredSecret ? (
+                {variable.presentation?.editShared ? (
                   <RowAction
                     className={onRowHover}
                     onClick={() => setSharedEdit({ target, key: variable.key })}
@@ -705,7 +712,7 @@ export function VariablesPane({
                     <Pencil />
                   </RowAction>
                 ) : null}
-                {variable.hasSharedValue && variable.origin === "local" ? (
+                {variable.presentation?.removal === "useShared" ? (
                   <Button
                     variant="ghost"
                     size="sm"
@@ -714,12 +721,12 @@ export function VariablesPane({
                   >
                     Use shared value
                   </Button>
-                ) : !shared && !unfilled ? (
+                ) : variable.presentation?.removal !== "none" && !unfilled ? (
                   <RowAction
                     className={cn(onRowHover, "hover:text-destructive")}
                     onClick={() => removeVariable(index)}
                     title={
-                      variable.origin
+                      variable.presentation
                         ? "Remove local value (⌘⌫)"
                         : "Remove variable (⌘⌫)"
                     }
