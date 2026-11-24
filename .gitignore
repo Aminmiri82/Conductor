@@ -30,3 +30,4 @@ postman-collection-example/
 .cursor/
 
 .agent-app/
+.vitest/

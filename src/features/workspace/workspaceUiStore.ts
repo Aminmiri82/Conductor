@@ -39,7 +39,8 @@ const DEFAULT_WORKSPACE_UI_STATE: WorkspaceUiState = {
   requestEditorTabs: {},
 };
 let workspaceUiStateFlushTimer:
-  ReturnType<typeof window.setTimeout> | undefined;
+  | ReturnType<typeof window.setTimeout>
+  | undefined;
 let workspaceUiStateFlushPromise = Promise.resolve();
 
 export const useWorkspaceUiStore = create<WorkspaceUiStoreState>(
