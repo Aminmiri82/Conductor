@@ -21,7 +21,8 @@ use commands::collections::{
 };
 use commands::requests::{
     create_request, discard_responses, duplicate_request, get_request, get_response_body,
-    resolve_request, save_request, save_response_body, send_request, ResponseBodies,
+    request_as_curl, resolve_request, save_request, save_response_body, send_request,
+    ResponseBodies,
 };
 use commands::variables::{
     apply_variable_changes, create_environment, delete_environment, duplicate_environment,
@@ -121,6 +122,7 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             rename_collection,
             rename_environment,
             rename_folder,
+            request_as_curl,
             resolve_request,
             move_node,
             save_request,

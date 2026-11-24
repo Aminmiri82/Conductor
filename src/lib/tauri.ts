@@ -65,6 +65,11 @@ export const api = {
   saveRequest: commands.saveRequest,
   resolveRequest: (request: RequestDetail, environmentId: string | null) =>
     commands.resolveRequest(request, environmentId),
+  requestAsCurl: (
+    request: RequestDetail,
+    environmentId: string | null,
+    includeValues: boolean,
+  ) => commands.requestAsCurl(request, environmentId, includeValues),
   sendRequest: (request: RequestDetail, environmentId: string | null) =>
     commands.sendRequest({ request, environmentId }),
   listVariables: commands.listVariables,

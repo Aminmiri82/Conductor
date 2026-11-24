@@ -44,7 +44,12 @@ import type {
   VariableScope,
   VariableTarget,
 } from "@/features/types";
-import { createAutosaver } from "@/features/variables/autosave";
+import {
+  createAutosaver,
+  registerVariableAutosave,
+  VARIABLE_AUTOSAVE,
+} from "@/features/variables/autosave";
+import { SaveState, type SaveStatus } from "@/features/variables/SaveState";
 import {
   diffVariables,
   duplicateKeys,
@@ -76,10 +81,6 @@ const pickerClass =
 const outlineButton =
   "h-8 gap-1.5 border border-[var(--app-line)] px-2.5 text-xs text-[var(--app-dim)]";
 
-// Typing saves after a short pause; see `createAutosaver`.
-const AUTOSAVE_DELAY_MS = 400;
-const AUTOSAVE_MAX_WAIT_MS = 2000;
-
 /**
  * The table being edited: what is stored for its target (`saved`) and what
  * the table shows (`rows`). Kept in a ref so a save started for one target
@@ -92,8 +93,6 @@ type Session = {
 };
 
 type Renaming = { environmentId: string; at: "title" | "drawer" };
-
-type SaveStatus = "idle" | "saving" | "saved" | "failed";
 
 export function VariablesPane({
   activeCollectionId,
@@ -162,12 +161,13 @@ export function VariablesPane({
   }
 
   const [autosaver] = useState(() =>
-    createAutosaver(
-      async () => {
-        if (session.current) await persist(session.current);
-      },
-      { delayMs: AUTOSAVE_DELAY_MS, maxWaitMs: AUTOSAVE_MAX_WAIT_MS },
-    ),
+    createAutosaver(async () => {
+      if (session.current) await persist(session.current);
+    }, VARIABLE_AUTOSAVE),
+  );
+  useEffect(
+    () => registerVariableAutosave(() => autosaver.flush()),
+    [autosaver],
   );
 
   // Null until the scope has the collection or environment it needs.
@@ -865,36 +865,6 @@ function focusedVariableIndex() {
 
 function Kbd({ children }: { children: ReactNode }) {
   return <kbd className="mx-1 text-[10px] opacity-60">{children}</kbd>;
-}
-
-function SaveState({
-  status,
-  duplicate,
-  onRetry,
-}: {
-  status: SaveStatus;
-  duplicate?: string;
-  onRetry: () => void;
-}) {
-  if (duplicate) {
-    return (
-      <span className="text-xs text-destructive">
-        Not saved: “{duplicate}” is used twice
-      </span>
-    );
-  }
-  if (status === "failed") {
-    return (
-      <button className="text-xs text-destructive underline" onClick={onRetry}>
-        Not saved. Retry
-      </button>
-    );
-  }
-  return (
-    <span className="text-xs text-[var(--app-dim)]" aria-live="polite">
-      {status === "saving" ? "Saving…" : status === "saved" ? "Saved" : ""}
-    </span>
-  );
 }
 
 function RowAction({

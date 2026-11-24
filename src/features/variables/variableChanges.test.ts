@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { VariableEntry, VariableTarget } from "@/features/types";
 import {
+  applyRequestVariableChanges,
   diffVariables,
   duplicateKeys,
   requestVariableChanges,
+  requestVariableRows,
   type RequestVariableRow,
+  type ScopedVariables,
 } from "./variableChanges";
 
 const entry = (key: string, value: string): VariableEntry => ({
@@ -68,11 +71,44 @@ describe("request variables tab changes", () => {
     sensitive: false,
     ...patch,
   });
+  const nothingStored: ScopedVariables = {
+    global: [],
+    collection: [],
+    environment: [],
+  };
+
+  it("shows the environment's value over the collection's and the global one", () => {
+    const rows = requestVariableRows(
+      ["a", "b", "c"],
+      {
+        global: [entry("a", "global"), entry("b", "global")],
+        collection: [entry("a", "collection")],
+        environment: [entry("a", "environment")],
+      },
+      true,
+    );
+
+    expect(
+      rows.map(({ key, value, originalScope }) => [key, value, originalScope]),
+    ).toEqual([
+      ["a", "environment", "environment"],
+      ["b", "global", "global"],
+      ["c", "", null],
+    ]);
+  });
+
+  it("offers a new variable to the environment, or to the collection when none is active", () => {
+    expect(requestVariableRows(["k"], nothingStored, true)[0].scope).toBe(
+      "environment",
+    );
+    expect(requestVariableRows(["k"], nothingStored, false)[0].scope).toBe(
+      "collection",
+    );
+  });
 
   it("moving a row deletes it from its old scope and sets it in the new one", () => {
     const changes = requestVariableChanges({
-      rows: [row({ scope: "environment" })],
-      edited: new Set(["k"]),
+      edited: [row({ scope: "environment" })],
       removed: [],
       targetFor,
     });
@@ -91,13 +127,9 @@ describe("request variables tab changes", () => {
     ]);
   });
 
-  it("leaves untouched stored rows out but creates variables that do not exist yet", () => {
+  it("creates a variable that does not exist yet once its row is edited", () => {
     const changes = requestVariableChanges({
-      rows: [
-        row({ key: "stored" }),
-        row({ key: "fresh", originalScope: null, value: "" }),
-      ],
-      edited: new Set(),
+      edited: [row({ key: "fresh", originalScope: null, value: "new" })],
       removed: [{ scope: "global", key: "gone" }],
       targetFor,
     });
@@ -106,9 +138,51 @@ describe("request variables tab changes", () => {
       { target: targetFor("global"), upserts: [], deletes: ["gone"] },
       {
         target: targetFor("collection"),
-        upserts: [entry("fresh", "")],
+        upserts: [entry("fresh", "new")],
         deletes: [],
       },
     ]);
+  });
+
+  it("after removing a variable, the row falls back to the next scope's value", () => {
+    const stored = applyRequestVariableChanges(
+      {
+        global: [entry("k", "global")],
+        collection: [],
+        environment: [entry("k", "environment")],
+      },
+      [],
+      [{ scope: "environment", key: "k" }],
+    );
+
+    expect(requestVariableRows(["k"], stored, true)[0]).toMatchObject({
+      value: "global",
+      originalScope: "global",
+    });
+  });
+
+  it("keeps a value typed into a row whose removal is still pending", () => {
+    // Deletes apply first, in Rust and here, so the typed value wins.
+    const stored = applyRequestVariableChanges(
+      { ...nothingStored, collection: [entry("k", "old")] },
+      [row({ value: "typed", originalScope: null })],
+      [{ scope: "collection", key: "k" }],
+    );
+
+    expect(stored.collection).toEqual([entry("k", "typed")]);
+  });
+
+  it("a saved move leaves the variable only in its new scope", () => {
+    const stored = applyRequestVariableChanges(
+      { ...nothingStored, collection: [entry("k", "v"), entry("other", "x")] },
+      [row({ scope: "global" })],
+      [],
+    );
+
+    expect(stored).toEqual({
+      global: [entry("k", "v")],
+      collection: [entry("other", "x")],
+      environment: [],
+    });
   });
 });

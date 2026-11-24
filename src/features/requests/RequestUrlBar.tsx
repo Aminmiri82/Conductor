@@ -1,11 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
+  Check,
   CheckCircle2,
+  ChevronDown,
   Save,
   SendHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -47,6 +55,7 @@ export function RequestUrlBar({
   onChange,
   onSend,
   onSave,
+  onCopyCurl,
 }: {
   request: Pick<RequestDetail, "name" | "method" | "url">;
   sending: boolean;
@@ -57,6 +66,7 @@ export function RequestUrlBar({
   onChange: (patch: Partial<RequestDetail>) => void;
   onSend: () => void;
   onSave: () => void;
+  onCopyCurl: (includeValues: boolean) => Promise<boolean>;
 }) {
   const urlMode = useWorkspaceUiStore(
     (state) => state.workspaceUi.urlDisplayMode,
@@ -109,16 +119,79 @@ export function RequestUrlBar({
       >
         <Save className={`size-4 ${saving ? "opacity-60" : ""}`} />
       </Button>
-      <Button
-        className="h-8 shrink-0 gap-1.5 bg-[var(--app-accent)] px-3 text-xs font-bold uppercase tracking-[0.04em] text-[var(--app-accent-fg)] hover:bg-[var(--app-accent)]/90"
-        onClick={onSend}
-        disabled={sending}
-        style={{ borderRadius: "var(--app-radius)" }}
-      >
-        <SendHorizontal className="size-3.5" />
-        {sending ? "Sending" : "Send"}
-      </Button>
+      <div className="flex shrink-0">
+        <Button
+          className="h-8 gap-1.5 bg-[var(--app-accent)] px-3 text-xs font-bold uppercase tracking-[0.04em] text-[var(--app-accent-fg)] hover:bg-[var(--app-accent)]/90"
+          onClick={onSend}
+          disabled={sending}
+          style={{
+            borderRadius: "var(--app-radius) 0 0 var(--app-radius)",
+          }}
+        >
+          <SendHorizontal className="size-3.5" />
+          {sending ? "Sending" : "Send"}
+        </Button>
+        <SendMenu onCopyCurl={onCopyCurl} />
+      </div>
     </div>
+  );
+}
+
+function SendMenu({
+  onCopyCurl,
+}: {
+  onCopyCurl: (includeValues: boolean) => Promise<boolean>;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(timer);
+  }, [copied]);
+
+  const copy = (includeValues: boolean) =>
+    void onCopyCurl(includeValues).then(setCopied);
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          className="h-8 w-7 border-l border-[var(--app-accent-fg)]/25 bg-[var(--app-accent)] px-0 text-[var(--app-accent-fg)] hover:bg-[var(--app-accent)]/90"
+          style={{
+            borderRadius: "0 var(--app-radius) var(--app-radius) 0",
+          }}
+          title={copied ? "Copied" : "More ways to use this request"}
+          aria-label={copied ? "Copied" : "More ways to use this request"}
+        >
+          {copied ? (
+            <Check className="size-3.5" />
+          ) : (
+            <ChevronDown className="size-3.5" />
+          )}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-72">
+        <DropdownMenuItem
+          className="flex-col items-start gap-0"
+          onSelect={() => copy(false)}
+        >
+          Copy as cURL
+          <span className="text-xs text-[var(--app-dim)]">
+            Variables stay as {"<name>"} placeholders
+          </span>
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          className="flex-col items-start gap-0"
+          onSelect={() => copy(true)}
+        >
+          Copy as cURL with values
+          <span className="text-xs text-[var(--app-dim)]">
+            Variables filled in, secrets included
+          </span>
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

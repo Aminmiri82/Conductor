@@ -67,20 +67,60 @@ export function diffVariables(
   };
 }
 
+export type ScopedVariables = Record<VariableScope, VariableEntry[]>;
+
 /**
- * The changes behind the request's Variables tab: edited rows, rows that
- * have no stored variable yet, rows moved to another scope (deleted from the
- * old one), and removed rows.
+ * One row per name a request references: the stored variable that wins
+ * (environment, then collection, then global), or a blank row in the scope a
+ * new variable would be saved to.
+ */
+export function requestVariableRows(
+  keys: readonly string[],
+  stored: ScopedVariables,
+  hasEnvironment: boolean,
+): RequestVariableRow[] {
+  const byKey = (variables: VariableEntry[]) =>
+    new Map(variables.map((variable) => [variable.key, variable]));
+  const environment = byKey(stored.environment);
+  const collection = byKey(stored.collection);
+  const global = byKey(stored.global);
+
+  return keys.map((key) => {
+    const variable =
+      environment.get(key) ?? collection.get(key) ?? global.get(key);
+    const scope = environment.has(key)
+      ? "environment"
+      : collection.has(key)
+        ? "collection"
+        : global.has(key)
+          ? "global"
+          : hasEnvironment
+            ? "environment"
+            : "collection";
+    return {
+      key,
+      value: variable?.value ?? "",
+      scope,
+      originalScope: variable ? scope : null,
+      enabled: variable?.enabled ?? true,
+      sensitive: variable?.sensitive ?? false,
+    };
+  });
+}
+
+/**
+ * What the request's Variables tab saves: each edited row is set in its
+ * scope (and deleted from the scope it was moved out of), and removed
+ * variables are deleted. A row nobody edited is not sent, so a name the
+ * request references stays undefined until it is given a value.
  */
 export function requestVariableChanges({
-  rows,
   edited,
   removed,
   targetFor,
 }: {
-  rows: readonly RequestVariableRow[];
-  edited: { has(key: string): boolean };
-  removed: Iterable<RemovedVariable>;
+  edited: readonly RequestVariableRow[];
+  removed: readonly RemovedVariable[];
   // Null when the scope cannot be saved to (no active environment).
   targetFor: (scope: VariableScope) => VariableTarget | null;
 }): VariableChange[] {
@@ -95,22 +135,53 @@ export function requestVariableChanges({
   };
 
   for (const { scope, key } of removed) scopeChange(scope).deletes.push(key);
-  for (const row of rows) {
+  for (const row of edited) {
     const { originalScope } = row;
-    const moved = originalScope !== null && originalScope !== row.scope;
-    if (moved) scopeChange(originalScope).deletes.push(row.key);
-    if (moved || originalScope === null || edited.has(row.key)) {
-      scopeChange(row.scope).upserts.push({
-        key: row.key,
-        value: row.value,
-        enabled: row.enabled,
-        sensitive: row.sensitive,
-      });
+    if (originalScope !== null && originalScope !== row.scope) {
+      scopeChange(originalScope).deletes.push(row.key);
     }
+    scopeChange(row.scope).upserts.push({
+      key: row.key,
+      value: row.value,
+      enabled: row.enabled,
+      sensitive: row.sensitive,
+    });
   }
 
   return [...byScope].flatMap(([scope, change]) => {
     const target = targetFor(scope);
     return target ? [{ target, ...change }] : [];
   });
+}
+
+/**
+ * What is stored once `requestVariableChanges` for the same rows is saved,
+ * so the tab does not list every scope again after each save. Deletes apply
+ * first, as in Rust.
+ */
+export function applyRequestVariableChanges(
+  stored: ScopedVariables,
+  edited: readonly RequestVariableRow[],
+  removed: readonly RemovedVariable[],
+): ScopedVariables {
+  const next = { ...stored };
+  const drop = (scope: VariableScope, key: string) => {
+    next[scope] = next[scope].filter((variable) => variable.key !== key);
+  };
+
+  for (const { scope, key } of removed) drop(scope, key);
+  for (const row of edited) {
+    if (row.originalScope !== null) drop(row.originalScope, row.key);
+    drop(row.scope, row.key);
+    next[row.scope] = [
+      ...next[row.scope],
+      {
+        key: row.key,
+        value: row.value,
+        enabled: row.enabled,
+        sensitive: row.sensitive,
+      },
+    ];
+  }
+  return next;
 }

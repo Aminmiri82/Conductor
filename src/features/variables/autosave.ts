@@ -52,3 +52,24 @@ export function createAutosaver(
 
   return { schedule, flush, cancel };
 }
+
+/** Typing saves after this pause, and at least this often. */
+export const VARIABLE_AUTOSAVE = { delayMs: 400, maxWaitMs: 2000 };
+
+// Sending, saving and copying a request read variables from the database.
+// The variable editors register their `flush` here so those can first wait
+// for an edit that is still inside its typing pause.
+const flushers = new Set<() => Promise<void>>();
+
+/** Returns the function that takes `flush` out again. */
+export function registerVariableAutosave(flush: () => Promise<void>) {
+  flushers.add(flush);
+  return () => {
+    flushers.delete(flush);
+  };
+}
+
+/** Saves variable edits that are still waiting. Never rejects. */
+export async function flushVariableEdits() {
+  await Promise.all([...flushers].map((flush) => flush()));
+}

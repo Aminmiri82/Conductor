@@ -18,6 +18,7 @@ import {
   requestIdsForNode,
   updateRequestNode,
 } from "@/features/collections/tree";
+import { flushVariableEdits } from "@/features/variables/autosave";
 import { getDraft, useDraftStore } from "@/features/workspace/draftStore";
 import { useResponseStore } from "@/features/workspace/responseStore";
 import {
@@ -103,6 +104,8 @@ type WorkspaceState = {
   saveActiveRequest: () => Promise<void>;
   resolveActiveRequest: () => Promise<void>;
   sendActiveRequest: () => Promise<void>;
+  /** Resolves `true` once the command is on the clipboard. */
+  copyActiveRequestAsCurl: (includeValues: boolean) => Promise<boolean>;
   toggleSidebar: () => void;
   setError: (error: unknown) => void;
   clearError: () => void;
@@ -515,6 +518,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   saveActiveRequest: async () => {
+    // Saving covers everything on screen, so a variable edit still inside
+    // its autosave pause lands too.
+    await flushVariableEdits();
     const request = getDraft(get().activeRequestId);
     if (!request) return;
     set({ error: undefined, saving: true });
@@ -553,6 +559,24 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
+  copyActiveRequestAsCurl: async (includeValues) => {
+    const request = getDraft(get().activeRequestId);
+    if (!request) return false;
+    try {
+      await flushVariableEdits();
+      const curl = await api.requestAsCurl(
+        request,
+        activeEnvironmentIdFor(getWorkspaceUiState(), request.collectionId),
+        includeValues,
+      );
+      await navigator.clipboard.writeText(curl);
+      return true;
+    } catch (error) {
+      set({ error: String(error) });
+      return false;
+    }
+  },
+
   sendActiveRequest: async () => {
     const request = getDraft(get().activeRequestId);
     if (!request || get().sendingRequestIds.has(request.id)) return;
@@ -567,6 +591,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         return { sendingRequestIds };
       });
     try {
+      // Rust reads variables from the database, so one typed a moment ago
+      // must be saved first.
+      await flushVariableEdits();
       const response = await api.sendRequest(
         request,
         activeEnvironmentIdFor(getWorkspaceUiState(), request.collectionId),
