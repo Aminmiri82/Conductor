@@ -18,6 +18,7 @@ import {
   requestIdsForNode,
   updateRequestNode,
 } from "@/features/collections/tree";
+import { flushVariableEdits } from "@/features/variables/autosave";
 import { getDraft, useDraftStore } from "@/features/workspace/draftStore";
 import { useResponseStore } from "@/features/workspace/responseStore";
 import {
@@ -517,6 +518,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   saveActiveRequest: async () => {
+    // Saving covers everything on screen, so a variable edit still inside
+    // its autosave pause lands too.
+    await flushVariableEdits();
     const request = getDraft(get().activeRequestId);
     if (!request) return;
     set({ error: undefined, saving: true });
@@ -559,6 +563,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const request = getDraft(get().activeRequestId);
     if (!request) return false;
     try {
+      await flushVariableEdits();
       const curl = await api.requestAsCurl(
         request,
         activeEnvironmentIdFor(getWorkspaceUiState(), request.collectionId),
@@ -586,6 +591,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         return { sendingRequestIds };
       });
     try {
+      // Rust reads variables from the database, so one typed a moment ago
+      // must be saved first.
+      await flushVariableEdits();
       const response = await api.sendRequest(
         request,
         activeEnvironmentIdFor(getWorkspaceUiState(), request.collectionId),

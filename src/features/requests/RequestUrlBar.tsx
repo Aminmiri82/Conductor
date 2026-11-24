@@ -3,11 +3,17 @@ import {
   AlertTriangle,
   Check,
   CheckCircle2,
+  ChevronDown,
   Save,
   SendHorizontal,
-  Terminal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -113,28 +119,29 @@ export function RequestUrlBar({
       >
         <Save className={`size-4 ${saving ? "opacity-60" : ""}`} />
       </Button>
-      <CopyCurlButton onCopy={onCopyCurl} />
-      <Button
-        className="h-8 shrink-0 gap-1.5 bg-[var(--app-accent)] px-3 text-xs font-bold uppercase tracking-[0.04em] text-[var(--app-accent-fg)] hover:bg-[var(--app-accent)]/90"
-        onClick={onSend}
-        disabled={sending}
-        style={{ borderRadius: "var(--app-radius)" }}
-      >
-        <SendHorizontal className="size-3.5" />
-        {sending ? "Sending" : "Send"}
-      </Button>
+      <div className="flex shrink-0">
+        <Button
+          className="h-8 gap-1.5 bg-[var(--app-accent)] px-3 text-xs font-bold uppercase tracking-[0.04em] text-[var(--app-accent-fg)] hover:bg-[var(--app-accent)]/90"
+          onClick={onSend}
+          disabled={sending}
+          style={{
+            borderRadius: "var(--app-radius) 0 0 var(--app-radius)",
+          }}
+        >
+          <SendHorizontal className="size-3.5" />
+          {sending ? "Sending" : "Send"}
+        </Button>
+        <SendMenu onCopyCurl={onCopyCurl} />
+      </div>
     </div>
   );
 }
 
-// ⌘-click copies with the environment's values; a plain click copies
-// `<name>` placeholders, safe to paste anywhere.
-function CopyCurlButton({
-  onCopy,
+function SendMenu({
+  onCopyCurl,
 }: {
-  onCopy: (includeValues: boolean) => Promise<boolean>;
+  onCopyCurl: (includeValues: boolean) => Promise<boolean>;
 }) {
-  const [withValues, setWithValues] = useState(false);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -143,32 +150,48 @@ function CopyCurlButton({
     return () => clearTimeout(timer);
   }, [copied]);
 
-  const label = copied
-    ? "Copied"
-    : withValues
-      ? "Copy as cURL with variable values, secrets included"
-      : "Copy as cURL (⌘-click to include variable values)";
+  const copy = (includeValues: boolean) =>
+    void onCopyCurl(includeValues).then(setCopied);
 
   return (
-    <Button
-      variant="ghost"
-      size="icon"
-      className={`size-8 shrink-0 border hover:text-[var(--app-text)] ${
-        withValues || copied
-          ? "border-[var(--app-accent)] text-[var(--app-accent)]"
-          : "border-[var(--app-line)] text-[var(--app-dim)]"
-      }`}
-      style={{ borderRadius: "var(--app-radius)" }}
-      title={label}
-      aria-label={label}
-      onMouseMove={(event) => setWithValues(event.metaKey)}
-      onMouseLeave={() => setWithValues(false)}
-      onClick={(event) => {
-        void onCopy(event.metaKey).then(setCopied);
-      }}
-    >
-      {copied ? <Check className="size-4" /> : <Terminal className="size-4" />}
-    </Button>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          className="h-8 w-7 border-l border-[var(--app-accent-fg)]/25 bg-[var(--app-accent)] px-0 text-[var(--app-accent-fg)] hover:bg-[var(--app-accent)]/90"
+          style={{
+            borderRadius: "0 var(--app-radius) var(--app-radius) 0",
+          }}
+          title={copied ? "Copied" : "More ways to use this request"}
+          aria-label={copied ? "Copied" : "More ways to use this request"}
+        >
+          {copied ? (
+            <Check className="size-3.5" />
+          ) : (
+            <ChevronDown className="size-3.5" />
+          )}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-72">
+        <DropdownMenuItem
+          className="flex-col items-start gap-0"
+          onSelect={() => copy(false)}
+        >
+          Copy as cURL
+          <span className="text-xs text-[var(--app-dim)]">
+            Variables stay as {"<name>"} placeholders
+          </span>
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          className="flex-col items-start gap-0"
+          onSelect={() => copy(true)}
+        >
+          Copy as cURL with values
+          <span className="text-xs text-[var(--app-dim)]">
+            Variables filled in, secrets included
+          </span>
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

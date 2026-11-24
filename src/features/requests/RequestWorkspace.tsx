@@ -270,10 +270,12 @@ function VariablesSection({ requestId }: { requestId: string }) {
     (request) => request.collectionId,
   );
   const variableNames = useRequestVariableNames(requestId);
-  // Keyed so a request switch drops the previous request's unsaved edits.
+  // Keyed so each request gets its own table; leaving one saves its pending
+  // edits.
   return collectionId !== undefined ? (
     <VariableEditor
       key={requestId}
+      requestId={requestId}
       collectionId={collectionId}
       variableNames={variableNames}
     />
