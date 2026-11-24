@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.16](https://github.com/Aminmiri82/Conductor/compare/app-v0.1.15...app-v0.1.16) (2026-11-24)
+
+
+### Features
+
+* **requests:** copy a request as cURL ([#41](https://github.com/Aminmiri82/Conductor/issues/41)) ([e33d4d6](https://github.com/Aminmiri82/Conductor/commit/e33d4d613c6b9e180f8239f3112a36f72a81628c))
+
+
+### Maintenance
+
+* **dev:** adopt Vite Plus for frontend tooling ([#40](https://github.com/Aminmiri82/Conductor/issues/40)) ([53fbbfc](https://github.com/Aminmiri82/Conductor/commit/53fbbfc72ffdf43efcb07c2058733284ebc863f8))
+
 ## [0.1.15](https://github.com/Aminmiri82/Conductor/compare/app-v0.1.14...app-v0.1.15) (2026-11-02)
 
 
