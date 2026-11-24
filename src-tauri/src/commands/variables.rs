@@ -46,12 +46,6 @@ impl VariableContext {
         }
     }
 
-    /// Drops the values the user marked secret, so they read as unresolved.
-    pub(crate) fn without_secrets(mut self) -> Self {
-        self.values.retain(|_, stored| !stored.sensitive);
-        self
-    }
-
     #[cfg(test)]
     pub(crate) fn with_values(values: &[(&str, &str, bool)]) -> Self {
         Self {

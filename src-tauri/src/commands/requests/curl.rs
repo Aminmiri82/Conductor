@@ -12,8 +12,9 @@ use crate::AppState;
 
 use super::{auth, body, resolver};
 
-/// With `include_values`, fills in the variables the request's environment
-/// has, except secrets; without it, every variable is a placeholder.
+/// With `include_values`, fills in every variable the request's environment
+/// has, secrets included (the user asked for a runnable command); without it,
+/// every variable is a placeholder.
 #[tauri::command(async)]
 #[specta::specta]
 pub fn request_as_curl(
@@ -25,7 +26,6 @@ pub fn request_as_curl(
     let (variables, inherited_auth) = state.database.with_read_connection(|connection| {
         let variables = if include_values {
             load_variable_context(connection, &request, environment_id.as_deref())?
-                .without_secrets()
         } else {
             VariableContext::nothing()
         };
@@ -310,20 +310,18 @@ mod tests {
     }
 
     #[test]
-    fn with_values_fills_all_but_secrets_and_missing_ones() {
+    fn with_values_fills_everything_but_missing_ones() {
         let variables = VariableContext::with_values(&[
             ("host", "https://api.test", false),
             ("userId", "42", false),
             ("term", "x y", false),
             ("token", "s3cret", true),
             ("name", "Ada", false),
-        ])
-        .without_secrets();
+        ]);
         let curl = to_curl(&post_json(), None, &variables).unwrap();
         assert!(curl.starts_with("curl -X POST 'https://api.test/users/42?q=a+b%26x+y'"));
         assert!(curl.contains("-H 'X-Trace: <trace>'"));
-        assert!(curl.contains("-H 'Authorization: Bearer <token>'"));
-        assert!(!curl.contains("s3cret"));
+        assert!(curl.contains("-H 'Authorization: Bearer s3cret'"));
         assert!(curl.contains(r#""it'\''s Ada""#));
     }
 

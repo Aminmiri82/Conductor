@@ -146,7 +146,7 @@ function CopyCurlButton({
   const label = copied
     ? "Copied"
     : withValues
-      ? "Copy as cURL with variable values (secrets stay placeholders)"
+      ? "Copy as cURL with variable values, secrets included"
       : "Copy as cURL (⌘-click to include variable values)";
 
   return (
