@@ -7,11 +7,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import {
-  activeEnvironmentIdFor,
-  useWorkspaceUiStore,
-} from "@/features/workspace/workspaceUiStore";
+  useActiveEnvironment,
+  useWorkspaceStore,
+} from "@/features/workspace/workspaceStore";
 
 export function AppTopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const sidebarVisible = useWorkspaceStore((state) => state.sidebarVisible);
@@ -23,9 +22,7 @@ export function AppTopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const environments = allEnvironments.filter(
     (environment) => environment.collectionId === activeCollectionId,
   );
-  const activeEnvironmentId = useWorkspaceUiStore((state) =>
-    activeEnvironmentIdFor(state.workspaceUi, activeCollectionId),
-  );
+  const activeEnvironmentId = useActiveEnvironment(activeCollectionId)?.id;
   const selectEnvironment = useWorkspaceStore(
     (state) => state.selectEnvironment,
   );

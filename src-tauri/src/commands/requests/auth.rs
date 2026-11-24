@@ -1,24 +1,44 @@
 use reqwest::header::{HeaderName, HeaderValue};
 use rusqlite::{params, OptionalExtension};
 
-use crate::commands::models::{ApiKeyLocation, AuthConfig, AuthType, RequestDetail};
+use crate::commands::{
+    collections::repository,
+    error::CommandError,
+    models::{ApiKeyLocation, AuthConfig, AuthType, RequestDetail},
+    variables::VariableContext,
+};
 use crate::storage::StorageError;
 
 use super::{parse_json_optional, resolver::resolve_text};
-use crate::commands::{error::CommandError, variables::VariableContext};
 
 pub(super) fn inherited_auth_for_request(
     connection: &rusqlite::Connection,
     request: &RequestDetail,
+    require_current: bool,
 ) -> Result<Option<AuthConfig>, StorageError> {
-    let mut parent_id: Option<String> = connection
+    let placement: Option<Option<String>> = connection
         .query_row(
-            "SELECT parent_id FROM collection_nodes WHERE request_id = ?",
-            params![request.id],
+            "SELECT parent_id FROM collection_nodes WHERE request_id = ? AND collection_id = ?",
+            params![request.id, request.collection_id],
             |row| row.get(0),
         )
-        .optional()?
-        .flatten();
+        .optional()?;
+    let mut parent_id = match placement {
+        Some(parent_id) => parent_id,
+        None if request.repository_revision.is_some()
+            || repository::linked(connection, &request.collection_id)? =>
+        {
+            return if require_current {
+                Err(StorageError::InvalidInput(
+                    "This request is no longer in the repository. Recover the draft to continue."
+                        .into(),
+                ))
+            } else {
+                Ok(None)
+            };
+        }
+        None => None,
+    };
 
     while let Some(id) = parent_id {
         let row: Option<(Option<String>, Option<String>)> = connection

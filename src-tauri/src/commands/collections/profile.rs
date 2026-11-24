@@ -58,7 +58,8 @@ pub(crate) fn read_profile(
     )?;
 
     let collection_variable_count: u32 = connection.query_row(
-        "SELECT COUNT(*) FROM variables WHERE scope = 'collection' AND collection_id = ?",
+        "SELECT (SELECT COUNT(*) FROM variables WHERE scope = 'collection' AND collection_id = ?1)
+              + (SELECT COUNT(*) FROM repository_variables WHERE collection_id = ?1 AND scope_id = ?1)",
         params![collection_id],
         |row| row.get(0),
     )?;
@@ -68,7 +69,9 @@ pub(crate) fn read_profile(
         "SELECT id, name,
                 (SELECT COUNT(*) FROM variables
                  WHERE scope = 'environment' AND environment_id = environments.id)
-         FROM environments WHERE collection_id = ? ORDER BY created_at, name",
+              + (SELECT COUNT(*) FROM repository_variables
+                 WHERE collection_id = environments.collection_id AND scope_id = environments.id)
+         FROM environments WHERE collection_id = ? AND archived = 0 ORDER BY created_at, name",
     )?;
     for row in statement.query_map(params![collection_id], |row| {
         Ok(EnvironmentVariableCount {
@@ -263,6 +266,32 @@ mod tests {
             profile.last_edited_at.as_deref(),
             Some("2099-01-01T00:00:00Z")
         );
+    }
+
+    #[test]
+    fn a_profile_counts_a_local_override_once_and_includes_required_secrets() {
+        let connection = test_connection();
+        let collection = fixtures::collection(&connection);
+        let environment = fixtures::environment(&connection, &collection);
+        connection
+            .execute(
+                "INSERT INTO repository_links (collection_id, root, manifest_id) VALUES (?, '/repo', ?)",
+                [&collection, &collection],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO repository_variables
+                 (collection_id, scope_id, key, value, enabled, sensitive, local, shared_value, required_secret)
+                 VALUES (?1, ?2, 'host', 'local', 1, 0, 1, 'shared', 0),
+                        (?1, ?2, 'token', NULL, 0, 1, 0, NULL, 1)",
+                [&collection, &environment],
+            )
+            .unwrap();
+
+        let profile = read_profile(&connection, &collection).unwrap();
+
+        assert_eq!(profile.environments[0].variable_count, 2);
     }
 
     #[test]

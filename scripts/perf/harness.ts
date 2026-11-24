@@ -538,10 +538,18 @@ async function measureScenario(
     const env = { echoUrl: `http://127.0.0.1:${port}` };
     const fixtures: Record<string, unknown> = {};
     for (const name of scenario.fixtures) {
-      const { file, info } = scenario.generators[name](env);
-      const path = join(work, `${name}.json`);
-      writeFileSync(path, file);
-      fixtures[name] = { ...info, path };
+      const fixture = scenario.generators[name](env);
+      const path = join(work, "file" in fixture ? `${name}.json` : name);
+      if ("file" in fixture) {
+        writeFileSync(path, fixture.file);
+      } else {
+        for (const [relative, contents] of Object.entries(fixture.files)) {
+          const target = join(path, relative);
+          mkdirSync(dirname(target), { recursive: true });
+          writeFileSync(target, contents);
+        }
+      }
+      fixtures[name] = { ...fixture.info, path };
     }
     const config = (phase: "prepare" | "measure") => ({
       scenario: scenario.name,

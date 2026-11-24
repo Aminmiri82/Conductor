@@ -10,19 +10,18 @@ export const commands = {
 	getWorkspaceState: (key: string) => __TAURI_INVOKE<FrontendJson | null>("get_workspace_state", { key }),
 	setWorkspaceState: (key: string, value: FrontendJson) => __TAURI_INVOKE<null>("set_workspace_state", { key, value }),
 	/**
-	 *  The one way editors save variables: every change in one transaction, so a
-	 *  failure leaves nothing half-applied (for example a variable moved between
-	 *  scopes is never deleted from one and missing from the other).
+	 *  Linked edits replace one local.json per repository. Other scopes use the
+	 *  SQLite transaction.
 	 */
-	applyVariableChanges: (changes: VariableChange[]) => __TAURI_INVOKE<null>("apply_variable_changes", { changes }),
+	applyVariableChanges: (changes: VariableChange[]) => __TAURI_INVOKE<boolean>("apply_variable_changes", { changes }),
 	/**
 	 *  Creates an empty collection, so a new user can start without a Postman file.
 	 *  Returns the same shape as an import so the sidebar can switch to it at once.
 	 */
 	createCollection: (name: string) => __TAURI_INVOKE<ImportedCollection>("create_collection", { name }),
 	createEnvironment: (input: CreateEnvironmentInput) => __TAURI_INVOKE<string>("create_environment", { input }),
-	createFolder: (input: CreateFolderInput) => __TAURI_INVOKE<string>("create_folder", { input }),
-	createRequest: (input: CreateRequestInput) => __TAURI_INVOKE<CreateRequestResult>("create_request", { input }),
+	createFolder: (collectionId: string, parentId: string | null, position: number) => __TAURI_INVOKE<CreateFolderResult>("create_folder", { collectionId, parentId, position }),
+	createRequest: (collectionId: string, parentId: string | null, position: number) => __TAURI_INVOKE<CreateRequestResult>("create_request", { collectionId, parentId, position }),
 	/**
 	 *  Deletes a collection and, through the schema's cascades, its folders,
 	 *  requests, environments, and variables. Returns the remaining collections.
@@ -38,7 +37,7 @@ export const commands = {
 	duplicateRequest: (input: DuplicateRequestInput) => __TAURI_INVOKE<DuplicateRequestResult>("duplicate_request", { input }),
 	/**
 	 *  Asks where to save the collection, offering "<collection>.postman_collection.json",
-	 *  and writes it there. With `include_environments`, each of its environments
+	 *  and writes it there. With `include_environments`, each active environment
 	 *  goes next to it as "<file stem> - <environment>.postman_environment.json",
 	 *  replacing a file of that name. Returns the written file's name, or `None`
 	 *  when the user cancels.
@@ -47,6 +46,7 @@ export const commands = {
 	getCollectionProfile: (collectionId: string) => __TAURI_INVOKE<CollectionProfile>("get_collection_profile", { collectionId }),
 	getCollectionTree: (collectionId: string) => __TAURI_INVOKE<CollectionNode[]>("get_collection_tree", { collectionId }),
 	getRequest: (requestId: string) => __TAURI_INVOKE<RequestDetail>("get_request", { requestId }),
+	getSharedVariable: (target: VariableTarget, key: string) => __TAURI_INVOKE<string>("get_shared_variable", { target, key }),
 	importPostmanEnvironment: (collectionId: string, postmanJson: string, fileName: string | null) => __TAURI_INVOKE<string>("import_postman_environment", { collectionId, postmanJson, fileName }),
 	/**
 	 *  Reads the file at `path` in Rust, so a large collection never crosses IPC.
@@ -54,6 +54,12 @@ export const commands = {
 	 *  for the perf harness and agents, which seed data from a known path.
 	 */
 	importPostmanCollection: (path: string) => __TAURI_INVOKE<ImportedCollection>("import_postman_collection", { path }),
+	inspectRepository: (root: string) => __TAURI_INVOKE<boolean>("inspect_repository", { root }),
+	openRepository: (root: string, create: boolean, sourceCollectionId: string | null, preview: RepositoryPublishScope[] | null) => __TAURI_INVOKE<ImportedCollection>("open_repository", { root, create, sourceCollectionId, preview }),
+	previewRepositoryPublish: (sourceCollectionId: string) => __TAURI_INVOKE<RepositoryPublishScope[]>("preview_repository_publish", { sourceCollectionId }),
+	refreshRepositories: (linkedCollections: CollectionSummary[]) => __TAURI_INVOKE<RepositoryRefresh>("refresh_repositories", { linkedCollections }),
+	relinkRepository: (collectionId: string, root: string) => __TAURI_INVOKE<CollectionSummary[]>("relink_repository", { collectionId, root }),
+	saveRepositoryRequestAsNew: (request: RequestDetail) => __TAURI_INVOKE<CreateRequestResult>("save_repository_request_as_new", { request }),
 	listCollectionStats: () => __TAURI_INVOKE<CollectionStats[]>("list_collection_stats"),
 	listCollections: () => __TAURI_INVOKE<CollectionSummary[]>("list_collections"),
 	listEnvironments: () => __TAURI_INVOKE<EnvironmentSummary[]>("list_environments"),
@@ -75,7 +81,8 @@ export const commands = {
 	requestAsCurl: (request: RequestDetail, environmentId: string | null, includeValues: boolean) => __TAURI_INVOKE<string>("request_as_curl", { request, environmentId, includeValues }),
 	resolveRequest: (request: RequestDetail, environmentId: string | null) => __TAURI_INVOKE<ResolvedRequestPreview>("resolve_request", { request, environmentId }),
 	moveNode: (input: MoveNodeInput) => __TAURI_INVOKE<null>("move_node", { input }),
-	saveRequest: (request: RequestDetail) => __TAURI_INVOKE<null>("save_request", { request }),
+	saveRequest: (request: RequestDetail) => __TAURI_INVOKE<SaveRequestResult>("save_request", { request }),
+	saveSharedVariable: (target: VariableTarget, key: string, change: SharedVariableChange) => __TAURI_INVOKE<RepositoryRefresh>("save_shared_variable", { target, key, change }),
 	/**
 	 *  The text the response viewer shows: pretty-printed for JSON, as received
 	 *  for text. Binary bodies are only ever saved with `save_response_body`.
@@ -195,6 +202,7 @@ export type CollectionStats = {
 export type CollectionSummary = {
 	id: string,
 	name: string,
+	repository: RepositoryLink | null,
 };
 
 export type CreateEnvironmentInput = {
@@ -202,23 +210,15 @@ export type CreateEnvironmentInput = {
 	name: string,
 };
 
-export type CreateFolderInput = {
-	collectionId: string,
-	parentId: string | null,
-	position: number,
-	name: string,
-};
-
-export type CreateRequestInput = {
-	collectionId: string,
-	parentId: string | null,
-	position: number,
+export type CreateFolderResult = {
+	nodeId: string,
 	name: string,
 };
 
 export type CreateRequestResult = {
 	requestId: string,
 	nodeId: string,
+	name: string,
 };
 
 export type DiscardResponsesInput = {
@@ -305,6 +305,33 @@ export type RenameEnvironmentInput = {
 	name: string,
 };
 
+export type RepositoryLink = {
+	root: string,
+	issue: string | null,
+};
+
+export type RepositoryPublishScope = {
+	environmentId: string | null,
+	name: string,
+	sharedKeys: string[],
+	secretKeys: string[],
+};
+
+export type RepositoryRefresh = {
+	collections: CollectionSummary[] | null,
+	changedRequests: RepositoryRequestChange[],
+	changedCollectionIds: string[],
+	changedEnvironmentIds: string[],
+	changedVariableCollectionIds: string[],
+};
+
+export type RepositoryRequestChange = {
+	requestId: string,
+	revision: string | null,
+	name: string | null,
+	method: string | null,
+};
+
 export type RequestBody = {
 	mode: BodyMode,
 	raw?: string,
@@ -318,6 +345,7 @@ export type RequestBody = {
 export type RequestDetail = {
 	id: string,
 	collectionId: string,
+	repositoryRevision?: string | null,
 	name: string,
 	method: string,
 	url: string,
@@ -353,6 +381,8 @@ export type ResponseHeader = {
 	value: string,
 };
 
+export type SaveRequestResult = { status: "saved"; revision: string | null; refresh: RepositoryRefresh | null } | { status: "conflict"; revision: string | null; refresh: RepositoryRefresh | null } | { status: "failed"; message: string; refresh: RepositoryRefresh };
+
 export type SaveResponseBodyInput = {
 	historyId: string,
 	path: string,
@@ -378,6 +408,8 @@ export type SendRequestResult = {
 	variableWarnings: string[],
 };
 
+export type SharedVariableChange = { kind: "value"; previous: string; value: string } | { kind: "requiredSecret" };
+
 /**
  *  What one editor changed in one target: keys to set and keys to remove.
  *  Keys it did not touch are not sent, so saving never overwrites a value
@@ -386,6 +418,8 @@ export type SendRequestResult = {
 export type VariableChange = {
 	target: VariableTarget,
 	upserts: VariableEntry[],
+	/**  Previously displayed rows for field-level updates to existing local values. */
+	baseline?: VariableEntry[] | null,
 	deletes: string[],
 };
 
@@ -398,7 +432,20 @@ export type VariableEntry = {
 	value: string,
 	enabled: boolean,
 	sensitive: boolean,
+	origin?: VariableOrigin | null,
+	presentation?: VariablePresentation | null,
+	requiredSecret?: boolean | null,
 };
+
+export type VariableOrigin = "shared" | "local" | "missingSecret";
+
+export type VariablePresentation = {
+	fixedKey: boolean,
+	editShared: boolean,
+	removal: VariableRemoval,
+};
+
+export type VariableRemoval = "none" | "local" | "useShared";
 
 /**
  *  Which set of variables a command reads or writes. The ids it holds are the

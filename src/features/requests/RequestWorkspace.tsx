@@ -13,10 +13,6 @@ import { RequestUrlBar } from "@/features/requests/RequestUrlBar";
 import { KeyValueTable } from "@/features/requests/KeyValueTable";
 import { BodyEditor } from "@/features/requests/BodyEditor";
 import { AuthEditor } from "@/features/requests/AuthEditor";
-import {
-  useRequestVariableNames,
-  VariableEditor,
-} from "@/features/variables/VariableEditor";
 import { RequestTabsBar } from "@/features/requests/RequestTabsBar";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 import { useDraftStore, useDraftValue } from "@/features/workspace/draftStore";
@@ -37,12 +33,21 @@ const ResponseViewer = lazy(() =>
   })),
 );
 
+const VariablesSection = lazy(
+  () => import("@/features/variables/VariableEditor"),
+);
+const RepositoryConflict = lazy(() => import("./RepositoryConflict"));
+
 // Split into sections that each select only the draft fields they render,
 // so a keystroke in one field does not re-render the rest of the workspace.
 export function RequestWorkspace() {
   const activeRequestId = useWorkspaceStore((state) => state.activeRequestId);
   const hasDraft = useDraftStore((state) =>
     activeRequestId ? state.drafts.has(activeRequestId) : false,
+  );
+  const conflict = useWorkspaceStore(
+    (state) =>
+      state.tabs.find((tab) => tab.requestId === activeRequestId)?.conflict,
   );
 
   if (!activeRequestId || !hasDraft) {
@@ -51,8 +56,7 @@ export function RequestWorkspace() {
         <div className="max-w-sm text-center">
           <div className="text-sm font-medium">No request selected</div>
           <div className="mt-2 text-xs leading-5 text-[var(--app-dim)]">
-            Create or import a collection, then choose a request from the
-            sidebar.
+            Choose a request from the collection sidebar.
           </div>
         </div>
       </section>
@@ -63,6 +67,11 @@ export function RequestWorkspace() {
     <section className="flex h-full min-h-0 flex-col bg-[var(--app-bg)]">
       <RequestTabsBar />
       <UrlBarSection requestId={activeRequestId} />
+      {conflict ? (
+        <Suspense>
+          <RepositoryConflict removed={conflict.revision === null} />
+        </Suspense>
+      ) : null}
       <ResizablePanelGroup orientation="vertical" className="min-h-0 flex-1">
         <ResizablePanel defaultSize="58%" minSize="34%">
           <RequestEditors requestId={activeRequestId} />
@@ -97,9 +106,11 @@ function UrlBarSection({ requestId }: { requestId: string }) {
     (state) => state.copyActiveRequestAsCurl,
   );
   const saving = useWorkspaceStore((state) => state.saving);
-  const dirty = useWorkspaceStore(
-    (state) =>
-      state.tabs.find((tab) => tab.requestId === requestId)?.dirty ?? false,
+  const repositoryRequest = useDraftValue(requestId, (request) =>
+    Boolean(request.repositoryRevision),
+  );
+  const tab = useWorkspaceStore((state) =>
+    state.tabs.find((tab) => tab.requestId === requestId),
   );
   const unresolved =
     useDraftStore(
@@ -119,7 +130,9 @@ function UrlBarSection({ requestId }: { requestId: string }) {
         request={{ name, method, url }}
         sending={sending}
         saving={saving}
-        dirty={dirty}
+        saveBlocked={Boolean(tab?.conflict)}
+        requestRemoved={tab?.conflict?.revision === null}
+        dirty={tab?.dirty ?? false}
         unresolvedKeys={unresolved}
         variableValues={variableValues}
         onChange={updateRequest}
@@ -127,6 +140,11 @@ function UrlBarSection({ requestId }: { requestId: string }) {
         onSave={() => void saveActiveRequest()}
         onCopyCurl={copyActiveRequestAsCurl}
       />
+      {repositoryRequest && !tab?.conflict ? (
+        <div className="mt-2 text-xs text-[var(--app-dim)]">
+          Saves to the repository. Use variables for credentials.
+        </div>
+      ) : null}
       {unresolved.length ? (
         <div className="mt-2 flex items-start gap-2 rounded-md border border-amber-400/20 bg-amber-400/10 px-2 py-1.5 text-xs text-amber-200">
           <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
@@ -179,7 +197,9 @@ function RequestEditors({ requestId }: { requestId: string }) {
         <BodySection requestId={requestId} />
       </TabsContent>
       <TabsContent value="variables" className="min-h-0 flex-1 p-0">
-        <VariablesSection requestId={requestId} />
+        <Suspense>
+          <VariablesSection requestId={requestId} />
+        </Suspense>
       </TabsContent>
     </Tabs>
   );
@@ -262,24 +282,6 @@ function BodySection({ requestId }: { requestId: string }) {
       onChange={(body) => updateRequest({ body })}
     />
   );
-}
-
-function VariablesSection({ requestId }: { requestId: string }) {
-  const collectionId = useDraftValue(
-    requestId,
-    (request) => request.collectionId,
-  );
-  const variableNames = useRequestVariableNames(requestId);
-  // Keyed so each request gets its own table; leaving one saves its pending
-  // edits.
-  return collectionId !== undefined ? (
-    <VariableEditor
-      key={requestId}
-      requestId={requestId}
-      collectionId={collectionId}
-      variableNames={variableNames}
-    />
-  ) : null;
 }
 
 // How long the app stays in the background before the response viewer lets

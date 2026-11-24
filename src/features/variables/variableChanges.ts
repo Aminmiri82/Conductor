@@ -8,7 +8,10 @@ import type {
 // Editors send only the keys they changed (see `apply_variable_changes`), so
 // saving never rewrites a value that someone else changed in the meantime.
 
-export type RequestVariableRow = {
+export type RequestVariableRow = Pick<
+  VariableEntry,
+  "origin" | "presentation" | "requiredSecret"
+> & {
   key: string;
   value: string;
   scope: VariableScope;

@@ -1,4 +1,4 @@
-import { confirm } from "@tauri-apps/plugin-dialog";
+import { confirm, open } from "@tauri-apps/plugin-dialog";
 import {
   lazy,
   Suspense,
@@ -9,7 +9,8 @@ import {
   useRef,
   useState,
 } from "react";
-import { Import, Plus } from "lucide-react";
+import { GitBranch, Import, Plus } from "lucide-react";
+import { api } from "@/lib/tauri";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -50,12 +51,22 @@ const NewCollectionDialog = lazy(() =>
   })),
 );
 
+const RepositoryCreateDialog = lazy(() => import("./RepositoryCreateDialog"));
+
 export function CollectionSidebar() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const collections = useWorkspaceStore((state) => state.collections);
   const tree = useWorkspaceStore((state) => state.tree);
   const activeCollectionId = useWorkspaceStore(
     (state) => state.activeCollectionId,
+  );
+  const repository = collections.find(
+    (collection) => collection.id === activeCollectionId,
+  )?.repository;
+  const openRepository = useWorkspaceStore((state) => state.openRepository);
+  const relinkRepository = useWorkspaceStore((state) => state.relinkRepository);
+  const refreshRepositories = useWorkspaceStore(
+    (state) => state.refreshRepositories,
   );
   const activeRequestId = useWorkspaceStore((state) => state.activeRequestId);
   const selectCollection = useWorkspaceStore((state) => state.selectCollection);
@@ -89,6 +100,8 @@ export function CollectionSidebar() {
   const renameOnMenuClose = useRef(false);
   const [newCollectionOpen, setNewCollectionOpen] = useState(false);
   const [newCollectionOpened, setNewCollectionOpened] = useState(false);
+  const [repositoryToCreate, setRepositoryToCreate] = useState<string>();
+  const pickingRepository = useRef(false);
   // First and last row touching the viewport. The scroll position itself lives
   // in refs; state only changes when a row enters or leaves, not on every
   // scroll event.
@@ -234,6 +247,33 @@ export function CollectionSidebar() {
     }
   }
 
+  async function pickRepository(relinkCollectionId?: string) {
+    if (pickingRepository.current) return;
+    pickingRepository.current = true;
+    clearError();
+    try {
+      const root = await open({
+        directory: true,
+        multiple: false,
+        title: relinkCollectionId
+          ? "Relink repository folder"
+          : "Open from repository",
+      });
+      if (!root) return;
+      if (relinkCollectionId) {
+        await relinkRepository(relinkCollectionId, root);
+      } else if (await api.inspectRepository(root)) {
+        await openRepository(root, false, null);
+      } else {
+        setRepositoryToCreate(root);
+      }
+    } catch (error) {
+      setError(error);
+    } finally {
+      pickingRepository.current = false;
+    }
+  }
+
   const performDrop = useCallback(async () => {
     const { source, target: dropTarget } = dragRef.current;
     endDrag();
@@ -288,6 +328,12 @@ export function CollectionSidebar() {
             <SelectContent>
               {collections.map((collection) => (
                 <SelectItem key={collection.id} value={collection.id}>
+                  {collection.repository ? (
+                    <GitBranch
+                      className="size-3.5 text-[var(--app-dim)]"
+                      aria-label="Repository collection"
+                    />
+                  ) : null}
                   {collection.name}
                 </SelectItem>
               ))}
@@ -306,7 +352,7 @@ export function CollectionSidebar() {
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="end"
-              className="w-40"
+              className="w-52"
               onCloseAutoFocus={(event) => {
                 if (!renameOnMenuClose.current) return;
                 renameOnMenuClose.current = false;
@@ -332,9 +378,57 @@ export function CollectionSidebar() {
               <DropdownMenuItem onSelect={openNewCollection}>
                 New collection
               </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => void pickRepository()}>
+                Open from repository…
+              </DropdownMenuItem>
+              {repository && activeCollectionId ? (
+                <>
+                  <DropdownMenuItem onSelect={() => void refreshRepositories()}>
+                    Refresh repository
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={() => void pickRepository(activeCollectionId)}
+                  >
+                    Relink repository…
+                  </DropdownMenuItem>
+                </>
+              ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+        {repository ? (
+          <div className="space-y-1">
+            <p
+              aria-label={`Repository path ${repository.root}`}
+              className="truncate text-xs text-[var(--app-dim)]"
+              title={repository.root}
+            >
+              {repository.root}
+            </p>
+            {repository.issue ? (
+              <details className="text-xs text-amber-200">
+                <summary
+                  className="cursor-pointer truncate"
+                  title={repository.issue}
+                >
+                  {repository.issue.split("\n", 1)[0]}
+                </summary>
+                <p className="app-scroll max-h-28 overflow-auto py-1 wrap-break-word whitespace-pre-line">
+                  {repository.issue}
+                </p>
+                {activeCollectionId ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => void pickRepository(activeCollectionId)}
+                  >
+                    Relink repository…
+                  </Button>
+                ) : null}
+              </details>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       <div
@@ -410,8 +504,7 @@ export function CollectionSidebar() {
           </div>
         ) : (
           <div className="px-2 py-8 text-center text-xs text-[var(--app-dim)]">
-            Create a collection, or import one from Postman.
-            <div className="mt-3 flex justify-center gap-2">
+            <div className="mt-3 flex flex-wrap justify-center gap-2">
               <Button
                 variant="outline"
                 size="sm"
@@ -428,11 +521,28 @@ export function CollectionSidebar() {
               >
                 Import
               </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => void pickRepository()}
+              >
+                <GitBranch className="size-3.5" />
+                Open from repository…
+              </Button>
             </div>
           </div>
         )}
       </div>
       <Suspense>
+        {repositoryToCreate ? (
+          <Suspense>
+            <RepositoryCreateDialog
+              root={repositoryToCreate}
+              onClose={() => setRepositoryToCreate(undefined)}
+            />
+          </Suspense>
+        ) : null}
         {newCollectionOpened ? (
           <NewCollectionDialog
             open={newCollectionOpen}

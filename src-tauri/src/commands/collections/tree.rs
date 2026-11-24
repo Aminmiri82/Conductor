@@ -3,14 +3,17 @@ use std::collections::HashMap;
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 use tauri::State;
-use uuid::Uuid;
 
 use crate::commands::{
     error::CommandError,
-    models::{CollectionNode, CollectionNodeKind, CreateFolderInput, MoveNodeInput},
+    models::{
+        CollectionNode, CollectionNodeKind, CreateFolderInput, CreateFolderResult, MoveNodeInput,
+    },
 };
 use crate::storage::{insert_node, NewNode, NodeKind, StorageError};
 use crate::AppState;
+
+use super::repository;
 
 const SORT_ORDER_STEP: i64 = 1024;
 
@@ -53,7 +56,7 @@ pub(crate) fn read_tree(
          FROM collection_nodes n
          LEFT JOIN requests r ON r.id = n.request_id
          WHERE n.collection_id = ?
-         ORDER BY n.parent_id, n.sort_order",
+         ORDER BY n.parent_id, n.sort_order, n.id",
     )?;
     let rows = statement.query_map(params![collection_id], |row| {
         // The schema gives exactly the request nodes a `request_id`, and its
@@ -120,12 +123,26 @@ fn build_tree_from_map(
 #[tauri::command(async)]
 #[specta::specta]
 pub fn create_folder(
-    input: CreateFolderInput,
+    collection_id: String,
+    parent_id: Option<String>,
+    position: i64,
     state: State<'_, AppState>,
-) -> Result<String, CommandError> {
-    Ok(state
-        .database
-        .with_connection(|connection| add_folder(connection, &input))?)
+) -> Result<CreateFolderResult, CommandError> {
+    let input = CreateFolderInput {
+        collection_id,
+        parent_id,
+        position,
+        name: repository::NEW_FOLDER.into(),
+    };
+    let node_id = state.database.with_connection(|connection| {
+        repository::mutate(connection, &input.collection_id, |connection| {
+            add_folder(connection, &input)
+        })
+    })?;
+    Ok(CreateFolderResult {
+        node_id,
+        name: input.name,
+    })
 }
 
 pub(crate) fn add_folder(
@@ -133,8 +150,8 @@ pub(crate) fn add_folder(
     input: &CreateFolderInput,
 ) -> Result<String, StorageError> {
     let now = Utc::now().to_rfc3339();
-    let node_id = Uuid::new_v4().to_string();
-    let tx = connection.transaction()?;
+    let node_id = repository::new_folder_id(connection, &input.collection_id)?;
+    let tx = connection.savepoint()?;
     let sort_order = sort_order_for_position(
         &tx,
         &input.collection_id,
@@ -172,9 +189,12 @@ pub fn rename_folder(
     if name.is_empty() {
         return Err("A folder needs a name.".into());
     }
-    Ok(state
-        .database
-        .with_connection(|connection| update_folder_name(connection, &node_id, name))?)
+    Ok(state.database.with_connection(|connection| {
+        let collection_id = node_owner(connection, &node_id)?;
+        repository::mutate(connection, &collection_id, |connection| {
+            update_folder_name(connection, &node_id, name)
+        })
+    })?)
 }
 
 fn update_folder_name(
@@ -192,9 +212,23 @@ fn update_folder_name(
 #[tauri::command(async)]
 #[specta::specta]
 pub fn delete_node(node_id: String, state: State<'_, AppState>) -> Result<(), CommandError> {
-    Ok(state
-        .database
-        .with_connection(|connection| delete_subtree(connection, &node_id))?)
+    Ok(state.database.with_connection(|connection| {
+        let collection_id = node_owner(connection, &node_id)?;
+        repository::mutate(connection, &collection_id, |connection| {
+            delete_subtree(connection, &node_id)
+        })
+    })?)
+}
+
+fn node_owner(connection: &Connection, node_id: &str) -> Result<String, StorageError> {
+    Ok(connection
+        .query_row(
+            "SELECT collection_id FROM collection_nodes WHERE id = ?",
+            [node_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .unwrap_or_default())
 }
 
 /// Deletes the node, every node under it, and the requests they point at.
@@ -202,7 +236,7 @@ pub(crate) fn delete_subtree(
     connection: &mut Connection,
     node_id: &str,
 ) -> Result<(), StorageError> {
-    let tx = connection.transaction()?;
+    let tx = connection.savepoint()?;
     let request_ids = collect_request_ids_for_subtree(&tx, node_id)?;
     tx.execute(
         "DELETE FROM collection_nodes WHERE id = ?",
@@ -218,16 +252,19 @@ pub(crate) fn delete_subtree(
 #[tauri::command(async)]
 #[specta::specta]
 pub fn move_node(input: MoveNodeInput, state: State<'_, AppState>) -> Result<(), CommandError> {
-    Ok(state
-        .database
-        .with_connection(|connection| reparent_node(connection, &input))?)
+    Ok(state.database.with_connection(|connection| {
+        let collection_id = node_owner(connection, &input.node_id)?;
+        repository::mutate(connection, &collection_id, |connection| {
+            reparent_node(connection, &input)
+        })
+    })?)
 }
 
 pub(crate) fn reparent_node(
     connection: &mut Connection,
     input: &MoveNodeInput,
 ) -> Result<(), StorageError> {
-    let tx = connection.transaction()?;
+    let tx = connection.savepoint()?;
     let (collection_id, kind): (String, String) = tx.query_row(
         "SELECT collection_id, kind FROM collection_nodes WHERE id = ?",
         params![input.node_id],
@@ -261,7 +298,7 @@ pub(crate) fn reparent_node(
     Ok(())
 }
 pub(crate) fn sort_order_for_position(
-    tx: &rusqlite::Transaction<'_>,
+    tx: &Connection,
     collection_id: &str,
     parent_id: Option<&str>,
     position: i64,
@@ -291,20 +328,30 @@ pub(crate) fn sort_order_for_position(
 }
 
 pub(crate) fn sort_order_after(
-    tx: &rusqlite::Transaction<'_>,
+    tx: &Connection,
     collection_id: &str,
     parent_id: Option<&str>,
     after_sort_order: i64,
+    after_node_id: &str,
 ) -> Result<i64, StorageError> {
-    let position =
-        sibling_count_through_sort_order(tx, collection_id, parent_id, after_sort_order)?;
+    let position = tx.query_row(
+        "SELECT COUNT(*)
+         FROM collection_nodes
+         WHERE collection_id = ?
+           AND parent_id IS ?
+           AND (sort_order, id) <= (?, ?)",
+        params![collection_id, parent_id, after_sort_order, after_node_id],
+        |row| row.get(0),
+    )?;
     sort_order_for_position(tx, collection_id, parent_id, position, None)
 }
 
 fn order_between(previous: Option<i64>, next: Option<i64>) -> Option<i64> {
     match (previous, next) {
         (None, None) => Some(SORT_ORDER_STEP),
-        (Some(previous), None) => Some(previous + SORT_ORDER_STEP),
+        (Some(previous), None) => previous
+            .checked_add(SORT_ORDER_STEP)
+            .filter(|next| *next <= 9_007_199_254_740_991),
         (None, Some(next)) if next > 1 => Some(next / 2),
         (Some(previous), Some(next)) if next - previous > 1 => {
             Some(previous + (next - previous) / 2)
@@ -314,7 +361,7 @@ fn order_between(previous: Option<i64>, next: Option<i64>) -> Option<i64> {
 }
 
 fn sibling_sort_orders(
-    tx: &rusqlite::Transaction<'_>,
+    tx: &Connection,
     collection_id: &str,
     parent_id: Option<&str>,
     exclude_node_id: Option<&str>,
@@ -325,7 +372,7 @@ fn sibling_sort_orders(
          WHERE collection_id = ?
            AND parent_id IS ?
            AND (? IS NULL OR id != ?)
-         ORDER BY sort_order",
+         ORDER BY sort_order, id",
     )?;
     let rows = statement.query_map(
         params![collection_id, parent_id, exclude_node_id, exclude_node_id],
@@ -335,26 +382,8 @@ fn sibling_sort_orders(
         .map_err(StorageError::from)
 }
 
-fn sibling_count_through_sort_order(
-    tx: &rusqlite::Transaction<'_>,
-    collection_id: &str,
-    parent_id: Option<&str>,
-    sort_order: i64,
-) -> Result<i64, StorageError> {
-    tx.query_row(
-        "SELECT COUNT(*)
-         FROM collection_nodes
-         WHERE collection_id = ?
-           AND parent_id IS ?
-           AND sort_order <= ?",
-        params![collection_id, parent_id, sort_order],
-        |row| row.get(0),
-    )
-    .map_err(StorageError::from)
-}
-
 fn rebalance_siblings(
-    tx: &rusqlite::Transaction<'_>,
+    tx: &Connection,
     collection_id: &str,
     parent_id: Option<&str>,
     exclude_node_id: Option<&str>,
@@ -365,7 +394,7 @@ fn rebalance_siblings(
          WHERE collection_id = ?
            AND parent_id IS ?
            AND (? IS NULL OR id != ?)
-         ORDER BY sort_order",
+         ORDER BY sort_order, id",
     )?;
     let sibling_ids = statement
         .query_map(
@@ -383,7 +412,7 @@ fn rebalance_siblings(
 }
 
 fn collect_request_ids_for_subtree(
-    tx: &rusqlite::Transaction<'_>,
+    tx: &Connection,
     node_id: &str,
 ) -> Result<Vec<String>, StorageError> {
     let mut statement = tx.prepare(
@@ -401,7 +430,7 @@ fn collect_request_ids_for_subtree(
         .map_err(StorageError::from)
 }
 fn is_descendant(
-    tx: &rusqlite::Transaction<'_>,
+    tx: &Connection,
     possible_descendant_id: &str,
     ancestor_id: &str,
 ) -> Result<bool, StorageError> {

@@ -1,15 +1,32 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::stored_enum::stored_enum;
 
-#[derive(Debug, Serialize, specta::Type)]
+#[derive(Debug, Deserialize, Eq, PartialEq, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CollectionSummary {
     pub id: String,
     pub name: String,
+    pub repository: Option<RepositoryLink>,
+}
+
+#[derive(Debug, Deserialize, Eq, PartialEq, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RepositoryLink {
+    pub root: String,
+    pub issue: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RepositoryPublishScope {
+    pub environment_id: Option<String>,
+    pub name: String,
+    pub shared_keys: BTreeSet<String>,
+    pub secret_keys: BTreeSet<String>,
 }
 
 /// A collection with what it holds, for the settings page. Kept apart from
@@ -226,17 +243,17 @@ stored_enum! {
 #[serde(rename_all = "camelCase")]
 pub struct AuthConfig {
     pub auth_type: AuthType,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub add_to: Option<ApiKeyLocation>,
 }
 
@@ -245,6 +262,8 @@ pub struct AuthConfig {
 pub struct RequestDetail {
     pub id: String,
     pub collection_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository_revision: Option<String>,
     pub name: String,
     pub method: String,
     pub url: String,
@@ -296,6 +315,36 @@ pub struct VariableEntry {
     pub value: String,
     pub enabled: bool,
     pub sensitive: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<VariableOrigin>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presentation: Option<VariablePresentation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required_secret: Option<bool>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub enum VariableOrigin {
+    Shared,
+    Local,
+    MissingSecret,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct VariablePresentation {
+    pub fixed_key: bool,
+    pub edit_shared: bool,
+    pub removal: VariableRemoval,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub enum VariableRemoval {
+    None,
+    Local,
+    UseShared,
 }
 
 /// What one editor changed in one target: keys to set and keys to remove.
@@ -306,7 +355,17 @@ pub struct VariableEntry {
 pub struct VariableChange {
     pub target: VariableTarget,
     pub upserts: Vec<VariableEntry>,
+    /// Previously displayed rows for field-level updates to existing local values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub baseline: Option<Vec<VariableEntry>>,
     pub deletes: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, specta::Type)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum SharedVariableChange {
+    Value { previous: String, value: String },
+    RequiredSecret,
 }
 
 #[derive(Debug, Serialize, specta::Type)]
@@ -364,6 +423,14 @@ pub struct CreateRequestInput {
 pub struct CreateRequestResult {
     pub request_id: String,
     pub node_id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateFolderResult {
+    pub node_id: String,
+    pub name: String,
 }
 
 #[derive(Debug, Deserialize, specta::Type)]

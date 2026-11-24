@@ -1,11 +1,16 @@
 mod export;
 mod import;
 mod profile;
+pub(crate) mod repository;
 mod tree;
 
 pub use export::export_postman_collection;
 pub use import::{import_postman_collection, pick_and_import_postman_collection};
 pub use profile::get_collection_profile;
+pub use repository::{
+    inspect_repository, open_repository, preview_repository_publish, refresh_repositories,
+    relink_repository,
+};
 #[cfg(test)]
 pub(crate) use tree::{add_folder, read_tree};
 pub use tree::{create_folder, delete_node, get_collection_tree, move_node, rename_folder};
@@ -96,7 +101,7 @@ fn read_collection_stats(connection: &Connection) -> Result<Vec<CollectionStats>
                 (SELECT COUNT(*) FROM collection_nodes
                  WHERE collection_id = collections.id AND kind = 'folder'),
                 (SELECT COUNT(*) FROM environments
-                 WHERE collection_id = collections.id)
+                 WHERE collection_id = collections.id AND archived = 0)
          FROM collections ORDER BY updated_at DESC",
     )?;
     let rows = statement.query_map([], |row| {
@@ -139,7 +144,9 @@ pub fn rename_collection(
         return Err("A collection needs a name.".into());
     }
     Ok(state.database.with_connection(|connection| {
-        update_collection_name(connection, &collection_id, name)?;
+        repository::mutate(connection, &collection_id, |connection| {
+            update_collection_name(connection, &collection_id, name)
+        })?;
         read_collections(connection)
     })?)
 }
@@ -167,12 +174,15 @@ fn remove_collection(connection: &Connection, collection_id: &str) -> Result<(),
 }
 
 fn read_collections(connection: &Connection) -> Result<Vec<CollectionSummary>, StorageError> {
-    let mut statement =
-        connection.prepare("SELECT id, name FROM collections ORDER BY updated_at DESC")?;
+    let mut statement = connection.prepare(
+        "SELECT c.id, c.name, r.root, r.issue FROM collections c
+             LEFT JOIN repository_links r ON r.collection_id = c.id ORDER BY c.updated_at DESC",
+    )?;
     let rows = statement.query_map([], |row| {
         Ok(CollectionSummary {
             id: row.get(0)?,
             name: row.get(1)?,
+            repository: repository::summary_link(row.get(2)?, row.get(3)?),
         })
     })?;
 

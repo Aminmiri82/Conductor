@@ -2,7 +2,6 @@ import { create } from "zustand";
 import { api } from "@/lib/tauri";
 import type {
   AppTheme,
-  EnvironmentSummary,
   RequestEditorTab,
   UrlDisplayMode,
   WorkspaceUiState,
@@ -11,10 +10,7 @@ import type {
 type WorkspaceUiStoreState = {
   workspaceUi: WorkspaceUiState;
   workspaceUiDirty: boolean;
-  loadWorkspaceUiState: (
-    environments: Promise<EnvironmentSummary[]>,
-  ) => Promise<WorkspaceUiState>;
-  reconcileActiveEnvironments: (environments: EnvironmentSummary[]) => void;
+  loadWorkspaceUiState: () => Promise<WorkspaceUiState>;
   setActiveCollectionId: (collectionId: string) => void;
   setActiveEnvironmentId: (
     collectionId: string,
@@ -48,38 +44,11 @@ export const useWorkspaceUiStore = create<WorkspaceUiStoreState>(
     workspaceUi: DEFAULT_WORKSPACE_UI_STATE,
     workspaceUiDirty: false,
 
-    // Takes the environments as a promise so startup can fetch them and the
-    // stored state at the same time.
-    loadWorkspaceUiState: async (environmentsPromise) => {
-      const [stored, environments] = await Promise.all([
-        api.getWorkspaceState(WORKSPACE_UI_STATE_KEY),
-        environmentsPromise,
-      ]);
+    loadWorkspaceUiState: async () => {
+      const stored = await api.getWorkspaceState(WORKSPACE_UI_STATE_KEY);
       const workspaceUi = normalizeWorkspaceUiState(stored);
-      const nextWorkspaceUi = {
-        ...workspaceUi,
-        activeEnvironmentIds: validEnvironmentIds(
-          environments,
-          workspaceUi.activeEnvironmentIds,
-        ),
-      };
-      set({ workspaceUi: nextWorkspaceUi, workspaceUiDirty: false });
-      return nextWorkspaceUi;
-    },
-
-    reconcileActiveEnvironments: (environments) => {
-      const previous = get().workspaceUi.activeEnvironmentIds;
-      const activeEnvironmentIds = validEnvironmentIds(environments, previous);
-      if (
-        Object.keys(activeEnvironmentIds).length !==
-        Object.keys(previous).length
-      ) {
-        set((state) => ({
-          workspaceUi: { ...state.workspaceUi, activeEnvironmentIds },
-          workspaceUiDirty: true,
-        }));
-        get().scheduleWorkspaceUiStateFlush();
-      }
+      set({ workspaceUi, workspaceUiDirty: false });
+      return workspaceUi;
     },
 
     setActiveCollectionId: (collectionId) => {
@@ -219,23 +188,8 @@ function normalizeRequestEditorTabs(
   );
 }
 
-/** Drops choices whose environment is gone or not owned by that collection. */
-function validEnvironmentIds(
-  environments: EnvironmentSummary[],
-  activeEnvironmentIds: Record<string, string>,
-): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(activeEnvironmentIds).filter(([collectionId, id]) =>
-      environments.some(
-        (environment) =>
-          environment.id === id && environment.collectionId === collectionId,
-      ),
-    ),
-  );
-}
-
-/** The active environment of a collection, or null for none. */
-export function activeEnvironmentIdFor(
+/** The remembered choice, including when its environment is absent on this branch. */
+export function preferredEnvironmentIdFor(
   workspaceUi: WorkspaceUiState,
   collectionId: string | undefined,
 ): string | null {

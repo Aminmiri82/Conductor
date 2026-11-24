@@ -1,16 +1,18 @@
 use std::collections::{HashMap, HashSet};
 
 use chrono::Utc;
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
 use tauri::State;
 use uuid::Uuid;
 
 use super::{
+    collections::repository::{self, values, RepositoryRefresh},
     error::CommandError,
     models::{
         CreateEnvironmentInput, DuplicateEnvironmentInput, EnvironmentSummary,
-        RenameEnvironmentInput, RequestDetail, VariableChange, VariableEntry, VariableTarget,
+        RenameEnvironmentInput, RequestDetail, SharedVariableChange, VariableChange, VariableEntry,
+        VariableTarget,
     },
     postman::{flag, flag_or_false, lenient_list, stringified, text},
 };
@@ -26,16 +28,18 @@ pub(crate) struct VariableContext {
 
 #[derive(Debug)]
 struct StoredValue {
-    value: String,
+    value: Option<String>,
     sensitive: bool,
+    private_repository_value: bool,
 }
 
 impl VariableContext {
     pub(crate) fn get(&self, key: &str) -> Option<String> {
-        self.values
-            .get(key)
-            .map(|stored| stored.value.clone())
-            .or_else(|| (!self.no_dynamic).then(|| dynamic_variable(key)).flatten())
+        match self.values.get(key) {
+            Some(stored) => stored.value.clone(),
+            None if !self.no_dynamic => dynamic_variable(key),
+            None => None,
+        }
     }
 
     /// Resolves no variable at all, not even the dynamic ones.
@@ -55,14 +59,21 @@ impl VariableContext {
                     (
                         key.to_string(),
                         StoredValue {
-                            value: value.to_string(),
+                            value: Some(value.to_string()),
                             sensitive,
+                            private_repository_value: false,
                         },
                     )
                 })
                 .collect(),
             no_dynamic: false,
         }
+    }
+
+    pub(crate) fn relies_on_private_repository_value(&self, key: &str) -> bool {
+        self.values
+            .get(key)
+            .is_some_and(|stored| stored.private_repository_value)
     }
 
     /// Whether the value is one the user marked secret. Dynamic variables
@@ -77,19 +88,24 @@ impl VariableContext {
 pub fn list_environments(
     state: State<'_, AppState>,
 ) -> Result<Vec<EnvironmentSummary>, CommandError> {
-    Ok(state.database.with_read_connection(|connection| {
-        let mut statement =
-            connection.prepare("SELECT id, collection_id, name FROM environments ORDER BY name")?;
-        let rows = statement.query_map([], |row| {
-            Ok(EnvironmentSummary {
-                id: row.get(0)?,
-                collection_id: row.get(1)?,
-                name: row.get(2)?,
-            })
-        })?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(StorageError::from)
-    })?)
+    Ok(state.database.with_read_connection(read_environments)?)
+}
+
+pub(crate) fn read_environments(
+    connection: &Connection,
+) -> Result<Vec<EnvironmentSummary>, StorageError> {
+    let mut statement = connection.prepare(
+        "SELECT id, collection_id, name FROM environments WHERE archived = 0 ORDER BY name",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok(EnvironmentSummary {
+            id: row.get(0)?,
+            collection_id: row.get(1)?,
+            name: row.get(2)?,
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(StorageError::from)
 }
 
 #[tauri::command(async)]
@@ -99,23 +115,25 @@ pub fn create_environment(
     state: State<'_, AppState>,
 ) -> Result<String, CommandError> {
     let name = clean_environment_name(&input.name);
-    let environment_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
 
     Ok(state.database.with_connection(|connection| {
-        insert_environment(
-            connection,
-            &environment_id,
-            &input.collection_id,
-            &name,
-            &now,
-        )?;
+        let environment_id = repository::new_entity_id(connection, &input.collection_id)?;
+        repository::mutate(connection, &input.collection_id, |connection| {
+            insert_environment(
+                connection,
+                &environment_id,
+                &input.collection_id,
+                &name,
+                &now,
+            )
+        })?;
         Ok(environment_id)
     })?)
 }
 
 fn insert_environment(
-    connection: &rusqlite::Connection,
+    connection: &Connection,
     id: &str,
     collection_id: &str,
     name: &str,
@@ -137,21 +155,25 @@ pub fn duplicate_environment(
     input: DuplicateEnvironmentInput,
     state: State<'_, AppState>,
 ) -> Result<String, CommandError> {
-    let environment_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
-    state.database.with_connection(|connection| {
-        copy_environment(connection, &input.environment_id, &environment_id, &now)
-    })?;
-    Ok(environment_id)
+    Ok(state.database.with_connection(|connection| {
+        let collection_id = environment_owner(connection, &input.environment_id)?
+            .ok_or_else(environment_not_found)?;
+        let environment_id = repository::new_entity_id(connection, &collection_id)?;
+        repository::mutate(connection, &collection_id, |connection| {
+            copy_environment(connection, &input.environment_id, &environment_id, &now)
+        })?;
+        Ok(environment_id)
+    })?)
 }
 
 fn copy_environment(
-    connection: &mut rusqlite::Connection,
+    connection: &mut Connection,
     source_id: &str,
     new_id: &str,
     now: &str,
 ) -> Result<(), StorageError> {
-    let tx = connection.transaction()?;
+    let tx = connection.savepoint()?;
     let copied = tx.execute(
         "INSERT INTO environments (id, collection_id, name, created_at, updated_at)
          SELECT ?, collection_id, name || ' copy', ?, ?
@@ -159,9 +181,7 @@ fn copy_environment(
         params![new_id, now, now, source_id],
     )?;
     if copied == 0 {
-        return Err(StorageError::InvalidInput(
-            "environment not found".to_string(),
-        ));
+        return Err(environment_not_found());
     }
     tx.execute(
         "INSERT INTO variables
@@ -170,6 +190,14 @@ fn copy_environment(
          FROM variables WHERE scope = 'environment' AND environment_id = ?",
         params![new_id, now, now, source_id],
     )?;
+    if let Some(source) = values::target(
+        &tx,
+        &VariableTarget::Environment {
+            environment_id: source_id.into(),
+        },
+    )? {
+        values::stage_environment_copy(&tx, &source, new_id)?;
+    }
     tx.commit()?;
     Ok(())
 }
@@ -183,16 +211,15 @@ pub fn rename_environment(
     let name = clean_environment_name(&input.name);
     let now = Utc::now().to_rfc3339();
     Ok(state.database.with_connection(|connection| {
-        let changed = connection.execute(
-            "UPDATE environments SET name = ?, updated_at = ? WHERE id = ?",
-            params![name, now, input.environment_id],
-        )?;
-        if changed == 0 {
-            return Err(StorageError::InvalidInput(
-                "environment not found".to_string(),
-            ));
-        }
-        Ok(())
+        let collection_id = environment_owner(connection, &input.environment_id)?
+            .ok_or_else(environment_not_found)?;
+        repository::mutate(connection, &collection_id, |connection| {
+            connection.execute(
+                "UPDATE environments SET name = ?, updated_at = ? WHERE id = ?",
+                params![name, now, input.environment_id],
+            )?;
+            Ok(())
+        })
     })?)
 }
 
@@ -203,11 +230,23 @@ pub fn delete_environment(
     state: State<'_, AppState>,
 ) -> Result<(), CommandError> {
     Ok(state.database.with_connection(|connection| {
-        connection.execute(
-            "DELETE FROM environments WHERE id = ?",
-            params![environment_id],
-        )?;
-        Ok(())
+        let Some(collection_id) = environment_owner(connection, &environment_id)? else {
+            return Ok(());
+        };
+        repository::mutate(connection, &collection_id, |connection| {
+            let archived = connection.execute(
+                "UPDATE environments SET archived = 1 WHERE id = ?
+                 AND collection_id IN (SELECT collection_id FROM repository_links)",
+                params![environment_id],
+            )?;
+            if archived == 0 {
+                connection.execute(
+                    "DELETE FROM environments WHERE id = ?",
+                    params![environment_id],
+                )?;
+            }
+            Ok(())
+        })
     })?)
 }
 
@@ -220,23 +259,25 @@ pub fn import_postman_environment(
     state: State<'_, AppState>,
 ) -> Result<String, CommandError> {
     let imported = parse_imported_environment(&postman_json, file_name.as_deref())?;
-    let environment_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
 
-    state.database.with_connection(|connection| {
-        store_imported_environment(connection, &environment_id, &collection_id, &imported, &now)
-    })?;
-    Ok(environment_id)
+    Ok(state.database.with_connection(|connection| {
+        let environment_id = repository::new_entity_id(connection, &collection_id)?;
+        repository::mutate(connection, &collection_id, |connection| {
+            store_imported_environment(connection, &environment_id, &collection_id, &imported, &now)
+        })?;
+        Ok(environment_id)
+    })?)
 }
 
 fn store_imported_environment(
-    connection: &mut rusqlite::Connection,
+    connection: &mut Connection,
     environment_id: &str,
     collection_id: &str,
     imported: &ImportedEnvironment,
     now: &str,
 ) -> Result<(), StorageError> {
-    let tx = connection.transaction()?;
+    let tx = connection.savepoint()?;
     insert_environment(&tx, environment_id, collection_id, &imported.name, now)?;
     let target = VariableTarget::Environment {
         environment_id: environment_id.to_string(),
@@ -244,18 +285,34 @@ fn store_imported_environment(
 
     // A key repeated in the file (common in `.env`) keeps its last value, as
     // a shell sourcing the file would.
-    for variable in &imported.variables {
-        upsert_variable(
+    if let Some(linked) = values::target(&tx, &target)? {
+        values::stage_environment_import(
             &tx,
-            &NewVariable {
-                target: &target,
-                key: &variable.key,
-                value: &variable.value,
+            &linked,
+            imported.variables.iter().map(|variable| VariableEntry {
+                key: variable.key.clone(),
+                value: variable.value.clone(),
                 enabled: variable.enabled,
                 sensitive: variable.sensitive,
-            },
-            now,
+                origin: None,
+                presentation: None,
+                required_secret: None,
+            }),
         )?;
+    } else {
+        for variable in &imported.variables {
+            upsert_variable(
+                &tx,
+                &NewVariable {
+                    target: &target,
+                    key: &variable.key,
+                    value: &variable.value,
+                    enabled: variable.enabled,
+                    sensitive: variable.sensitive,
+                },
+                now,
+            )?;
+        }
     }
 
     tx.commit()?;
@@ -273,19 +330,20 @@ pub fn list_variables(
         .with_read_connection(|connection| read_variables(connection, &target))?)
 }
 
-fn read_variables(
-    connection: &rusqlite::Connection,
+pub(crate) fn read_variables(
+    connection: &Connection,
     target: &VariableTarget,
 ) -> Result<Vec<VariableEntry>, StorageError> {
+    if let Some(target) = values::target(connection, target)? {
+        return values::list(connection, &target);
+    }
     let (scope, collection_id, environment_id) = target.columns();
     let mut statement = connection.prepare_cached(
         "SELECT key, current_value, enabled, sensitive
          FROM variables
-         WHERE scope = ?
-           AND (
-               (scope = 'global' AND collection_id IS NULL AND environment_id IS NULL)
-               OR collection_id = ?
-               OR environment_id = ?
+         WHERE scope = ?1 AND collection_id IS ?2 AND environment_id IS ?3
+           AND NOT EXISTS (
+               SELECT 1 FROM environments WHERE id = ?3 AND archived = 1
            )
          ORDER BY key",
     )?;
@@ -295,21 +353,59 @@ fn read_variables(
             value: row.get(1)?,
             enabled: row.get::<_, i64>(2)? != 0,
             sensitive: row.get::<_, i64>(3)? != 0,
+            origin: None,
+            presentation: None,
+            required_secret: None,
         })
     })?;
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(StorageError::from)
 }
 
-/// The one way editors save variables: every change in one transaction, so a
-/// failure leaves nothing half-applied (for example a variable moved between
-/// scopes is never deleted from one and missing from the other).
+fn repository_target(
+    connection: &Connection,
+    target: &VariableTarget,
+) -> Result<values::Target, StorageError> {
+    values::target(connection, target)?.ok_or_else(|| {
+        StorageError::InvalidInput("Choose a linked collection or environment.".into())
+    })
+}
+
+#[tauri::command(async)]
+#[specta::specta]
+pub fn get_shared_variable(
+    target: VariableTarget,
+    key: String,
+    state: State<'_, AppState>,
+) -> Result<String, CommandError> {
+    Ok(state.database.with_read_connection(|connection| {
+        values::read_shared(connection, &repository_target(connection, &target)?, &key)
+    })?)
+}
+
+#[tauri::command(async)]
+#[specta::specta]
+pub fn save_shared_variable(
+    target: VariableTarget,
+    key: String,
+    change: SharedVariableChange,
+    state: State<'_, AppState>,
+) -> Result<RepositoryRefresh, CommandError> {
+    Ok(state.database.with_connection(|connection| {
+        let target = repository_target(connection, &target)?;
+        values::edit_shared(connection, &target, &key, change)?;
+        repository::refresh_all(connection)
+    })?)
+}
+
+/// Linked edits replace one local.json per repository. Other scopes use the
+/// SQLite transaction.
 #[tauri::command(async)]
 #[specta::specta]
 pub fn apply_variable_changes(
     changes: Vec<VariableChange>,
     state: State<'_, AppState>,
-) -> Result<(), CommandError> {
+) -> Result<bool, CommandError> {
     let now = Utc::now().to_rfc3339();
     Ok(state
         .database
@@ -322,53 +418,109 @@ pub fn apply_variable_changes(
 /// exactly, so a stored key with stray spaces (from an import) can still be
 /// removed.
 fn apply_changes(
-    connection: &mut rusqlite::Connection,
+    connection: &mut Connection,
     changes: &[VariableChange],
     now: &str,
-) -> Result<(), StorageError> {
-    let tx = connection.transaction()?;
+) -> Result<bool, StorageError> {
+    let mut linked = Vec::new();
+    let mut ordinary = Vec::new();
     for change in changes {
-        let (scope, collection_id, environment_id) = change.target.columns();
-        let mut delete = tx.prepare_cached(
-            "DELETE FROM variables
-             WHERE scope = ? AND key = ? AND collection_id IS ? AND environment_id IS ?",
-        )?;
-        for key in &change.deletes {
-            delete.execute(params![scope, key, collection_id, environment_id])?;
-        }
-
         let mut seen = HashSet::new();
-        for variable in &change.upserts {
-            let key = variable.key.trim();
-            if key.is_empty() {
-                continue;
-            }
+        for key in change
+            .upserts
+            .iter()
+            .map(|variable| variable.key.trim())
+            .filter(|key| !key.is_empty())
+        {
             if !seen.insert(key) {
                 return Err(StorageError::InvalidInput(format!(
                     "variable \"{key}\" appears more than once"
                 )));
             }
-            upsert_variable(
-                &tx,
-                &NewVariable {
-                    target: &change.target,
-                    key,
-                    value: &variable.value,
-                    enabled: variable.enabled,
-                    sensitive: variable.sensitive,
-                },
-                now,
-            )?;
+        }
+        if let VariableTarget::Environment { environment_id } = &change.target {
+            // Queued edits may still target an environment archived by a branch switch.
+            let exists: bool = connection
+                .prepare_cached("SELECT EXISTS(SELECT 1 FROM environments WHERE id = ?)")?
+                .query_row([environment_id], |row| row.get(0))?;
+            if !exists {
+                return Err(environment_not_found());
+            }
+        }
+        if let Some(target) = values::target(connection, &change.target)? {
+            linked.push((target, change));
+        } else {
+            ordinary.push(change);
         }
     }
+
+    // In a cross-store move, make the SQLite destination durable before
+    // removing the file-backed source. On interruption both copies can remain.
+    let linked_deletes: HashSet<_> = linked
+        .iter()
+        .flat_map(|(_, change)| &change.deletes)
+        .map(String::as_str)
+        .collect();
+    let destinations: Vec<_> = ordinary
+        .iter()
+        .flat_map(|change| change.upserts.iter().map(|entry| (&change.target, entry)))
+        .filter(|(_, entry)| linked_deletes.contains(entry.key.trim()))
+        .collect();
+    if !destinations.is_empty() {
+        let tx = connection.transaction()?;
+        for (target, entry) in destinations {
+            write_entry(&tx, target, entry, now)?;
+        }
+        tx.commit()?;
+    }
+
+    let tx = connection.transaction()?;
+    let mut delete = tx.prepare_cached(
+        "DELETE FROM variables
+         WHERE scope = ? AND key = ? AND collection_id IS ? AND environment_id IS ?",
+    )?;
+    for change in ordinary {
+        let (scope, collection_id, environment_id) = change.target.columns();
+        for key in &change.deletes {
+            delete.execute(params![scope, key, collection_id, environment_id])?;
+        }
+        for entry in &change.upserts {
+            write_entry(&tx, &change.target, entry, now)?;
+        }
+    }
+    drop(delete);
+    let needs_reload = values::edit(&tx, &linked)?;
     tx.commit()?;
+    Ok(needs_reload)
+}
+
+fn write_entry(
+    connection: &Connection,
+    target: &VariableTarget,
+    entry: &VariableEntry,
+    now: &str,
+) -> Result<(), StorageError> {
+    let key = entry.key.trim();
+    if !key.is_empty() {
+        upsert_variable(
+            connection,
+            &NewVariable {
+                target,
+                key,
+                value: &entry.value,
+                enabled: entry.enabled,
+                sensitive: entry.sensitive,
+            },
+            now,
+        )?;
+    }
     Ok(())
 }
 
 /// Every send and preview goes through here, so this is where an environment
 /// from another collection is refused rather than silently mixed in.
 pub(crate) fn load_variable_context(
-    connection: &rusqlite::Connection,
+    connection: &Connection,
     request: &RequestDetail,
     environment_id: Option<&str>,
 ) -> Result<VariableContext, StorageError> {
@@ -376,34 +528,39 @@ pub(crate) fn load_variable_context(
         ensure_environment_in_collection(connection, environment_id, &request.collection_id)?;
     }
     let mut values = HashMap::new();
-    let mut statement = connection.prepare(
-        "SELECT key, current_value, sensitive
-         FROM variables
-         WHERE enabled = 1
-           AND (
-               scope = 'global'
-               OR (scope = 'collection' AND collection_id = ?)
-               OR (scope = 'environment' AND environment_id = ?)
-           )
-         ORDER BY CASE scope
-             WHEN 'global' THEN 0
-             WHEN 'collection' THEN 1
-             WHEN 'environment' THEN 2
-             ELSE 3
-         END, key",
+    let mut statement = connection.prepare_cached(
+        "SELECT key, current_value, sensitive, private_repository_value
+         FROM (
+             SELECT key, current_value, sensitive, 0 AS private_repository_value,
+                    CASE scope WHEN 'global' THEN 0 WHEN 'collection' THEN 1 ELSE 2 END AS priority
+             FROM variables
+             WHERE enabled = 1
+               AND (
+                   scope = 'global'
+                   OR (scope = 'collection' AND collection_id = ?1)
+                   OR (scope = 'environment' AND collection_id IS NULL AND environment_id = ?2)
+               )
+             UNION ALL
+             SELECT key,
+                    CASE WHEN enabled AND (NOT required_secret OR value != '') THEN value END,
+                    sensitive, local OR required_secret,
+                    CASE WHEN scope_id = ?1 THEN 1 ELSE 2 END
+             FROM repository_variables
+             WHERE collection_id = ?1 AND scope_id IN (?1, ?2) AND (enabled OR required_secret)
+         )
+         ORDER BY priority, key",
     )?;
-    let rows = statement.query_map(params![request.collection_id, environment_id], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
+    let mut rows = statement.query(params![request.collection_id, environment_id])?;
+    while let Some(row) = rows.next()? {
+        let key = row.get::<_, String>(0)?;
+        values.insert(
+            key,
             StoredValue {
                 value: row.get(1)?,
                 sensitive: row.get(2)?,
+                private_repository_value: row.get(3)?,
             },
-        ))
-    })?;
-    for row in rows {
-        let (key, stored) = row?;
-        values.insert(key, stored);
+        );
     }
     Ok(VariableContext {
         values,
@@ -412,48 +569,58 @@ pub(crate) fn load_variable_context(
 }
 
 fn ensure_environment_in_collection(
-    connection: &rusqlite::Connection,
+    connection: &Connection,
     environment_id: &str,
     collection_id: &str,
 ) -> Result<(), StorageError> {
-    let owner = connection
-        .query_row(
-            "SELECT collection_id FROM environments WHERE id = ?",
-            params![environment_id],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()?;
-    match owner {
+    match environment_owner(connection, environment_id)? {
         Some(owner) if owner == collection_id => Ok(()),
         Some(_) => Err(StorageError::InvalidInput(
             "the environment belongs to a different collection".to_string(),
         )),
-        None => Err(StorageError::InvalidInput(
-            "environment not found".to_string(),
-        )),
+        None => Err(environment_not_found()),
     }
 }
 
-pub(crate) fn save_script_variable(
-    connection: &rusqlite::Connection,
-    target: &VariableTarget,
-    key: &str,
-    value: &str,
+fn environment_owner(
+    connection: &Connection,
+    environment_id: &str,
+) -> Result<Option<String>, StorageError> {
+    Ok(connection
+        .prepare_cached("SELECT collection_id FROM environments WHERE id = ? AND archived = 0")?
+        .query_row([environment_id], |row| row.get::<_, String>(0))
+        .optional()?)
+}
+
+fn environment_not_found() -> StorageError {
+    StorageError::InvalidInput("environment not found".to_string())
+}
+
+pub(crate) fn save_script_variables(
+    connection: &Connection,
+    writes: &[(VariableTarget, &str, &str)],
     now: &str,
 ) -> Result<(), StorageError> {
-    let (scope, collection_id, environment_id) = target.columns();
-    connection.execute(
-        "INSERT INTO variables
-         (scope, collection_id, environment_id, key, current_value, enabled, sensitive,
-          created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?)
-         ON CONFLICT DO UPDATE SET
-            current_value = excluded.current_value,
-            enabled = 1,
-            updated_at = excluded.updated_at",
-        params![scope, collection_id, environment_id, key, value, now, now],
-    )?;
-    Ok(())
+    let mut linked = Vec::new();
+    for (target, key, value) in writes {
+        if let Some(target) = values::target(connection, target)? {
+            linked.push((target, *key, *value));
+            continue;
+        }
+        let (scope, collection_id, environment_id) = target.columns();
+        connection.execute(
+            "INSERT INTO variables
+             (scope, collection_id, environment_id, key, current_value, enabled, sensitive,
+              created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?)
+             ON CONFLICT DO UPDATE SET
+                current_value = excluded.current_value,
+                enabled = 1,
+                updated_at = excluded.updated_at",
+            params![scope, collection_id, environment_id, key, value, now, now],
+        )?;
+    }
+    values::set_script_values(connection, &linked)
 }
 
 #[derive(Debug)]
@@ -607,6 +774,7 @@ mod tests {
     use super::*;
     use crate::fixtures;
     use rusqlite::Connection;
+    use std::fs;
 
     #[test]
     fn env_file_with_a_repeated_key_imports_with_the_last_value() {
@@ -695,6 +863,9 @@ mod tests {
             value: value.to_string(),
             enabled: true,
             sensitive: false,
+            origin: None,
+            presentation: None,
+            required_secret: None,
         }
     }
 
@@ -729,6 +900,7 @@ mod tests {
         apply_changes(
             &mut connection,
             &[VariableChange {
+                baseline: None,
                 target: collection_target(),
                 upserts: vec![entry("host", "old"), entry("untouched", "keep")],
                 deletes: vec![],
@@ -741,11 +913,13 @@ mod tests {
             &mut connection,
             &[
                 VariableChange {
+                    baseline: None,
                     target: collection_target(),
                     upserts: vec![],
                     deletes: vec!["host".to_string()],
                 },
                 VariableChange {
+                    baseline: None,
                     target: environment_target(),
                     upserts: vec![entry("host", "new")],
                     deletes: vec![],
@@ -771,6 +945,7 @@ mod tests {
         apply_changes(
             &mut connection,
             &[VariableChange {
+                baseline: None,
                 target: VariableTarget::Global,
                 upserts: vec![entry("token", "abc")],
                 deletes: vec![],
@@ -783,11 +958,13 @@ mod tests {
             &mut connection,
             &[
                 VariableChange {
+                    baseline: None,
                     target: VariableTarget::Global,
                     upserts: vec![entry("other", "1")],
                     deletes: vec!["token".to_string()],
                 },
                 VariableChange {
+                    baseline: None,
                     target: environment_target(),
                     upserts: vec![entry("dup", "1"), entry(" dup ", "2")],
                     deletes: vec![],
@@ -812,6 +989,7 @@ mod tests {
         apply_changes(
             &mut connection,
             &[VariableChange {
+                baseline: None,
                 target: VariableTarget::Global,
                 upserts: vec![entry("api_key", "v1"), entry("  ", "ignored")],
                 deletes: vec![],
@@ -823,6 +1001,7 @@ mod tests {
         apply_changes(
             &mut connection,
             &[VariableChange {
+                baseline: None,
                 target: VariableTarget::Global,
                 upserts: vec![secret],
                 deletes: vec!["missing".to_string()],
@@ -857,6 +1036,7 @@ mod tests {
         apply_changes(
             &mut connection,
             &[VariableChange {
+                baseline: None,
                 target: VariableTarget::Global,
                 upserts: vec![],
                 deletes: vec![" host ".to_string()],
@@ -914,6 +1094,276 @@ mod tests {
             matches!(result, Err(StorageError::InvalidInput(ref message)) if message.contains("different collection")),
             "{result:?}"
         );
+    }
+
+    #[test]
+    fn linked_variable_editors_distinguish_defaults_overrides_and_required_secrets() {
+        use crate::commands::models::{VariableOrigin, VariableRemoval};
+
+        let root = std::env::temp_dir().join(format!("conductor-vars-{}", Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        let root = fs::canonicalize(root).unwrap();
+        let mut connection = crate::storage::test_connection();
+        let link = repository::connect(&mut connection, &root, true, None).unwrap();
+        let target = VariableTarget::Collection {
+            collection_id: link.collection_id.clone(),
+        };
+        let request = RequestDetail {
+            collection_id: link.collection_id,
+            ..RequestDetail::default()
+        };
+        let manifest_path = root.join(".conductor/collection.json");
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+        manifest["values"] = serde_json::json!({"host":"shared"});
+        manifest["secrets"] = serde_json::json!(["token"]);
+        let manifest_bytes = serde_json::to_vec(&manifest).unwrap();
+        fs::write(&manifest_path, &manifest_bytes).unwrap();
+        fixtures::variable(&connection, &VariableTarget::Global, "token", "wrong-token");
+        repository::refresh_all(&mut connection).unwrap();
+
+        let context = load_variable_context(&connection, &request, None).unwrap();
+        assert_eq!(context.get("host").as_deref(), Some("shared"));
+        assert_eq!(context.get("token"), None);
+        let rows = read_variables(&connection, &target).unwrap();
+        let shared = rows[0].presentation.as_ref().unwrap();
+        assert_eq!(rows[0].origin, Some(VariableOrigin::Shared));
+        assert!(shared.fixed_key && shared.edit_shared);
+        assert_eq!(shared.removal, VariableRemoval::None);
+        let required = rows[1].presentation.as_ref().unwrap();
+        assert_eq!(rows[1].origin, Some(VariableOrigin::MissingSecret));
+        assert_eq!(rows[1].required_secret, Some(true));
+        assert!(required.fixed_key && !required.edit_shared);
+
+        assert!(apply_changes(
+            &mut connection,
+            &[VariableChange {
+                baseline: None,
+                target: target.clone(),
+                upserts: vec![entry("host", "private"), entry("token", "private-token")],
+                deletes: vec![],
+            }],
+            "now",
+        )
+        .unwrap());
+        assert_eq!(fs::read(&manifest_path).unwrap(), manifest_bytes);
+        assert!(fs::read_to_string(root.join(".conductor/local.json"))
+            .unwrap()
+            .contains("private-token"));
+        let context = load_variable_context(&connection, &request, None).unwrap();
+        assert_eq!(context.get("host").as_deref(), Some("private"));
+        assert_eq!(context.get("token").as_deref(), Some("private-token"));
+        assert!(context.is_sensitive("token"));
+        let rows = read_variables(&connection, &target).unwrap();
+        assert_eq!(rows[0].origin, Some(VariableOrigin::Local));
+        assert_eq!(
+            rows[0].presentation.as_ref().unwrap().removal,
+            VariableRemoval::UseShared,
+        );
+        assert_eq!(rows[1].origin, Some(VariableOrigin::Local));
+        assert_eq!(
+            rows[1].presentation.as_ref().unwrap().removal,
+            VariableRemoval::Local,
+        );
+
+        fs::write(
+            root.join(".conductor/local.json"),
+            br#"{"collection":{"host":"editor","token":"editor-token"}}"#,
+        )
+        .unwrap();
+        repository::refresh_all(&mut connection).unwrap();
+        assert_eq!(
+            listed(&connection, &target),
+            [pair("host", "editor"), pair("token", "editor-token")]
+        );
+
+        assert!(apply_changes(
+            &mut connection,
+            &[VariableChange {
+                baseline: None,
+                target: target.clone(),
+                upserts: vec![],
+                deletes: vec!["host".into()],
+            }],
+            "now",
+        )
+        .unwrap());
+        assert_eq!(
+            listed(&connection, &target),
+            [pair("host", "shared"), pair("token", "editor-token")]
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_branch_removing_an_environment_keeps_its_local_values_for_when_it_returns() {
+        let root = std::env::temp_dir().join(format!("conductor-env-test-{}", Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        let root = fs::canonicalize(root).unwrap();
+        let mut connection = crate::storage::test_connection();
+        let link = repository::connect(&mut connection, &root, true, None).unwrap();
+        let collection_id = link.collection_id;
+        let environment_id = repository::new_entity_id(&connection, &collection_id).unwrap();
+        repository::mutate(&mut connection, &collection_id, |connection| {
+            insert_environment(
+                connection,
+                &environment_id,
+                &collection_id,
+                "Staging",
+                "now",
+            )
+        })
+        .unwrap();
+        let environment_path = fs::read_dir(root.join(".conductor/environments"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let mut environment: serde_json::Value =
+            serde_json::from_slice(&fs::read(&environment_path).unwrap()).unwrap();
+        environment["values"] = serde_json::json!({"token": "shared"});
+        let shared = serde_json::to_vec(&environment).unwrap();
+        fs::write(&environment_path, &shared).unwrap();
+        let refresh = repository::refresh_all(&mut connection).unwrap();
+        assert_eq!(
+            refresh.changed_environment_ids,
+            std::slice::from_ref(&environment_id)
+        );
+
+        let target = VariableTarget::Environment {
+            environment_id: environment_id.clone(),
+        };
+        assert_eq!(listed(&connection, &target), [pair("token", "shared")]);
+        apply_changes(
+            &mut connection,
+            &[VariableChange {
+                baseline: None,
+                target: target.clone(),
+                upserts: vec![entry("token", "private")],
+                deletes: vec![],
+            }],
+            "now",
+        )
+        .unwrap();
+        assert_eq!(fs::read(&environment_path).unwrap(), shared);
+        let request = RequestDetail {
+            collection_id,
+            ..RequestDetail::default()
+        };
+
+        fs::remove_file(&environment_path).unwrap();
+        let refresh = repository::refresh_all(&mut connection).unwrap();
+        assert_eq!(
+            refresh.changed_environment_ids,
+            std::slice::from_ref(&environment_id)
+        );
+        assert!(read_environments(&connection).unwrap().is_empty());
+        assert!(listed(&connection, &target).is_empty());
+        assert!(load_variable_context(&connection, &request, Some(&environment_id)).is_err());
+
+        fs::write(&environment_path, &shared).unwrap();
+        let refresh = repository::refresh_all(&mut connection).unwrap();
+        assert_eq!(
+            refresh.changed_environment_ids,
+            std::slice::from_ref(&environment_id)
+        );
+        fs::remove_dir_all(&root).unwrap();
+
+        assert_eq!(
+            read_environments(&connection).unwrap()[0].id,
+            environment_id
+        );
+        assert_eq!(listed(&connection, &target), [pair("token", "private")]);
+        let context = load_variable_context(&connection, &request, Some(&environment_id)).unwrap();
+        assert_eq!(context.get("token").as_deref(), Some("private"));
+    }
+
+    #[test]
+    fn a_branch_switch_keeps_local_edits_queued_before_an_environment_disappeared() {
+        let mut connection = connection_with_targets();
+        connection
+            .execute("UPDATE environments SET archived = 1 WHERE id = 'env'", [])
+            .unwrap();
+
+        apply_changes(
+            &mut connection,
+            &[VariableChange {
+                baseline: None,
+                target: environment_target(),
+                upserts: vec![entry("host", "local-override")],
+                deletes: vec![],
+            }],
+            "now",
+        )
+        .expect("save the queued edit against the archived environment");
+
+        connection
+            .execute("UPDATE environments SET archived = 0 WHERE id = 'env'", [])
+            .unwrap();
+        assert_eq!(
+            listed(&connection, &environment_target()),
+            [pair("host", "local-override")]
+        );
+    }
+
+    #[test]
+    fn linked_environment_import_and_duplicate_use_the_allocated_stems() {
+        let root = std::env::temp_dir().join(format!("conductor-env-test-{}", Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        let root = fs::canonicalize(root).unwrap();
+        let mut connection = crate::storage::test_connection();
+        let link = repository::connect(&mut connection, &root, true, None).unwrap();
+        let collection = link.collection_id;
+        let local_path = root.join(".conductor/local.json");
+        let orphan = r#""development-copy" : { "TOKEN" : "fixture-orphan" }"#;
+        fs::write(&local_path, format!(r#"{{"environments":{{{orphan}}}}}"#)).unwrap();
+
+        let imported =
+            parse_imported_environment("TOKEN=fixture-token", Some("development.env")).unwrap();
+        let original_id = repository::new_entity_id(&connection, &collection).unwrap();
+        repository::mutate(&mut connection, &collection, |connection| {
+            store_imported_environment(connection, &original_id, &collection, &imported, "now")
+        })
+        .unwrap();
+        let copy_id = repository::new_entity_id(&connection, &collection).unwrap();
+        repository::mutate(&mut connection, &collection, |connection| {
+            copy_environment(connection, &original_id, &copy_id, "now")
+        })
+        .unwrap();
+        repository::refresh_all(&mut connection).unwrap();
+
+        let bytes = fs::read_to_string(&local_path).unwrap();
+        assert!(bytes.contains(orphan));
+        let local: serde_json::Value = serde_json::from_str(&bytes).unwrap();
+        for (stem, environment_id) in [
+            ("development", original_id),
+            ("development-copy-2", copy_id),
+        ] {
+            let path = root.join(format!(".conductor/environments/{stem}.json"));
+            let shared = fs::read_to_string(&path).unwrap();
+            assert!(!shared.contains("fixture-token"));
+            assert!(local["environments"][stem].get("TOKEN").is_some());
+            let target = VariableTarget::Environment { environment_id };
+            assert_eq!(
+                listed(&connection, &target),
+                [pair("TOKEN", "fixture-token")]
+            );
+
+            // Replay the on-disk state after local values are installed but
+            // before the shared environment file is installed.
+            fs::remove_file(&path).unwrap();
+            repository::refresh_all(&mut connection).unwrap();
+            assert!(listed(&connection, &target).is_empty());
+            assert_eq!(fs::read_to_string(&local_path).unwrap(), bytes);
+            fs::write(path, shared).unwrap();
+            repository::refresh_all(&mut connection).unwrap();
+            assert_eq!(
+                listed(&connection, &target),
+                [pair("TOKEN", "fixture-token")]
+            );
+        }
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
