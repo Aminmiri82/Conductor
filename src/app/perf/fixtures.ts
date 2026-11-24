@@ -42,6 +42,51 @@ function postmanCollection(name: string, item: unknown[]) {
 }
 
 export const fixtures = {
+  linkedRepository: ({ echoUrl }: FixtureEnv) => {
+    const uuid = (n: number) =>
+      `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+    const files: Record<string, string> = {};
+    const folders = Array.from({ length: 15 }, (_, f) => {
+      const id = uuid(f + 1);
+      const requests = Object.fromEntries(
+        Array.from({ length: 20 }, (_, r) => [
+          `request-${f}-${r}`,
+          {
+            id: uuid(100 + f * 20 + r),
+            name: `Request ${f}.${r}`,
+            method: "GET",
+            position: r * 1024,
+            url: `${echoUrl}/folders/${f}/items/${r}`,
+            headers: [
+              { key: "Accept", value: "application/json", enabled: true },
+            ],
+          },
+        ]),
+      );
+      files[`.conductor/requests/folder-${f}.json`] = JSON.stringify(
+        { folderId: id, requests },
+        null,
+        2,
+      );
+      return { id, name: `Folder ${f}`, position: f * 1024 };
+    });
+    files[".conductor/collection.json"] = JSON.stringify({
+      conductorFormat: 2,
+      id: uuid(0),
+      name: "Perf repository",
+      folders,
+    });
+    for (let e = 0; e < 3; e++) {
+      const id = uuid(500 + e);
+      files[`.conductor/environments/env-${e}.json`] = JSON.stringify({
+        id,
+        name: `Environment ${e}`,
+        values: { baseUrl: echoUrl },
+      });
+    }
+    return { files, info: {} };
+  },
+
   /**
    * A "Large response" request (10 MB of JSON from the echo server) at the
    * top, then 40 folders of 50 requests. `large_postman_collection` in
@@ -163,7 +208,12 @@ export const fixtures = {
   },
 } satisfies Record<
   string,
-  (env: FixtureEnv) => { file: string; info: Record<string, unknown> }
+  (env: FixtureEnv) => (
+    | { file: string }
+    | { files: Record<string, string> }
+  ) & {
+    info: Record<string, unknown>;
+  }
 >;
 
 export type FixtureName = keyof typeof fixtures;

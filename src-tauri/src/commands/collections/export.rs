@@ -2,7 +2,8 @@
 //! is one `.postman_collection.json` file holding its folders, requests,
 //! auth, scripts and collection variables. Postman keeps environments in files
 //! of their own, so each environment can be written beside it as a
-//! `.postman_environment.json`. Values are written as stored, secrets included.
+//! `.postman_environment.json`. Linked collections export only shared values
+//! and empty placeholders for declared secrets.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -17,13 +18,14 @@ use serde_json::Value;
 use tauri::State;
 use uuid::Uuid;
 
-use super::postman_file_dialog;
+use super::{postman_file_dialog, repository};
 use crate::commands::{
     error::CommandError,
     models::{
         ApiKeyLocation, AuthConfig, AuthType, BodyField, BodyFieldType, BodyMode, KeyValue,
-        RequestBody,
+        RequestBody, VariableTarget,
     },
+    variables::read_variables,
 };
 use crate::storage::StorageError;
 use crate::AppState;
@@ -31,7 +33,7 @@ use crate::AppState;
 const SCHEMA: &str = "https://schema.getpostman.com/json/collection/v2.1.0/collection.json";
 
 /// Asks where to save the collection, offering "<collection>.postman_collection.json",
-/// and writes it there. With `include_environments`, each of its environments
+/// and writes it there. With `include_environments`, each active environment
 /// goes next to it as "<file stem> - <environment>.postman_environment.json",
 /// replacing a file of that name. Returns the written file's name, or `None`
 /// when the user cancels.
@@ -298,20 +300,15 @@ fn read_collection(
         params![collection_id],
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
-    let variable = read_variables(
-        connection,
-        "SELECT key, current_value, enabled, sensitive FROM variables
-         WHERE scope = 'collection' AND collection_id = ? ORDER BY key",
-        collection_id,
-    )?
-    .into_iter()
-    .map(|(key, value, enabled, _)| PostmanParam {
-        key,
-        value,
-        disabled: !enabled,
-        ..PostmanParam::default()
-    })
-    .collect();
+    let variable = export_variables(connection, collection_id, None)?
+        .into_iter()
+        .map(|variable| PostmanParam {
+            key: variable.key,
+            value: variable.value,
+            disabled: !variable.enabled,
+            ..PostmanParam::default()
+        })
+        .collect();
 
     Ok(PostmanCollection {
         info: PostmanInfo {
@@ -622,31 +619,13 @@ fn events(request: &RequestRow) -> Vec<PostmanEvent> {
     .collect()
 }
 
-/// `(key, value, enabled, sensitive)`, from a query that selects them in that
-/// order with the owner's id as its one parameter.
-fn read_variables(
-    connection: &Connection,
-    sql: &str,
-    owner_id: &str,
-) -> Result<Vec<(String, String, bool, bool)>, StorageError> {
-    let mut statement = connection.prepare_cached(sql)?;
-    let rows = statement.query_map(params![owner_id], |row| {
-        Ok((
-            row.get(0)?,
-            row.get(1)?,
-            row.get::<_, i64>(2)? != 0,
-            row.get::<_, i64>(3)? != 0,
-        ))
-    })?;
-    rows.collect::<Result<_, _>>().map_err(StorageError::from)
-}
-
 fn read_environments(
     connection: &Connection,
     collection_id: &str,
 ) -> Result<Vec<PostmanEnvironment>, StorageError> {
-    let mut statement = connection
-        .prepare("SELECT id, name FROM environments WHERE collection_id = ? ORDER BY name")?;
+    let mut statement = connection.prepare(
+        "SELECT id, name FROM environments WHERE collection_id = ? AND archived = 0 ORDER BY name",
+    )?;
     let environments = statement
         .query_map(params![collection_id], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
@@ -656,20 +635,7 @@ fn read_environments(
     environments
         .into_iter()
         .map(|(id, name)| {
-            let values = read_variables(
-                connection,
-                "SELECT key, current_value, enabled, sensitive FROM variables
-                 WHERE scope = 'environment' AND environment_id = ? ORDER BY key",
-                &id,
-            )?
-            .into_iter()
-            .map(|(key, value, enabled, sensitive)| PostmanEnvironmentValue {
-                key,
-                value,
-                value_type: if sensitive { "secret" } else { "default" },
-                enabled,
-            })
-            .collect();
+            let values = export_variables(connection, collection_id, Some(&id))?;
             Ok(PostmanEnvironment {
                 id,
                 name,
@@ -678,6 +644,64 @@ fn read_environments(
             })
         })
         .collect()
+}
+
+fn export_variables(
+    connection: &Connection,
+    collection_id: &str,
+    environment_id: Option<&str>,
+) -> Result<Vec<PostmanEnvironmentValue>, StorageError> {
+    if repository::linked(connection, collection_id)? {
+        let shared = repository::values::projection(
+            connection,
+            collection_id,
+            environment_id.unwrap_or(collection_id),
+        )?;
+        let mut variables: Vec<_> = shared
+            .values
+            .into_iter()
+            .map(|(key, value)| PostmanEnvironmentValue {
+                key,
+                value,
+                value_type: "default",
+                enabled: true,
+            })
+            .chain(
+                shared
+                    .secrets
+                    .into_iter()
+                    .map(|key| PostmanEnvironmentValue {
+                        key,
+                        value: String::new(),
+                        value_type: "secret",
+                        enabled: true,
+                    }),
+            )
+            .collect();
+        variables.sort_unstable_by(|first, second| first.key.cmp(&second.key));
+        return Ok(variables);
+    }
+    let target = match environment_id {
+        Some(id) => VariableTarget::Environment {
+            environment_id: id.to_string(),
+        },
+        None => VariableTarget::Collection {
+            collection_id: collection_id.to_string(),
+        },
+    };
+    Ok(read_variables(connection, &target)?
+        .into_iter()
+        .map(|variable| PostmanEnvironmentValue {
+            key: variable.key,
+            value: variable.value,
+            value_type: if variable.sensitive {
+                "secret"
+            } else {
+                "default"
+            },
+            enabled: variable.enabled,
+        })
+        .collect())
 }
 
 /// One file name per environment, unique even when two names clean up to the
@@ -731,7 +755,6 @@ mod tests {
 
     use super::*;
     use crate::commands::collections::import::store_collection;
-    use crate::commands::models::VariableTarget;
     use crate::{fixtures, storage::test_connection};
 
     fn import(connection: &mut Connection, collection: Value) -> String {
@@ -946,6 +969,148 @@ mod tests {
             json!([
                 { "key": "host", "value": "staging.test", "type": "default", "enabled": true },
                 { "key": "token", "value": "s3cret", "type": "secret", "enabled": false }
+            ])
+        );
+    }
+
+    #[test]
+    fn repository_exports_include_active_defaults_and_exclude_archived_environments() {
+        let app = fixtures::TestApp::new();
+        let collection_id = app.seed(|connection| {
+            let collection_id = fixtures::collection(connection);
+            let active = fixtures::environment(connection, &collection_id);
+            let archived = fixtures::environment(connection, &collection_id);
+            connection.execute(
+                "INSERT INTO repository_links (collection_id, root, manifest_id) VALUES (?, '/repo', ?)",
+                [&collection_id, &collection_id],
+            ).unwrap();
+            connection.execute(
+                "UPDATE environments SET name = 'Archived', archived = 1 WHERE id = ?",
+                [&archived],
+            ).unwrap();
+            fixtures::variable(
+                connection,
+                &VariableTarget::Environment { environment_id: archived },
+                "token",
+                "archived-token",
+            );
+            connection.execute(
+                "INSERT INTO repository_variables
+                 (collection_id, scope_id, key, value, enabled, sensitive, local, shared_value, required_secret)
+                 VALUES (?, ?, 'host', 'shared.test', 1, 0, 0, 'shared.test', 0)",
+                [&collection_id, &active],
+            ).unwrap();
+            collection_id
+        });
+        let directory = std::env::temp_dir().join(format!("conductor-export-{}", Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+
+        let result = export_file(
+            &app.state,
+            &collection_id,
+            &directory.join("Shop.postman_collection.json"),
+            true,
+        );
+        let active = std::fs::read(directory.join("Shop - Environment.postman_environment.json"));
+        let archived = directory
+            .join("Shop - Archived.postman_environment.json")
+            .exists();
+        std::fs::remove_dir_all(&directory).unwrap();
+        result.unwrap();
+
+        let active: Value = serde_json::from_slice(&active.unwrap()).unwrap();
+        assert_eq!(
+            (active["values"].clone(), archived),
+            (
+                json!([{ "key": "host", "value": "shared.test", "type": "default", "enabled": true }]),
+                false
+            ),
+            "exported active values and presence of an archived environment file"
+        );
+    }
+
+    fn export_linked_repository(include_environments: bool) -> (String, Option<String>) {
+        let app = fixtures::TestApp::new();
+        let directory = std::env::temp_dir().join(format!("conductor-export-{}", Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let root = std::fs::canonicalize(&directory).unwrap();
+        let collection_id = app.seed(|connection| {
+            let source = fixtures::collection(connection);
+            let environment = fixtures::environment(connection, &source);
+            fixtures::variable(
+                connection,
+                &VariableTarget::Environment {
+                    environment_id: environment.clone(),
+                },
+                "host",
+                "shared.test",
+            );
+            fixtures::variable(
+                connection,
+                &VariableTarget::Environment { environment_id: environment },
+                "token",
+                "fixture-source-token",
+            );
+            fixtures::variable(
+                connection,
+                &VariableTarget::Collection { collection_id: source.clone() },
+                "collectionToken",
+                "fixture-source-token",
+            );
+            let linked = super::super::repository::connect(connection, &root, true, Some(&source))
+                .unwrap();
+            std::fs::write(
+                root.join(".conductor/local.json"),
+                br#"{"collection":{"collectionToken":"qa-private-collection-token","other":"local-only"},"environments":{"environment":{"token":"qa-private-environment-token","host":"personal.test","other":"local-only"}}}"#,
+            )
+            .unwrap();
+            super::super::repository::refresh_all(connection).unwrap();
+            linked.collection_id
+        });
+
+        let collection = directory.join("Shop.postman_collection.json");
+        let environment = directory.join("Shop - Environment.postman_environment.json");
+        let result = export_file(
+            &app.state,
+            &collection_id,
+            &collection,
+            include_environments,
+        );
+        let collection = std::fs::read_to_string(collection);
+        let environment = include_environments.then(|| std::fs::read_to_string(environment));
+        std::fs::remove_dir_all(directory).unwrap();
+        result.unwrap();
+        (collection.unwrap(), environment.map(Result::unwrap))
+    }
+
+    #[test]
+    fn qa_export_excludes_private_repository_collection_values() {
+        let (collection, _) = export_linked_repository(false);
+        assert!(
+            !collection.contains("qa-private-collection-token"),
+            "the collection export contains the private token from local.json"
+        );
+        let collection: Value = serde_json::from_str(&collection).unwrap();
+        assert_eq!(
+            collection["variable"],
+            json!([{ "key": "collectionToken", "value": "" }])
+        );
+    }
+
+    #[test]
+    fn qa_export_excludes_private_repository_environment_values() {
+        let (_, environment) = export_linked_repository(true);
+        let environment = environment.unwrap();
+        assert!(
+            !environment.contains("qa-private-environment-token"),
+            "the environment export contains the private token from local.json"
+        );
+        let environment: Value = serde_json::from_str(&environment).unwrap();
+        assert_eq!(
+            environment["values"],
+            json!([
+                { "key": "host", "value": "shared.test", "type": "default", "enabled": true },
+                { "key": "token", "value": "", "type": "secret", "enabled": true }
             ])
         );
     }

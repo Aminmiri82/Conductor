@@ -1,8 +1,11 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    path::Path,
+};
 
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::storage::StorageError;
@@ -10,12 +13,13 @@ use crate::storage::StorageError;
 use super::{
     folder_id,
     format::{self, Environment, Folder, Manifest, Request},
-    local_id, remote_id, GroupChange, RepositoryRequestChange,
+    local_id, remote_id, values, Changes, RepositoryRequestChange,
 };
 
 pub(super) const MANIFEST: &str = "collection.json";
 
-#[derive(Clone)]
+#[derive(Serialize)]
+#[serde(untagged)]
 pub(super) enum Entity {
     Manifest(Manifest),
     Request(Box<Request>),
@@ -38,14 +42,6 @@ impl Entity {
             Self::Environment(item) => &item.id,
         }
     }
-
-    pub(super) fn bytes(&self) -> Result<Vec<u8>, StorageError> {
-        match self {
-            Self::Manifest(item) => format::encode(item),
-            Self::Request(item) => format::encode(item),
-            Self::Environment(item) => format::encode(item),
-        }
-    }
 }
 
 pub(super) struct StoredFile {
@@ -66,12 +62,13 @@ pub(super) type StoredFiles = BTreeMap<String, StoredFile>;
 pub(super) fn stored_files(
     connection: &Connection,
     collection_id: &str,
+    request_id: Option<&str>,
 ) -> Result<StoredFiles, StorageError> {
     let mut statement = connection.prepare_cached(
         "SELECT path, kind, entity_id, contents, revision FROM repository_files
-         WHERE collection_id = ?",
+         WHERE collection_id = ?1 AND (?2 IS NULL OR kind != 'request' OR entity_id = ?2)",
     )?;
-    let rows = statement.query_map([collection_id], |row| {
+    let rows = statement.query_map(params![collection_id, request_id], |row| {
         Ok((
             row.get(0)?,
             StoredFile {
@@ -89,23 +86,24 @@ pub(super) fn request_key(id: &str) -> String {
     format!("request/{id}")
 }
 
+#[derive(Clone, PartialEq)]
 pub(super) struct RequestGroup {
     pub folder_id: String,
-    pub contents: Vec<u8>,
+    pub byte_count: u32,
 }
 
 pub(super) type Groups = BTreeMap<String, RequestGroup>;
 
 pub(super) fn groups(connection: &Connection, collection_id: &str) -> Result<Groups, StorageError> {
     let mut statement = connection.prepare_cached(
-        "SELECT path, folder_id, contents FROM repository_request_groups WHERE collection_id = ?",
+        "SELECT path, folder_id, byte_count FROM repository_request_groups WHERE collection_id = ?",
     )?;
     let rows = statement.query_map([collection_id], |row| {
         Ok((
             row.get(0)?,
             RequestGroup {
                 folder_id: row.get(1)?,
-                contents: row.get(2)?,
+                byte_count: row.get(2)?,
             },
         ))
     })?;
@@ -119,63 +117,21 @@ pub(super) fn record_groups(
     next: &Groups,
 ) -> Result<(), StorageError> {
     for (path, group) in next {
-        if previous
-            .get(path)
-            .is_none_or(|old| old.contents != group.contents)
-        {
-            write_group(
-                connection,
-                collection_id,
-                path,
-                &group.folder_id,
-                Some(&group.contents),
-            )?;
+        if previous.get(path) != Some(group) {
+            connection.prepare_cached(
+                "INSERT INTO repository_request_groups (collection_id, path, folder_id, byte_count)
+                 VALUES (?, ?, ?, ?) ON CONFLICT(collection_id,path) DO UPDATE SET
+                 folder_id = excluded.folder_id, byte_count = excluded.byte_count",
+            )?.execute(params![collection_id, path, group.folder_id, group.byte_count])?;
         }
     }
     for path in previous.keys().filter(|path| !next.contains_key(*path)) {
-        write_group(connection, collection_id, path, "", None)?;
-    }
-    Ok(())
-}
-
-pub(super) fn update_groups(
-    connection: &Connection,
-    collection_id: &str,
-    changes: Vec<GroupChange>,
-) -> Result<(), StorageError> {
-    for change in changes {
-        write_group(
-            connection,
-            collection_id,
-            &change.path,
-            &change.folder,
-            change.contents.as_deref(),
-        )?;
-    }
-    Ok(())
-}
-
-fn write_group(
-    connection: &Connection,
-    collection_id: &str,
-    path: &str,
-    folder: &str,
-    contents: Option<&[u8]>,
-) -> Result<(), StorageError> {
-    match contents {
-        Some(contents) => connection
-            .prepare_cached(
-                "INSERT INTO repository_request_groups (collection_id, path, folder_id, contents)
-             VALUES (?, ?, ?, ?) ON CONFLICT(collection_id,path) DO UPDATE SET
-             folder_id = excluded.folder_id, contents = excluded.contents",
-            )?
-            .execute(params![collection_id, path, folder, contents])?,
-        None => connection
+        connection
             .prepare_cached(
                 "DELETE FROM repository_request_groups WHERE collection_id = ? AND path = ?",
             )?
-            .execute(params![collection_id, path])?,
-    };
+            .execute(params![collection_id, path])?;
+    }
     Ok(())
 }
 
@@ -222,6 +178,7 @@ fn same_editor_data(previous: &[u8], next: &[u8]) -> Result<bool, StorageError> 
         if let Some(fields) = value.as_object_mut() {
             fields.shift_remove("parentId");
             fields.shift_remove("position");
+            fields.shift_remove("moveGeneration");
         }
         Ok(value)
     }
@@ -254,28 +211,37 @@ pub(crate) fn revision(
         .optional()?)
 }
 
-// Project only shared data. In particular the variables table is never read here.
+// Project only shared data. Local overrides are never serialized here.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Placement<'a> {
+    parent_id: Option<&'a str>,
+    #[serde(default)]
+    move_generation: u32,
+}
+
 pub(super) fn project(
     connection: &Connection,
     collection_id: &str,
     manifest_id: &str,
     stored: &StoredFiles,
+    request_id: Option<&str>,
+    mut root: Option<&Path>,
 ) -> Result<Files, StorageError> {
-    let paths: HashMap<_, _> = stored
-        .iter()
-        .map(|(path, file)| ((file.kind.as_str(), file.id.as_str()), path))
-        .collect();
     let (name, auth): (String, Option<String>) = connection.query_row(
         "SELECT name, auth_json FROM collections WHERE id = ?",
         [collection_id],
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
+    let shared = values::projection(connection, collection_id, collection_id)?;
     let mut manifest = Manifest {
-        conductor_format: 1,
+        conductor_format: format::READABLE_FORMAT,
         id: manifest_id.to_string(),
         name,
-        auth: decode_optional(auth)?,
+        auth: format::project_auth(decode_optional(auth)?),
         folders: Vec::new(),
+        values: shared.values,
+        secrets: shared.secrets,
     };
 
     let mut files = Files::new();
@@ -284,19 +250,32 @@ pub(super) fn project(
                 r.id, r.method, r.url, r.headers_json, r.query_json, r.path_params_json,
                 r.auth_json, r.body_json, r.pre_request_script_json, r.test_script_json
          FROM collection_nodes n LEFT JOIN requests r ON r.id = n.request_id
-         WHERE n.collection_id = ? ORDER BY n.id",
+         WHERE n.collection_id = ?1 AND (?2 IS NULL OR n.request_id IS NULL OR n.request_id = ?2) ORDER BY n.id",
     )?;
-    let mut rows = nodes.query([collection_id])?;
+    let mut rows = nodes.query(params![collection_id, request_id])?;
     while let Some(row) = rows.next()? {
-        let parent_id = row
-            .get::<_, Option<String>>(1)?
-            .map(|id| remote_id(&id).into());
+        let parent_node_id: Option<String> = row.get(1)?;
+        let parent_id = parent_node_id.as_deref().map(|id| remote_id(id).into());
         let name = row.get(2)?;
         let position = row.get(3)?;
         if let Some(id) = row.get::<_, Option<String>>(5)? {
+            let id = remote_id(&id);
+            let previous = stored
+                .get(&request_key(id))
+                .map(|file| serde_json::from_slice::<Placement<'_>>(&file.contents))
+                .transpose()?;
+            let move_generation = match previous {
+                Some(previous) if previous.parent_id != parent_id.as_deref() => previous
+                    .move_generation
+                    .checked_add(1)
+                    .ok_or_else(|| super::input("Request move generation is exhausted."))?,
+                Some(previous) => previous.move_generation,
+                None => 0,
+            };
             let mut request = Request {
-                id: remote_id(&id).into(),
+                id: id.into(),
                 parent_id,
+                move_generation,
                 name,
                 position,
                 method: row.get(6)?,
@@ -304,14 +283,26 @@ pub(super) fn project(
                 headers: decode(row.get(8)?)?,
                 query: decode(row.get(9)?)?,
                 path_params: decode(row.get(10)?)?,
-                auth: decode_optional(row.get(11)?)?,
+                auth: format::project_auth(decode_optional(row.get(11)?)?),
                 body: decode_optional(row.get(12)?)?,
                 pre_request_script: decode_optional(row.get(13)?)?,
                 test_script: decode_optional(row.get(14)?)?,
             };
-            format::validate_request(&mut request)?;
-            let path = request_key(&request.id);
-            put(&mut files, path, Entity::Request(Box::new(request)))?;
+            if let Err(error) = format::validate_request(&mut request) {
+                let folder: Option<String> = connection
+                    .query_row(
+                        "SELECT name FROM collection_nodes WHERE id = ?",
+                        [parent_node_id],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                return Err(super::input(format!(
+                    "Request {:?} in {:?}: {error}",
+                    request.name,
+                    folder.as_deref().unwrap_or(&manifest.name)
+                )));
+            }
+            put_request(&mut files, request)?;
         } else {
             let id: String = row.get(0)?;
             manifest.folders.push(Folder {
@@ -319,7 +310,7 @@ pub(super) fn project(
                 parent_id,
                 name,
                 position,
-                auth: decode_optional(row.get(4)?)?,
+                auth: format::project_auth(decode_optional(row.get(4)?)?),
             });
         }
     }
@@ -335,46 +326,72 @@ pub(super) fn project(
                 .as_deref()
                 .is_some_and(|parent| !folder_ids.contains(parent))
             {
-                return Err(StorageError::InvalidInput(
-                    "Choose a folder as the request's parent.".into(),
-                ));
+                return Err(super::input("Choose a folder as the request's parent."));
             }
         }
     }
     format::validate_manifest(&manifest)?;
     put(&mut files, MANIFEST.into(), Entity::Manifest(manifest))?;
 
+    if request_id.is_some() {
+        return Ok(files);
+    }
+    let mut slugs = format::Slugs::default();
+    for path in stored
+        .keys()
+        .filter(|path| path.starts_with("environments/"))
+    {
+        if let Some(stem) = path.strip_suffix(".json") {
+            slugs.reserve(stem);
+        }
+    }
     let mut environments = connection.prepare(
-        "SELECT e.id, e.name FROM environments e LEFT JOIN repository_environments re
-         ON re.environment_id = e.id WHERE e.collection_id = ? AND COALESCE(re.active, 1) = 1",
+        "SELECT e.id, e.name, f.path FROM environments e
+         LEFT JOIN repository_files f ON f.kind = 'environment'
+            AND f.entity_id = e.id AND f.collection_id = e.collection_id
+         WHERE e.collection_id = ? AND e.archived = 0 ORDER BY e.id",
     )?;
-    let mut defaults = connection
-        .prepare_cached("SELECT key, value FROM repository_defaults WHERE environment_id = ?")?;
     let mut rows = environments.query([collection_id])?;
     while let Some(row) = rows.next()? {
         let id: String = row.get(0)?;
-        let values = defaults.query_map([&id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        let shared = values::projection(connection, collection_id, &id)?;
         let environment = Environment {
             id: Uuid::parse_str(remote_id(&id))
                 .map_err(|_| StorageError::InvalidInput("Invalid environment ID.".into()))?
                 .to_string(),
             name: row.get(1)?,
-            defaults: values.collect::<Result<_, _>>()?,
+            values: shared.values,
+            secrets: shared.secrets,
         };
         format::validate_environment(&environment)?;
-        let path = paths
-            .get(&("environment", id.as_str()))
-            .map(|path| path.to_string())
-            .unwrap_or_else(|| {
-                format::file_name("environments", &environment.name, &environment.id)
-            });
+        let path = if let Some(path) = row.get::<_, Option<String>>(2)? {
+            path
+        } else {
+            if let Some(root) = root.take() {
+                for path in format::list(root, "environments")? {
+                    if let Some(stem) = path.to_ascii_lowercase().strip_suffix(".json") {
+                        slugs.reserve(stem);
+                    }
+                }
+                values::reserve_environment_paths(root, &mut slugs)?;
+            }
+            slugs.file("environments", &environment.name)
+        };
         put(&mut files, path, Entity::Environment(environment))?;
     }
     Ok(files)
 }
 
-fn put(files: &mut Files, path: String, entity: Entity) -> Result<(), StorageError> {
-    let contents = entity.bytes()?;
+pub(super) fn put_request(files: &mut Files, request: Request) -> Result<(), StorageError> {
+    put(
+        files,
+        request_key(&request.id),
+        Entity::Request(Box::new(request)),
+    )
+}
+
+pub(super) fn put(files: &mut Files, path: String, entity: Entity) -> Result<(), StorageError> {
+    let contents = format::encode(&entity)?;
     files.insert(path, File { contents, entity });
     Ok(())
 }
@@ -396,7 +413,7 @@ pub(super) fn apply(
     collection_id: &str,
     files: &Files,
     stored: &StoredFiles,
-) -> Result<Vec<RepositoryRequestChange>, StorageError> {
+) -> Result<Changes, StorageError> {
     let Some(File {
         entity: Entity::Manifest(manifest),
         ..
@@ -432,7 +449,7 @@ pub(super) fn apply(
         .map(|folder| folder_id(collection_id, &folder.id))
         .collect();
     let mut changes = BTreeMap::new();
-    let mut present_requests = HashSet::new();
+    let mut environments = Vec::new();
     for (path, file) in files {
         let unchanged = stored
             .get(path)
@@ -440,7 +457,6 @@ pub(super) fn apply(
         match &file.entity {
             Entity::Request(request) => {
                 let id = local_id(collection_id, &request.id);
-                present_requests.insert(id.clone());
                 nodes.insert(id.clone());
                 if !unchanged {
                     write_request(tx, collection_id, &id, request, &now)?;
@@ -448,6 +464,7 @@ pub(super) fn apply(
             }
             Entity::Environment(environment) if !unchanged => {
                 write_environment(tx, collection_id, environment, &now)?;
+                environments.push(local_id(collection_id, &environment.id));
             }
             _ => {}
         }
@@ -470,7 +487,7 @@ pub(super) fn apply(
             remove_file(tx, collection_id, path)?;
         }
         match old.kind.as_str() {
-            "request" if !present_requests.contains(&old.id) => {
+            "request" if !nodes.contains(&old.id) => {
                 tx.execute("DELETE FROM requests WHERE id = ?", [&old.id])?;
                 changes.insert(old.id.clone(), None);
             }
@@ -482,9 +499,10 @@ pub(super) fn apply(
                 }) =>
             {
                 tx.execute(
-                    "UPDATE repository_environments SET active = 0 WHERE environment_id = ?",
+                    "UPDATE environments SET archived = 1 WHERE id = ?",
                     [&old.id],
                 )?;
+                environments.push(old.id.clone());
             }
             _ => {}
         }
@@ -499,13 +517,19 @@ pub(super) fn apply(
             tx.execute("DELETE FROM collection_nodes WHERE id = ?", [&id])?;
         }
     }
-    Ok(changes
-        .into_iter()
-        .map(|(request_id, revision)| RepositoryRequestChange {
-            request_id,
-            revision,
-        })
-        .collect())
+    environments.sort_unstable();
+    environments.dedup();
+    Ok(Changes {
+        environments,
+        requests: changes
+            .into_iter()
+            .map(|(request_id, revision)| RepositoryRequestChange {
+                request_id,
+                revision,
+            })
+            .collect(),
+        ..Default::default()
+    })
 }
 
 fn write_folder<'a>(
@@ -617,23 +641,8 @@ fn write_environment(
     let id = local_id(collection_id, &environment.id);
     connection.execute(
         "INSERT INTO environments (id, collection_id, name, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name",
+         VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name, archived = 0",
         params![id, collection_id, environment.name, now, now],
     )?;
-    connection.execute(
-        "INSERT INTO repository_environments (environment_id, active) VALUES (?, 1)
-         ON CONFLICT(environment_id) DO UPDATE SET active = 1",
-        [&id],
-    )?;
-    connection.execute(
-        "DELETE FROM repository_defaults WHERE environment_id = ?",
-        [&id],
-    )?;
-    let mut insert = connection.prepare_cached(
-        "INSERT INTO repository_defaults (environment_id, key, value) VALUES (?, ?, ?)",
-    )?;
-    for (key, value) in &environment.defaults {
-        insert.execute(params![id, key, value])?;
-    }
     Ok(())
 }

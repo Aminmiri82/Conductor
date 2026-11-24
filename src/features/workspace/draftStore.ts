@@ -7,6 +7,8 @@ type DraftState = {
   revision: number;
   setDraft: (request: RequestDetail) => void;
   setPreview: (requestId: string, preview: ResolvedRequestPreview) => void;
+  clearPreview: (requestId: string) => void;
+  clearCollectionPreviews: (collectionId: string) => void;
   removeMany: (requestIds: string[]) => void;
   clearAll: () => void;
 };
@@ -27,6 +29,25 @@ export const useDraftStore = create<DraftState>((set) => ({
     set((state) => {
       state.previews.set(requestId, preview);
       return { revision: state.revision + 1 };
+    });
+  },
+
+  clearPreview: (requestId) => {
+    set((state) =>
+      state.previews.delete(requestId)
+        ? { revision: state.revision + 1 }
+        : state,
+    );
+  },
+
+  clearCollectionPreviews: (collectionId) => {
+    set((state) => {
+      let changed = false;
+      for (const requestId of state.previews.keys()) {
+        if (state.drafts.get(requestId)?.collectionId === collectionId)
+          changed = state.previews.delete(requestId) || changed;
+      }
+      return changed ? { revision: state.revision + 1 } : state;
     });
   },
 

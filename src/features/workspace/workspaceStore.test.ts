@@ -1,0 +1,60 @@
+import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
+import { expect, it, vi } from "vite-plus/test";
+import { useWorkspaceStore } from "./workspaceStore";
+
+it("preserves an unsaved local draft when the user cancels opening a repository", async () => {
+  const before = useWorkspaceStore.getState();
+  const tabs = [
+    { requestId: "draft", name: "Draft", method: "GET", dirty: true },
+  ];
+  useWorkspaceStore.setState({ activeCollectionId: "local", tabs });
+  vi.stubGlobal("window", {});
+  mockIPC((command) => {
+    if (command === "plugin:dialog|message") return "Cancel";
+    throw new Error(`Unexpected IPC command: ${command}`);
+  });
+
+  try {
+    await expect(
+      useWorkspaceStore.getState().openRepository("/repo", false, null),
+    ).resolves.toBe(false);
+    expect(useWorkspaceStore.getState().tabs).toEqual(tabs);
+    expect(useWorkspaceStore.getState().activeCollectionId).toBe("local");
+  } finally {
+    clearMocks();
+    vi.unstubAllGlobals();
+    useWorkspaceStore.setState(before);
+  }
+});
+
+it("preserves a draft made while opening a repository when the user cancels", async () => {
+  const before = useWorkspaceStore.getState();
+  const tabs = [
+    { requestId: "draft", name: "Draft", method: "GET", dirty: true },
+  ];
+  useWorkspaceStore.setState({ activeCollectionId: "local", tabs: [] });
+  vi.stubGlobal("window", {});
+  const environments = [{ id: "env", collectionId: "repo", name: "Local" }];
+  mockIPC((command) => {
+    if (command === "open_repository") {
+      useWorkspaceStore.setState({ tabs });
+      return { collectionId: "repo", collections: [], tree: [] };
+    }
+    if (command === "list_environments") return environments;
+    if (command === "plugin:dialog|message") return "Cancel";
+    throw new Error(`Unexpected IPC command: ${command}`);
+  });
+
+  try {
+    await expect(
+      useWorkspaceStore.getState().openRepository("/repo", false, null),
+    ).resolves.toBe(false);
+    expect(useWorkspaceStore.getState().tabs).toEqual(tabs);
+    expect(useWorkspaceStore.getState().activeCollectionId).toBe("local");
+    expect(useWorkspaceStore.getState().environments).toEqual(environments);
+  } finally {
+    clearMocks();
+    vi.unstubAllGlobals();
+    useWorkspaceStore.setState(before);
+  }
+});

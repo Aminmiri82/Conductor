@@ -27,7 +27,8 @@ use commands::requests::{
 };
 use commands::variables::{
     apply_variable_changes, create_environment, delete_environment, duplicate_environment,
-    import_postman_environment, list_environments, list_variables, rename_environment,
+    get_shared_variable, import_postman_environment, list_environments, list_variables,
+    rename_environment, save_shared_variable,
 };
 use commands::workspace_state::{get_workspace_state, set_workspace_state};
 use storage::Database;
@@ -113,6 +114,7 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             get_collection_profile,
             get_collection_tree,
             get_request,
+            get_shared_variable,
             import_postman_environment,
             import_postman_collection,
             inspect_repository,
@@ -132,6 +134,7 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             resolve_request,
             move_node,
             save_request,
+            save_shared_variable,
             get_response_body,
             discard_responses,
             save_response_body,

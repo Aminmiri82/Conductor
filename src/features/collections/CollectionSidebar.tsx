@@ -51,11 +51,7 @@ const NewCollectionDialog = lazy(() =>
   })),
 );
 
-const RepositoryCreateDialog = lazy(() =>
-  import("./RepositoryCreateDialog").then((module) => ({
-    default: module.RepositoryCreateDialog,
-  })),
-);
+const RepositoryCreateDialog = lazy(() => import("./RepositoryCreateDialog"));
 
 export function CollectionSidebar() {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -508,8 +504,7 @@ export function CollectionSidebar() {
           </div>
         ) : (
           <div className="px-2 py-8 text-center text-xs text-[var(--app-dim)]">
-            Create a collection, or import one from Postman.
-            <div className="mt-3 flex justify-center gap-2">
+            <div className="mt-3 flex flex-wrap justify-center gap-2">
               <Button
                 variant="outline"
                 size="sm"
@@ -525,6 +520,15 @@ export function CollectionSidebar() {
                 onClick={() => void pickCollectionFile()}
               >
                 Import
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => void pickRepository()}
+              >
+                <GitBranch className="size-3.5" />
+                Open from repository…
               </Button>
             </div>
           </div>

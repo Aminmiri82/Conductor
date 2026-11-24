@@ -1,87 +1,184 @@
 ---
 title: Repository Collections
-description: How Conductor stores a shared collection in Git and keeps local values in SQLite.
+description: Share request definitions and public defaults through Git while keeping credentials in an ignored local file.
 ---
 
-A repository can carry one collection in its `.conductor` directory. Developers
-edit it in Conductor or in their editor and use Git to share the changes.
+A team can keep one collection in its repository. Conductor or a text editor
+can edit the shared files, and Git carries them across clones and branches.
 
-## Files And Identity
+## First Request From A Fresh Clone
 
-- `collection.json` identifies the collection and declares `conductorFormat: 1`.
-  It holds the collection name, collection auth, and folder definitions.
-- `requests/root.json` holds requests at the collection root.
-  Each folder, including each nested folder, has one
-  `requests/<slug>-<folder-uuid>.json` file. Folder parents live in the manifest,
-  so nesting or renaming a folder does not rename or rewrite its request file.
-- `environments/<slug>-<uuid>.json` holds an environment and its public defaults.
-  Start with an empty defaults map and add values intended for the team.
+The shared directory looks like this:
 
-For example, `collection.json` can contain:
+```text
+.conductor/
+  .gitignore
+  collection.json
+  requests/
+    root.json
+    users.json
+  environments/
+    development.json
+  local.json
+```
+
+Open the repository root or its `.conductor` directory with **Open from
+repository…**. This example uses a local server that accepts
+`GET /health`. The team commits the following manifest, request, environment,
+and ignore rules.
+
+`collection.json` identifies the collection and can include shared collection
+variables and auth.
 
 ```json
 {
-  "conductorFormat": 1,
+  "conductorFormat": 2,
   "id": "cc09ff96-52a8-411a-9c1b-188801196f11",
   "name": "Example API",
-  "folders": [
-    {
-      "id": "ed31c60a-7823-44f1-94d5-2faa28c87c4f",
-      "name": "Users",
-      "position": 1024
-    }
-  ]
+  "values": { "apiVersion": "v1" }
 }
 ```
 
-The matching request file is `requests/users-ed31c60a-7823-44f1-94d5-2faa28c87c4f.json`:
+`requests/root.json` holds requests at the collection root.
 
 ```json
 {
-  "folderId": "ed31c60a-7823-44f1-94d5-2faa28c87c4f",
   "requests": {
-    "086a9364-27c9-4cde-9b84-4d3682946aae": {
-      "name": "List users",
-      "position": 1024,
+    "health": {
+      "id": "086a9364-27c9-4cde-9b84-4d3682946aae",
+      "name": "Health",
       "method": "GET",
-      "url": "{{baseUrl}}/users"
+      "url": "{{baseUrl}}/health",
+      "auth": { "authType": "bearer", "token": "{{token}}" }
     }
   }
 }
 ```
 
-The key is a request's permanent ID. In a file Conductor creates, new entries
-go in UUID order and edits preserve the bytes of untouched entries. Conductor
-keeps the entry order of a hand-edited map that is already unsorted. Git can
-merge changes to separate regions of one file. Additions at the same insertion
-point, including two appends, can still conflict. Sidebar ordering uses each
-request's `position`, then its ID for ties.
+`environments/development.json` supplies a public URL and declares a required
+secret by key. Both the manifest and environment files support `values` and
+`secrets`.
 
-Each link has its own SQLite IDs. Separate worktrees of the same repository can
-be linked independently.
+```json
+{
+  "id": "9ce8609b-e932-4678-9d57-5ff4f50b9736",
+  "name": "Development",
+  "values": { "baseUrl": "http://127.0.0.1:18766" },
+  "secrets": ["token"]
+}
+```
 
-## Shared And Local Values
+`.gitignore` belongs in `.conductor`. Conductor ensures these rules exist
+when creating or linking the repository. After a branch change, refresh restores a
+missing rules file if private values are still present. Keep the rules on
+shared branches so Git protects the file before Conductor refreshes.
 
-Request definitions are shared. Structured auth credentials and common
-credential headers require variable references. Free text such as URLs and
-bodies can contain arbitrary data and should be reviewed before committing.
-Conductor strips file upload selections. Environment values edited in Conductor
-are local overrides. Edit the defaults in the repository to share them
-deliberately. Publishing a copy of a local collection keeps its existing
-variable values in SQLite.
+```gitignore
+/local.json
+/.local.json-*.tmp
+```
 
-## Refresh And Conflicts
+Create `local.json` with your own token or enter it in the Variables tab.
+Environment entries use the filename stem. For
+`environments/development.json`, use `development` as the key.
 
-The first screen reads the SQLite cache. Conductor checks linked files after
-startup and on window focus. Unchanged path, size, and modification metadata
-let it skip reading file contents. A save checks the bytes and request revision
-before it atomically replaces a folder file. Moving a request between folders
-changes both files. An interrupted multi-file operation can be reconciled
-from the repository.
+```json
+{
+  "environments": {
+    "development": { "token": "your-local-token" }
+  }
+}
+```
 
-A missing repository or unreadable manifest leaves the last good cache
-available. Relink to a folder with the same collection ID to keep local values.
-An invalid request in otherwise valid JSON is reported by file and ID while
-valid siblings refresh. Invalid JSON leaves that group at its last good state.
-A dirty draft keeps its original revision so it can be resolved against the
-change found on disk.
+Select **Development**, open **Health**, and send the request. A
+`collection` map at the top level of `local.json` can override
+collection-scope defaults. Strings are sufficient for ordinary values. An
+entry such as `{ "value": "...", "enabled": false }` disables a key at
+that scope. Add `"sensitive": true` to mask a private entry in the app.
+Declared secrets are masked automatically. **Use shared value** removes the
+local key and shows the team default again. Removing the key in a text editor
+has the same effect on refresh. **Edit shared value** writes a public default
+to the collection or environment file. **Declare required secret** in
+Settings → Variables adds the key to the shared file. Teammates enter their
+own values locally.
+
+Conductor keeps the filename when you change an environment's display name.
+If you rename or remove its file on disk, Conductor reports the old key as
+orphaned on refresh and leaves the entry in place. Rename the key in
+`local.json` to move those values to the new stem. The file at a matching
+stem receives its local overrides, including when a branch restores that file.
+Each stem identifies one file in the flat `environments/` directory. Conductor
+adds a numeric suffix to avoid collisions with existing files and local keys
+when creating environments. Repeated keys make `local.json` invalid for
+Conductor, which reports a parse error and leaves the file intact. Variable
+edits preserve the bytes of untouched entries.
+
+Conductor verifies that the local file is ignored and untracked before
+writing. It syncs new private bytes outside the Git working tree and installs
+them atomically. Refresh removes interrupted temporary files created by older
+versions. Share private values through a password manager when needed.
+Structured auth fields and credential headers, including `Cookie`, require
+variable references in the shared files. Review free-form fields such as URLs,
+bodies, and scripts before committing. File upload paths are stripped.
+
+## Request And Folder Identity
+
+The manifest defines folders by UUID and optional parent ID. A folder request
+file carries its `folderId` and can live at a nested path such as
+`requests/users/admin.json`. Conductor derives readable keys and paths from
+the first real name. Placeholder requests and populated placeholder folders
+use unique temporary keys until their first rename. Later renames preserve
+the readable key. A request move preserves its UUID and uses its existing key or a numeric
+suffix if that key is taken. Edits preserve the bytes of untouched request
+entries. If a merge gives two request UUIDs the same key, refresh shows both
+requests and reports the collision. The next save in that group assigns
+distinct keys.
+
+Only `conductorFormat: 2` is supported. Each linked checkout has its own
+SQLite cache and app-side IDs. **Remove from this device** removes the cache
+and link. The shared files and `local.json` remain in the repository folder.
+
+## Write Order And Refresh
+
+Each replacement compares the current bytes against the bytes read for the
+edit. It syncs a temporary file before installing it. Conductor serializes
+writers for a root. On Unix, an advisory directory lock also coordinates
+separate Conductor processes using that worktree, and directory entries are
+synced before subsequent file edits.
+
+| Operation | Write order |
+| --- | --- |
+| Save, rename, add, or delete a request within one group | Replace that group. |
+| Move a request between groups | Write the destination with an incremented `moveGeneration`, then remove the source copy. |
+| Add a folder | Add its manifest definition, then write the group if it has a real name or contains requests. |
+| Give a populated placeholder folder its first name | Copy the group to its named path, update the manifest, then remove the old path. |
+| Delete a folder tree | Create recovery links for the affected groups, remove the groups, then remove the folder definitions from the manifest. Restore from the links if a later step fails. |
+| Move an existing folder or edit collection or folder auth | Replace the manifest. Group paths and folder IDs stay stable. |
+| Create, rename, or delete an environment | Update its shared file. Local entries remain when a file is removed. |
+| Duplicate an environment with local overrides or import local environment values | Write local entries under the allocated filename stem, then write the shared file. Until the new environment exists, those local entries have no active scope. |
+| Edit or reset linked variables, including a test-script batch | Replace `local.json` once for the repository. |
+| Transfer a variable between repositories or into or out of global scope | Write or commit the destination before removing the source. |
+| Publish a copy | Validate a staged shared directory and install it with one rename. Then copy private values to the ignored file and link the cache. A retry recognizes the installed manifest ID, fills missing local keys, and finishes linking. |
+
+The first screen reads the SQLite cache. A refresh checks file paths and
+metadata before reading contents. Git changes and hand-edits are reflected
+on refresh. An unchanged refresh reads no file contents.
+
+If an interrupted move leaves both copies, refresh takes the highest
+`moveGeneration`. For ties, a named folder path takes precedence over a
+placeholder path, then the lexically first path wins. Refresh reports the
+other copies and preserves their bytes so the user can inspect them and
+remove the duplicates. Requests with duplicate IDs are blocked from saving
+until the duplicate is resolved.
+
+An unreadable manifest keeps the last good cache. An unreadable request group
+retains its last good requests, and bad filenames are reported by path while
+other files refresh. Unknown auth and header fields report the offending field.
+An open draft keeps its original revision. If the request disappeared, recover
+the draft before sending or copying cURL with resolved values. The selected
+environment ID is remembered when it disappears temporarily on another branch.
+
+The format and file operations live in
+[repository commands](../../src-tauri/src/commands/collections/repository/mod.rs).
+The [linked variable code](../../src-tauri/src/commands/collections/repository/values.rs)
+rebuilds the SQLite variable cache from the shared files and `local.json`.

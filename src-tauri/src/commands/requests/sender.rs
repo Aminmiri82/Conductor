@@ -9,17 +9,21 @@ use tauri::State;
 use uuid::Uuid;
 
 use crate::commands::{
+    collections::repository,
     error::CommandError,
     models::{
-        AuthConfig, KeyValue, RequestDetail, ResolvedRequestPreview, ResponseBodyFormat,
-        ResponseHeader, SendRequestInput, SendRequestResult, VariableTarget,
+        KeyValue, RequestDetail, ResolvedRequestPreview, ResponseBodyFormat, ResponseHeader,
+        SendRequestInput, SendRequestResult, VariableTarget,
     },
-    variables::{load_variable_context, save_script_variable, VariableContext},
+    variables::save_script_variables,
 };
 use crate::{storage::StorageError, AppState};
 
 use super::postman_scripts::ScriptVariableScope;
-use super::{auth, body, postman_scripts, pretty_json, resolver, response_files};
+use super::{
+    auth, body, postman_scripts, pretty_json, read_request_context, request_context, resolver,
+    response_files, RequestPurpose,
+};
 
 #[tauri::command(async)]
 #[specta::specta]
@@ -29,7 +33,12 @@ pub fn resolve_request(
     state: State<'_, AppState>,
 ) -> Result<ResolvedRequestPreview, CommandError> {
     let (variables, inherited_auth) = state.database.with_read_connection(|connection| {
-        load_send_context(connection, &request, environment_id.as_deref())
+        request_context(
+            connection,
+            &request,
+            environment_id.as_deref(),
+            RequestPurpose::Preview,
+        )
     })?;
     let resolved = resolver::resolve_request_with_context(&request, inherited_auth, &variables);
     Ok(ResolvedRequestPreview {
@@ -51,11 +60,42 @@ pub(crate) async fn send(
     state: &AppState,
     input: SendRequestInput,
 ) -> Result<SendRequestResult, CommandError> {
-    let (variables, inherited_auth) = state.database.with_read_connection(|connection| {
-        load_send_context(connection, &input.request, input.environment_id.as_deref())
-    })?;
-    let resolved =
-        resolver::resolve_request_with_context(&input.request, inherited_auth, &variables);
+    let read_context = |connection: &rusqlite::Connection| {
+        // Placement, inherited auth, variables, and the private file's cache
+        // stamp must come from the same database snapshot.
+        let snapshot = connection.unchecked_transaction()?;
+        let (variables, inherited_auth) = read_request_context(
+            &snapshot,
+            &input.request,
+            input.environment_id.as_deref(),
+            RequestPurpose::Send,
+        )?;
+        let resolved =
+            resolver::resolve_request_with_context(&input.request, inherited_auth, &variables);
+        let uses_private = resolved
+            .variable_values
+            .keys()
+            .chain(&resolved.unresolved_variables)
+            .any(|key| variables.relies_on_private_repository_value(key));
+        let refresh = uses_private
+            && repository::private_needs_refresh_for_send(&snapshot, &input.request.collection_id)?;
+        snapshot.commit()?;
+        Ok((variables, resolved, refresh))
+    };
+    let (mut variables, mut resolved, mut refresh) =
+        state.database.with_read_connection(read_context)?;
+    if refresh {
+        state.database.with_connection(|connection| {
+            repository::refresh_private_for_send(connection, &input.request.collection_id)
+        })?;
+        (variables, resolved, refresh) = state.database.with_read_connection(read_context)?;
+        if refresh {
+            return Err(StorageError::InvalidInput(
+                ".conductor/local.json changed during Send. Try again.".into(),
+            )
+            .into());
+        }
+    }
     if !resolved.unresolved_variables.is_empty() {
         return Err("request has unresolved variables".into());
     }
@@ -153,6 +193,7 @@ pub(crate) async fn send(
     if !script_writes.is_empty() {
         state.database.with_connection(|connection| {
             let tx = connection.transaction()?;
+            let mut writes = Vec::with_capacity(script_writes.len());
             for variable in &script_writes {
                 let target = match variable.scope {
                     ScriptVariableScope::Collection => VariableTarget::Collection {
@@ -171,7 +212,7 @@ pub(crate) async fn send(
                         }
                     },
                 };
-                save_script_variable(&tx, &target, &variable.key, &variable.value, &now)?;
+                writes.push((target, variable.key.as_str(), variable.value.as_str()));
                 updated_variables.push(KeyValue {
                     key: variable.key.clone(),
                     value: variable.value.clone(),
@@ -179,6 +220,7 @@ pub(crate) async fn send(
                 });
             }
 
+            save_script_variables(&tx, &writes, &now)?;
             tx.commit()?;
             Ok(())
         })?;
@@ -196,18 +238,6 @@ pub(crate) async fn send(
         updated_variables,
         variable_warnings,
     })
-}
-/// Folder auth is read from the database rather than taken from the client's
-/// copy of the request, which goes stale when the request is moved.
-fn load_send_context(
-    connection: &rusqlite::Connection,
-    request: &RequestDetail,
-    environment_id: Option<&str>,
-) -> Result<(VariableContext, Option<AuthConfig>), StorageError> {
-    Ok((
-        load_variable_context(connection, request, environment_id)?,
-        auth::inherited_auth_for_request(connection, request)?,
-    ))
 }
 /// Takes the bytes without copying them when they are valid UTF-8, which is
 /// almost every text response.
@@ -243,6 +273,7 @@ fn url_without_query(url: &str) -> Result<String, CommandError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::variables::load_variable_context;
     use crate::fixtures::{self, TestApp};
     use crate::test_server::TestServer;
     use serde_json::{json, Value};
@@ -414,6 +445,134 @@ mod tests {
         );
         assert_eq!(received.header("content-type"), Some("application/json"));
         assert_eq!(&received.body[..], br#"{"owner":"secret-token"}"#);
+    }
+
+    #[test]
+    fn a_send_never_uses_an_old_token_when_the_private_file_is_malformed() {
+        use std::fs;
+
+        let server = TestServer::replying(200, "application/json", "{}");
+        let app = TestApp::new();
+        let root = std::env::temp_dir().join(format!("conductor-send-{}", Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        let root = fs::canonicalize(root).unwrap();
+        let private_path = root.join(".conductor/local.json");
+        let (collection_id, request_id) = app.seed(|connection| {
+            let source = fixtures::collection(connection);
+            fixtures::variable(
+                connection,
+                &VariableTarget::Collection {
+                    collection_id: source.clone(),
+                },
+                "token",
+                "previous-token",
+            );
+            fixtures::request(connection, &source, None);
+            let published = repository::connect(connection, &root, true, Some(&source)).unwrap();
+            let request_id = connection
+                .query_row(
+                    "SELECT request_id FROM collection_nodes WHERE collection_id = ?",
+                    [&published.collection_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap();
+            (published.collection_id, request_id)
+        });
+        let send_to_server = |auth| {
+            tauri::async_runtime::block_on(send(
+                &app.state,
+                SendRequestInput {
+                    request: RequestDetail {
+                        id: request_id.clone(),
+                        collection_id: collection_id.clone(),
+                        method: "GET".into(),
+                        url: server.url.clone(),
+                        auth: serde_json::from_value(auth).unwrap(),
+                        ..RequestDetail::default()
+                    },
+                    environment_id: None,
+                },
+            ))
+        };
+        let auth = json!({ "authType": "bearer", "token": "{{token}}" });
+
+        fs::write(
+            &private_path,
+            br#"{"collection":{"token":"rotated-token",}}"#,
+        )
+        .unwrap();
+        for _ in 0..2 {
+            let result = send_to_server(auth.clone());
+            assert!(
+                matches!(result, Err(error) if error.to_string().contains("local.json")),
+                "sending with the cached token should require repairing local.json"
+            );
+        }
+
+        send_to_server(json!(null)).unwrap();
+        assert_eq!(server.only_request().header("authorization"), None);
+        fs::write(
+            &private_path,
+            br#"{"collection":{"token":"rotated-token"}}"#,
+        )
+        .unwrap();
+        send_to_server(auth).unwrap();
+        assert_eq!(
+            server.only_request().header("authorization"),
+            Some("Bearer rotated-token")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_removed_repository_draft_cannot_send_to_its_old_url() {
+        let server = TestServer::replying(200, "application/json", "{}");
+        let app = TestApp::new();
+        let (collection_id, _, request_id) = seed_request(
+            &app,
+            json!({ "authType": "bearer", "token": "{{folderToken}}" }),
+        );
+        app.seed(|connection| {
+            connection
+                .execute(
+                    "UPDATE collections SET auth_json = ? WHERE id = ?",
+                    rusqlite::params![
+                        json!({ "authType": "bearer", "token": "{{collectionToken}}" }).to_string(),
+                        collection_id,
+                    ],
+                )
+                .unwrap();
+            fixtures::variable(
+                connection,
+                &VariableTarget::Collection {
+                    collection_id: collection_id.clone(),
+                },
+                "collectionToken",
+                "different-credential",
+            );
+            connection
+                .execute("DELETE FROM requests WHERE id = ?", [&request_id])
+                .unwrap();
+        });
+        let result = tauri::async_runtime::block_on(send(
+            &app.state,
+            SendRequestInput {
+                request: RequestDetail {
+                    id: request_id,
+                    collection_id,
+                    repository_revision: Some("opened-revision".into()),
+                    method: "GET".into(),
+                    url: server.url.clone(),
+                    ..RequestDetail::default()
+                },
+                environment_id: None,
+            },
+        ));
+
+        assert!(
+            matches!(result, Err(error) if error.to_string().contains("Recover the draft")),
+            "removed draft should require recovery"
+        );
     }
 
     #[test]

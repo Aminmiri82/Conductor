@@ -155,7 +155,7 @@ export function CollectionsPane() {
       if (selected) void exportCollection(selected, false);
     },
     remove: () => {
-      if (selected && !selected.repository) askDelete();
+      if (selected) askDelete();
     },
   };
   const shortcutsRef = useRef(shortcuts);
@@ -376,6 +376,7 @@ function CollectionDetail({
   const requestCount =
     profile?.methods.reduce((sum, entry) => sum + entry.count, 0) ?? 0;
   const environmentCount = profile?.environments.length;
+  const repository = collection.repository;
 
   const variableCount = profile
     ? profile.collectionVariableCount +
@@ -468,16 +469,20 @@ function CollectionDetail({
             </DropdownMenu>
           </div>
         )}
-        {renaming || collection.repository ? null : (
+        {renaming ? null : (
           <Button
             variant="ghost"
             className="h-7 shrink-0 gap-1.5 border border-[var(--app-line)] px-2 text-xs text-[var(--app-dim)] hover:bg-destructive/10 hover:text-destructive"
-            title="Delete collection (⌘⌫)"
+            title={
+              repository
+                ? "Remove from this device (⌘⌫)"
+                : "Delete collection (⌘⌫)"
+            }
             onClick={onAskDelete}
             aria-expanded={confirmingDelete}
           >
             <Trash2 className="size-3.5" />
-            Delete
+            {repository ? "Remove from this device" : "Delete"}
           </Button>
         )}
       </div>
@@ -491,25 +496,33 @@ function CollectionDetail({
         </p>
       ) : null}
 
-      {confirmingDelete && !collection.repository ? (
+      {confirmingDelete ? (
         <div
           className="mb-3 border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-xs"
           style={{ borderRadius: "var(--app-radius-lg)" }}
           role="alertdialog"
-          aria-label={`Delete ${collection.name}`}
+          aria-label={
+            repository ? "Remove from this device" : `Delete ${collection.name}`
+          }
         >
           <div className="text-sm">
-            Delete{" "}
+            {repository ? "Remove" : "Delete"}{" "}
             <span className="font-semibold text-destructive">
               {collection.name}
             </span>
-            ?
+            {repository ? " from this device?" : "?"}
           </div>
           <div className="mt-0.5 text-[var(--app-dim)]">
-            {stats
-              ? `${plural(stats.requestCount, "request")}, ${plural(stats.folderCount, "folder")}, ${plural(stats.environmentCount, "environment")} and their variables go with it. `
-              : "Its requests, folders, environments and variables go with it. "}
-            This cannot be undone.
+            {repository ? (
+              "The repository files, including .conductor/local.json and its local values, stay in the repository folder. Unsaved request drafts are discarded."
+            ) : (
+              <>
+                {stats
+                  ? `${plural(stats.requestCount, "request")}, ${plural(stats.folderCount, "folder")}, ${plural(stats.environmentCount, "environment")} and their variables go with it. `
+                  : "Its requests, folders, environments and variables go with it. "}
+                This cannot be undone.
+              </>
+            )}
           </div>
           <div className="mt-2.5 flex justify-end gap-2">
             <Button
@@ -525,7 +538,7 @@ function CollectionDetail({
               autoFocus
               onClick={onDelete}
             >
-              Delete collection
+              {repository ? "Remove from this device" : "Delete collection"}
             </Button>
           </div>
         </div>

@@ -10,6 +10,7 @@ import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
  */
 export function useSaveVariables() {
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string>();
 
   const save = useCallback(
     async (
@@ -19,10 +20,12 @@ export function useSaveVariables() {
     ) => {
       const store = useWorkspaceStore.getState();
       setSaving(true);
+      setError(undefined);
       try {
         await prepare?.();
         if (changes.length) await api.applyVariableChanges(changes);
       } catch (error) {
+        setError(String(error));
         store.setError(error);
         return false;
       } finally {
@@ -34,5 +37,5 @@ export function useSaveVariables() {
     [],
   );
 
-  return { saving, save };
+  return { saving, save, error };
 }

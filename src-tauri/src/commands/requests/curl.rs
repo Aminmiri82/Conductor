@@ -6,11 +6,11 @@ use tauri::State;
 use crate::commands::{
     error::CommandError,
     models::{ApiKeyLocation, AuthConfig, AuthType, BodyFieldType, BodyMode, RequestDetail},
-    variables::{load_variable_context, VariableContext},
+    variables::VariableContext,
 };
 use crate::AppState;
 
-use super::{auth, body, resolver};
+use super::{body, request_context, resolver, RequestPurpose};
 
 /// With `include_values`, fills in every variable the request's environment
 /// has, secrets included (the user asked for a runnable command); without it,
@@ -23,18 +23,24 @@ pub fn request_as_curl(
     include_values: bool,
     state: State<'_, AppState>,
 ) -> Result<String, CommandError> {
+    render_curl(&request, environment_id.as_deref(), include_values, &state)
+}
+
+fn render_curl(
+    request: &RequestDetail,
+    environment_id: Option<&str>,
+    include_values: bool,
+    state: &AppState,
+) -> Result<String, CommandError> {
+    let purpose = if include_values {
+        RequestPurpose::CurlWithValues
+    } else {
+        RequestPurpose::CurlTemplate
+    };
     let (variables, inherited_auth) = state.database.with_read_connection(|connection| {
-        let variables = if include_values {
-            load_variable_context(connection, &request, environment_id.as_deref())?
-        } else {
-            VariableContext::nothing()
-        };
-        Ok((
-            variables,
-            auth::inherited_auth_for_request(connection, &request)?,
-        ))
+        request_context(connection, request, environment_id, purpose)
     })?;
-    to_curl(&request, inherited_auth, &variables)
+    to_curl(request, inherited_auth, &variables)
 }
 
 pub(super) fn to_curl(
@@ -241,6 +247,8 @@ fn encode(text: &str) -> String {
 mod tests {
     use super::*;
     use crate::commands::models::{BodyField, KeyValue, RequestBody};
+    use crate::fixtures::{self, TestApp};
+    use serde_json::json;
 
     fn row(key: &str, value: &str) -> KeyValue {
         KeyValue {
@@ -335,6 +343,47 @@ mod tests {
         assert_eq!(
             to_curl(&request, None, &VariableContext::nothing()).unwrap(),
             "curl 'https://api.test/<$guid>'"
+        );
+    }
+
+    #[test]
+    fn a_removed_repository_draft_can_only_be_copied_with_placeholders() {
+        let app = TestApp::new();
+        let (collection_id, request_id) = app.seed(|connection| {
+            let collection_id = fixtures::collection(connection);
+            let request_id = fixtures::request(connection, &collection_id, None).request_id;
+            let auth = json!({ "authType": "bearer", "token": "{{collectionToken}}" });
+            connection
+                .execute(
+                    "UPDATE collections SET auth_json = ? WHERE id = ?",
+                    rusqlite::params![auth.to_string(), collection_id],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO repository_links (collection_id, root, manifest_id)
+                     VALUES (?1, '/repository', ?1)",
+                    [&collection_id],
+                )
+                .unwrap();
+            connection
+                .execute("DELETE FROM requests WHERE id = ?", [&request_id])
+                .unwrap();
+            (collection_id, request_id)
+        });
+        let request = RequestDetail {
+            id: request_id,
+            collection_id,
+            url: "{{host}}/old".into(),
+            method: "GET".into(),
+            ..RequestDetail::default()
+        };
+
+        let result = render_curl(&request, None, true, &app.state);
+        assert!(matches!(result, Err(error) if error.to_string().contains("Recover the draft")));
+        assert_eq!(
+            render_curl(&request, None, false, &app.state).unwrap(),
+            "curl '<host>/old'"
         );
     }
 

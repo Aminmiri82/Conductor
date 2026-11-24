@@ -86,13 +86,9 @@ mod tests {
             .execute_batch(INITIAL_SCHEMA)
             .and_then(|()| {
                 connection.execute_batch(
-                    "DROP INDEX idx_collection_nodes_parent;
-                     CREATE INDEX idx_collection_nodes_parent
-                         ON collection_nodes(collection_id, parent_id, sort_order);
-                     DROP VIEW repository_default_values;
-                     DROP TABLE repository_default_hides;
-                     DROP TABLE repository_defaults;
-                     DROP TABLE repository_environments;
+                    "DROP TABLE repository_variables;
+                     DROP TABLE repository_pending_publishes;
+                     ALTER TABLE environments DROP COLUMN archived;
                      DROP TABLE repository_request_groups;
                      DROP TABLE repository_files;
                      DROP TABLE repository_links;
@@ -285,43 +281,17 @@ mod tests {
             .unwrap();
 
         run(&connection).unwrap();
-        connection
-            .execute(
-                "INSERT INTO repository_links (collection_id, root, manifest_id)
-                 VALUES ('col', '/repo', 'manifest')",
-                [],
-            )
-            .unwrap();
-        connection
-            .execute(
-                "INSERT INTO repository_request_groups (collection_id, path, folder_id, contents)
-                 VALUES ('col', 'requests.json', '', ?)",
-                [b"[]".as_slice()],
-            )
-            .unwrap();
-        connection
-            .execute(
-                "INSERT INTO repository_defaults (environment_id, key, value)
-                 VALUES ('env', 'host', 'shared')",
-                [],
-            )
-            .unwrap();
         run(&connection).unwrap();
 
-        let stored: (String, String, String, i64, String, Vec<u8>) = connection
+        let stored: (String, String, String, i64, bool) = connection
             .query_row(
                 "SELECT collections.name, requests.url, variables.current_value,
-                        variables.sensitive, repository_defaults.value,
-                        repository_request_groups.contents
-                 FROM repository_links
-                 JOIN repository_request_groups
-                    ON repository_request_groups.collection_id = repository_links.collection_id
-                 JOIN collections ON collections.id = repository_links.collection_id
+                        variables.sensitive, environments.archived
+                 FROM collections
                  JOIN collection_nodes ON collection_nodes.collection_id = collections.id
                  JOIN requests ON requests.id = collection_nodes.request_id
                  JOIN environments ON environments.collection_id = collections.id
-                 JOIN variables ON variables.environment_id = environments.id
-                 JOIN repository_defaults ON repository_defaults.environment_id = environments.id",
+                 JOIN variables ON variables.environment_id = environments.id",
                 [],
                 |row| {
                     Ok((
@@ -330,7 +300,6 @@ mod tests {
                         row.get(2)?,
                         row.get(3)?,
                         row.get(4)?,
-                        row.get(5)?,
                     ))
                 },
             )
@@ -342,8 +311,7 @@ mod tests {
                 "{{host}}".to_string(),
                 "private".to_string(),
                 1,
-                "shared".to_string(),
-                b"[]".to_vec(),
+                false,
             )
         );
     }

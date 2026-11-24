@@ -234,17 +234,17 @@ stored_enum! {
 #[serde(rename_all = "camelCase")]
 pub struct AuthConfig {
     pub auth_type: AuthType,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub add_to: Option<ApiKeyLocation>,
 }
 
@@ -306,6 +306,20 @@ pub struct VariableEntry {
     pub value: String,
     pub enabled: bool,
     pub sensitive: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<VariableOrigin>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_shared_value: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required_secret: Option<bool>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub enum VariableOrigin {
+    Shared,
+    Local,
+    MissingSecret,
 }
 
 /// What one editor changed in one target: keys to set and keys to remove.
@@ -316,7 +330,17 @@ pub struct VariableEntry {
 pub struct VariableChange {
     pub target: VariableTarget,
     pub upserts: Vec<VariableEntry>,
+    /// Previously displayed rows for field-level updates to existing local values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub baseline: Option<Vec<VariableEntry>>,
     pub deletes: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, specta::Type)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum SharedVariableChange {
+    Value { previous: String, value: String },
+    RequiredSecret,
 }
 
 #[derive(Debug, Serialize, specta::Type)]
@@ -374,6 +398,14 @@ pub struct CreateRequestInput {
 pub struct CreateRequestResult {
     pub request_id: String,
     pub node_id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateFolderResult {
+    pub node_id: String,
+    pub name: String,
 }
 
 #[derive(Debug, Deserialize, specta::Type)]

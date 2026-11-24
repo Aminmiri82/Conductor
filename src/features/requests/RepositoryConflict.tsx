@@ -3,13 +3,8 @@ import { Button } from "@/components/ui/button";
 import { resolveRepositoryConflict } from "@/features/workspace/repositoryWorkspace";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 
-export function RepositoryConflict({ requestId }: { requestId: string }) {
-  const conflict = useWorkspaceStore(
-    (state) => state.tabs.find((tab) => tab.requestId === requestId)?.conflict,
-  );
+export default function RepositoryConflict({ removed }: { removed: boolean }) {
   const saving = useWorkspaceStore((state) => state.saving);
-  if (!conflict) return null;
-  const removed = conflict.revision === null;
   return (
     <div
       role="status"

@@ -40,18 +40,8 @@ export const api = {
   renameCollection: commands.renameCollection,
   getCollectionProfile: commands.getCollectionProfile,
   getRequest: commands.getRequest,
-  createRequest: (
-    collectionId: string,
-    parentId: string | null,
-    position: number,
-    name: string,
-  ) => commands.createRequest({ collectionId, parentId, position, name }),
-  createFolder: (
-    collectionId: string,
-    parentId: string | null,
-    position: number,
-    name: string,
-  ) => commands.createFolder({ collectionId, parentId, position, name }),
+  createRequest: commands.createRequest,
+  createFolder: commands.createFolder,
   duplicateRequest: (requestId: string) =>
     commands.duplicateRequest({ requestId }),
   deleteNode: commands.deleteNode,
@@ -77,6 +67,8 @@ export const api = {
   ) => commands.requestAsCurl(request, environmentId, includeValues),
   sendRequest: (request: RequestDetail, environmentId: string | null) =>
     commands.sendRequest({ request, environmentId }),
+  getSharedVariable: commands.getSharedVariable,
+  saveSharedVariable: commands.saveSharedVariable,
   listVariables: commands.listVariables,
   applyVariableChanges: commands.applyVariableChanges,
 };

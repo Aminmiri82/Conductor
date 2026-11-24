@@ -37,11 +37,7 @@ const ResponseViewer = lazy(() =>
   })),
 );
 
-const RepositoryConflict = lazy(() =>
-  import("./RepositoryConflict").then((module) => ({
-    default: module.RepositoryConflict,
-  })),
-);
+const RepositoryConflict = lazy(() => import("./RepositoryConflict"));
 
 // Split into sections that each select only the draft fields they render,
 // so a keystroke in one field does not re-render the rest of the workspace.
@@ -50,10 +46,9 @@ export function RequestWorkspace() {
   const hasDraft = useDraftStore((state) =>
     activeRequestId ? state.drafts.has(activeRequestId) : false,
   );
-  const hasConflict = useWorkspaceStore((state) =>
-    Boolean(
+  const conflict = useWorkspaceStore(
+    (state) =>
       state.tabs.find((tab) => tab.requestId === activeRequestId)?.conflict,
-    ),
   );
 
   if (!activeRequestId || !hasDraft) {
@@ -62,8 +57,7 @@ export function RequestWorkspace() {
         <div className="max-w-sm text-center">
           <div className="text-sm font-medium">No request selected</div>
           <div className="mt-2 text-xs leading-5 text-[var(--app-dim)]">
-            Create or import a collection, then choose a request from the
-            sidebar.
+            Choose a request from the collection sidebar.
           </div>
         </div>
       </section>
@@ -74,9 +68,9 @@ export function RequestWorkspace() {
     <section className="flex h-full min-h-0 flex-col bg-[var(--app-bg)]">
       <RequestTabsBar />
       <UrlBarSection requestId={activeRequestId} />
-      {hasConflict ? (
+      {conflict ? (
         <Suspense>
-          <RepositoryConflict requestId={activeRequestId} />
+          <RepositoryConflict removed={conflict.revision === null} />
         </Suspense>
       ) : null}
       <ResizablePanelGroup orientation="vertical" className="min-h-0 flex-1">
@@ -138,6 +132,7 @@ function UrlBarSection({ requestId }: { requestId: string }) {
         sending={sending}
         saving={saving}
         saveBlocked={Boolean(tab?.conflict)}
+        requestRemoved={tab?.conflict?.revision === null}
         dirty={tab?.dirty ?? false}
         unresolvedKeys={unresolved}
         variableValues={variableValues}
@@ -302,7 +297,6 @@ function VariablesSection({ requestId }: { requestId: string }) {
   return collectionId !== undefined ? (
     <VariableEditor
       key={requestId}
-      requestId={requestId}
       collectionId={collectionId}
       variableNames={variableNames}
       linked={Boolean(linked)}

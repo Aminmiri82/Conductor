@@ -50,6 +50,7 @@ export function RequestUrlBar({
   sending,
   saving,
   saveBlocked,
+  requestRemoved,
   dirty,
   unresolvedKeys,
   variableValues,
@@ -62,6 +63,7 @@ export function RequestUrlBar({
   sending: boolean;
   saving: boolean;
   saveBlocked: boolean;
+  requestRemoved: boolean;
   dirty: boolean;
   unresolvedKeys: string[];
   variableValues: VariableValues;
@@ -125,7 +127,7 @@ export function RequestUrlBar({
         <Button
           className="h-8 gap-1.5 bg-[var(--app-accent)] px-3 text-xs font-bold uppercase tracking-[0.04em] text-[var(--app-accent-fg)] hover:bg-[var(--app-accent)]/90"
           onClick={onSend}
-          disabled={sending}
+          disabled={sending || requestRemoved}
           style={{
             borderRadius: "var(--app-radius) 0 0 var(--app-radius)",
           }}
@@ -133,7 +135,10 @@ export function RequestUrlBar({
           <SendHorizontal className="size-3.5" />
           {sending ? "Sending" : "Send"}
         </Button>
-        <SendMenu onCopyCurl={onCopyCurl} />
+        <SendMenu
+          onCopyCurl={onCopyCurl}
+          requestRemoved={requestRemoved}
+        />
       </div>
     </div>
   );
@@ -141,8 +146,10 @@ export function RequestUrlBar({
 
 function SendMenu({
   onCopyCurl,
+  requestRemoved,
 }: {
   onCopyCurl: (includeValues: boolean) => Promise<boolean>;
+  requestRemoved: boolean;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -152,8 +159,10 @@ function SendMenu({
     return () => clearTimeout(timer);
   }, [copied]);
 
-  const copy = (includeValues: boolean) =>
+  const copy = (includeValues: boolean) => {
+    if (requestRemoved && includeValues) return;
     void onCopyCurl(includeValues).then(setCopied);
+  };
 
   return (
     <DropdownMenu>
@@ -185,6 +194,7 @@ function SendMenu({
         </DropdownMenuItem>
         <DropdownMenuItem
           className="flex-col items-start gap-0"
+          disabled={requestRemoved}
           onSelect={() => copy(true)}
         >
           Copy as cURL with values

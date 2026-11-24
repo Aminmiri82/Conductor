@@ -54,12 +54,15 @@ pub(super) fn resolve_request_with_context(
     let (mut url, lookups) = resolve_text(&request.url, variables);
     // With query rows, the send rebuilds the query from them and drops the
     // URL's own, which can still list disabled params.
-    match request.url.split_once('?') {
-        Some((path, _)) if !request.query.is_empty() => {
-            references.add(resolve_text(path, variables).1);
+    let url_lookups = if request.query.is_empty() {
+        lookups
+    } else {
+        match url_before_query(&request.url) {
+            Some(path) => resolve_text(path, variables).1,
+            None => lookups,
         }
-        _ => references.add(lookups),
-    }
+    };
+    references.add(url_lookups);
     apply_path_params(&mut url, &request.path_params, variables, &mut references);
 
     // Each kind skips the blank keys the send skips.
@@ -98,6 +101,19 @@ pub(super) fn resolve_request_with_context(
         variable_values: references.values,
     }
 }
+fn url_before_query(url: &str) -> Option<&str> {
+    let mut offset = 0;
+    while let Some((literal, template)) = url[offset..].split_once("{{") {
+        if let Some(query) = literal.find('?') {
+            return Some(&url[..offset + query]);
+        }
+        let Some((_, remaining)) = template.split_once("}}") else {
+            break;
+        };
+        offset = url.len() - remaining.len();
+    }
+    url[offset..].find('?').map(|query| &url[..offset + query])
+}
 fn resolve_rows(
     rows: &[KeyValue],
     is_blank_key: impl Fn(&str) -> bool,
@@ -126,39 +142,42 @@ fn apply_path_params(
 ) {
     for param in path_params.iter().filter(|param| param.enabled) {
         let key = param.key.trim();
-        if key.is_empty() {
+        if key.is_empty() || param.value.is_empty() {
             continue;
         }
 
         let (value, lookups) = resolve_text(&param.value, variables);
-        references.add(lookups);
-        if value.is_empty() {
-            continue;
+        if let Some(replaced) = replace_path_param(url, key, &value) {
+            references.add(lookups);
+            if !value.is_empty() {
+                *url = replaced;
+            }
         }
-
-        *url = replace_path_param(url, key, &value);
     }
 }
-fn replace_path_param(url: &str, key: &str, value: &str) -> String {
+fn replace_path_param(url: &str, key: &str, value: &str) -> Option<String> {
     let needle = format!(":{key}");
-    let mut out = String::with_capacity(url.len() + value.len());
-    let mut rest = url;
+    let mut out = None;
+    let mut copied = 0;
 
-    while let Some(index) = rest.find(&needle) {
-        let before = &rest[..index];
-        let after = &rest[index + needle.len()..];
-        out.push_str(before);
-
-        let boundary = after
+    for (index, matched) in url.match_indices(&needle) {
+        let end = index + matched.len();
+        if url[end..]
             .chars()
             .next()
-            .is_none_or(|ch| matches!(ch, '/' | '?' | '#' | '&'));
-        out.push_str(if boundary { value } else { &needle });
-        rest = after;
+            .is_none_or(|ch| matches!(ch, '/' | '?' | '#' | '&'))
+        {
+            let out = out.get_or_insert_with(|| String::with_capacity(url.len() + value.len()));
+            out.push_str(&url[copied..index]);
+            out.push_str(value);
+            copied = end;
+        }
     }
 
-    out.push_str(rest);
-    out
+    out.map(|mut out| {
+        out.push_str(&url[copied..]);
+        out
+    })
 }
 fn resolve_body(
     body: &RequestBody,
@@ -337,6 +356,50 @@ mod tests {
     }
 
     #[test]
+    fn a_question_mark_in_a_url_variable_name_does_not_hide_its_private_dependency() {
+        let request = RequestDetail {
+            url: "https://api.test/{{token?name}}?debug={{hidden}}".into(),
+            query: vec![row("debug", "{{hidden}}", false)],
+            ..RequestDetail::default()
+        };
+        let variables = VariableContext::with_values(&[("token?name", "private-path", true)]);
+
+        let resolved = resolve_request_with_context(&request, None, &variables);
+
+        assert_eq!(
+            resolved.url,
+            "https://api.test/private-path?debug={{hidden}}"
+        );
+        assert_eq!(
+            resolved.variable_values,
+            BTreeMap::from([("token?name".into(), None)])
+        );
+        assert!(resolved.unresolved_variables.is_empty());
+    }
+
+    #[test]
+    fn path_parameters_count_only_when_their_placeholders_match() {
+        let request = RequestDetail {
+            url: "https://api.test/:accountId/:active/:active".into(),
+            path_params: vec![
+                row("account", "{{unused}}", true),
+                row("active", "{{used}}", true),
+            ],
+            ..RequestDetail::default()
+        };
+        let variables = VariableContext::with_values(&[("used", "record", false)]);
+
+        let resolved = resolve_request_with_context(&request, None, &variables);
+
+        assert_eq!(resolved.url, "https://api.test/:accountId/record/record");
+        assert_eq!(
+            resolved.variable_values,
+            BTreeMap::from([("used".into(), Some("record".into()))])
+        );
+        assert!(resolved.unresolved_variables.is_empty());
+    }
+
+    #[test]
     fn form_data_fields_count_only_the_parts_a_send_uses() {
         let field =
             |key: &str, field_type, value: &str, file_path: &str, content_type: &str| BodyField {
@@ -414,5 +477,27 @@ mod tests {
         };
 
         assert_eq!(unresolved_keys(&request), ["host", "version", "trace"]);
+    }
+
+    #[test]
+    fn preview_includes_missing_credentials_from_the_auth_the_request_inherits() {
+        let inherited_auth = serde_json::from_value(serde_json::json!({
+            "authType": "bearer",
+            "token": "{{folderToken}}"
+        }))
+        .unwrap();
+        let mut request = RequestDetail::default();
+        let variables = VariableContext::default();
+
+        let inherited = resolve_request_with_context(&request, Some(inherited_auth), &variables);
+        assert_eq!(inherited.unresolved_variables, ["folderToken"]);
+        assert_eq!(
+            inherited.inherited_auth.as_ref().unwrap().token.as_deref(),
+            Some("{{folderToken}}")
+        );
+
+        request.auth = serde_json::from_value(serde_json::json!({ "authType": "noauth" })).unwrap();
+        let explicit = resolve_request_with_context(&request, inherited.inherited_auth, &variables);
+        assert!(explicit.unresolved_variables.is_empty());
     }
 }

@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/select";
 import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
 
-export function RepositoryCreateDialog({
+export default function RepositoryCreateDialog({
   root,
   onClose,
 }: {
@@ -94,8 +94,9 @@ export function RepositoryCreateDialog({
           </Select>
           {source !== "empty" ? (
             <p className="text-xs text-[var(--app-dim)]">
-              Request definitions will be shared. Variable values stay local.
-              Check URLs, headers and bodies for credentials before sharing.
+              Request definitions and enabled non-secret defaults will be
+              shared. Private values go in .conductor/local.json. Review
+              requests and variables for credentials before sharing.
             </p>
           ) : null}
           {error ? (

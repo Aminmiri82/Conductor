@@ -6,7 +6,9 @@ use tauri::State;
 
 use crate::commands::{
     error::CommandError,
-    models::{CollectionNode, CollectionNodeKind, CreateFolderInput, MoveNodeInput},
+    models::{
+        CollectionNode, CollectionNodeKind, CreateFolderInput, CreateFolderResult, MoveNodeInput,
+    },
 };
 use crate::storage::{insert_node, NewNode, NodeKind, StorageError};
 use crate::AppState;
@@ -121,14 +123,26 @@ fn build_tree_from_map(
 #[tauri::command(async)]
 #[specta::specta]
 pub fn create_folder(
-    input: CreateFolderInput,
+    collection_id: String,
+    parent_id: Option<String>,
+    position: i64,
     state: State<'_, AppState>,
-) -> Result<String, CommandError> {
-    Ok(state.database.with_connection(|connection| {
+) -> Result<CreateFolderResult, CommandError> {
+    let input = CreateFolderInput {
+        collection_id,
+        parent_id,
+        position,
+        name: repository::NEW_FOLDER.into(),
+    };
+    let node_id = state.database.with_connection(|connection| {
         repository::mutate(connection, &input.collection_id, |connection| {
             add_folder(connection, &input)
         })
-    })?)
+    })?;
+    Ok(CreateFolderResult {
+        node_id,
+        name: input.name,
+    })
 }
 
 pub(crate) fn add_folder(
@@ -318,9 +332,17 @@ pub(crate) fn sort_order_after(
     collection_id: &str,
     parent_id: Option<&str>,
     after_sort_order: i64,
+    after_node_id: &str,
 ) -> Result<i64, StorageError> {
-    let position =
-        sibling_count_through_sort_order(tx, collection_id, parent_id, after_sort_order)?;
+    let position = tx.query_row(
+        "SELECT COUNT(*)
+         FROM collection_nodes
+         WHERE collection_id = ?
+           AND parent_id IS ?
+           AND (sort_order, id) <= (?, ?)",
+        params![collection_id, parent_id, after_sort_order, after_node_id],
+        |row| row.get(0),
+    )?;
     sort_order_for_position(tx, collection_id, parent_id, position, None)
 }
 
@@ -358,24 +380,6 @@ fn sibling_sort_orders(
     )?;
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(StorageError::from)
-}
-
-fn sibling_count_through_sort_order(
-    tx: &Connection,
-    collection_id: &str,
-    parent_id: Option<&str>,
-    sort_order: i64,
-) -> Result<i64, StorageError> {
-    tx.query_row(
-        "SELECT COUNT(*)
-         FROM collection_nodes
-         WHERE collection_id = ?
-           AND parent_id IS ?
-           AND sort_order <= ?",
-        params![collection_id, parent_id, sort_order],
-        |row| row.get(0),
-    )
-    .map_err(StorageError::from)
 }
 
 fn rebalance_siblings(

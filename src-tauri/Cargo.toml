@@ -29,7 +29,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 bytes = "1"
-serde_json = { version = "1", features = ["preserve_order"] }
+serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
 tokio = { version = "1.52.2", features = ["fs"] }
 tokio-util = { version = "0.7.17", features = ["io"] }
 thiserror = "2.0.18"

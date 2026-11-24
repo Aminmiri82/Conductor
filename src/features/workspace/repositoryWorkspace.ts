@@ -5,6 +5,7 @@ import { getDraft, useDraftStore } from "./draftStore";
 import { reconcileRepositoryTabs } from "./repositoryTabs";
 import { useResponseStore } from "./responseStore";
 import {
+  activeEnvironmentIdFor,
   closeRequestTab,
   normalizeRequestParams,
   saveDraft,
@@ -18,6 +19,8 @@ export async function applyRepositoryRefresh({
   collections,
   changedRequests,
   changedCollectionIds,
+  changedEnvironmentIds,
+  changedVariableCollectionIds,
 }: RepositoryRefresh) {
   const initial = useWorkspaceStore.getState();
   if (
@@ -34,31 +37,61 @@ export async function applyRepositoryRefresh({
   ) {
     useWorkspaceStore.setState({ collections });
   }
-  if (!changedCollectionIds.length && !changedRequests.length) return;
   const collectionId = initial.activeCollectionId;
-  const activeCollectionChanged =
-    collectionId && changedCollectionIds.includes(collectionId);
-  const [tree] = await Promise.all([
-    activeCollectionChanged ? api.getCollectionTree(collectionId) : undefined,
-    changedCollectionIds.length ? initial.loadEnvironments() : undefined,
+  const environmentId = collectionId && activeEnvironmentIdFor(collectionId);
+  if (changedEnvironmentIds.length) await initial.loadEnvironments();
+  const variableChanges = new Set([
+    ...changedCollectionIds,
+    ...changedVariableCollectionIds,
   ]);
-  const current = useWorkspaceStore.getState();
+  if (variableChanges.size) {
+    useWorkspaceStore.setState((state) => {
+      const versions = new Map(state.repositoryCollectionVersions);
+      for (const id of variableChanges) {
+        versions.set(id, (versions.get(id) ?? 0) + 1);
+      }
+      return { repositoryCollectionVersions: versions };
+    });
+  }
+  if (!collectionId) return;
+  const treeChanged = changedCollectionIds.includes(collectionId);
+  const selectedEnvironmentChanged =
+    environmentId !== activeEnvironmentIdFor(collectionId);
+  if (variableChanges.has(collectionId)) {
+    useDraftStore.getState().clearCollectionPreviews(collectionId);
+  }
+  if (!treeChanged) {
+    if (
+      selectedEnvironmentChanged ||
+      variableChanges.has(collectionId) ||
+      (environmentId && changedEnvironmentIds.includes(environmentId))
+    )
+      await useWorkspaceStore.getState().resolveActiveRequest();
+    return;
+  }
+
+  let current = useWorkspaceStore.getState();
+  let tree;
+  while (current.activeCollectionId === collectionId) {
+    const previous = current.tree;
+    tree = await api.getCollectionTree(collectionId);
+    current = useWorkspaceStore.getState();
+    // Retry if a local edit made the tree read stale while it was in flight.
+    if (current.tree === previous) break;
+  }
   if (current.activeCollectionId !== collectionId) return;
 
-  const { tabs, invalidate } = reconcileRepositoryTabs(
+  const { tabs, invalidate, closed } = reconcileRepositoryTabs(
     current.tabs,
     changedRequests,
     (requestId) => getDraft(requestId)?.repositoryRevision,
+    tree,
   );
   useDraftStore.getState().removeMany(invalidate);
-  useResponseStore
-    .getState()
-    .removeMany(
-      invalidate.filter((id) => !tabs.some((tab) => tab.requestId === id)),
-    );
+  useResponseStore.getState().removeMany(closed);
   useWorkspaceStore.setState({
     tabs,
-    ...(tree && current.tree === initial.tree ? { tree } : {}),
+    ...(tree ? { tree } : {}),
   });
   const active = current.activeRequestId;
   if (!active) return;
@@ -67,19 +100,23 @@ export async function applyRepositoryRefresh({
     const next = activeTab ?? tabs[0];
     if (next) await current.selectRequest(next.requestId);
     else useWorkspaceStore.setState({ activeRequestId: undefined });
-  } else if (
-    activeCollectionChanged &&
-    activeTab?.conflict?.revision !== null
-  ) {
+  } else {
     await current.resolveActiveRequest();
   }
 }
 
-export async function applySaveConflict(
+export async function applyUnsuccessfulSave(
   requestId: string,
-  result: Extract<SaveRequestResult, { status: "conflict" }>,
+  result: Exclude<SaveRequestResult, { status: "saved" }>,
 ) {
   if (result.refresh) await applyRepositoryRefresh(result.refresh);
+  if (result.status === "failed") {
+    const state = useWorkspaceStore.getState();
+    if (state.activeRequestId === requestId) state.setError(result.message);
+    return;
+  }
+  if (result.revision === null)
+    useDraftStore.getState().clearPreview(requestId);
   useWorkspaceStore.setState((state) => ({
     tabs: state.tabs.map((tab) =>
       tab.requestId === requestId

@@ -100,9 +100,7 @@ fn read_collection_stats(connection: &Connection) -> Result<Vec<CollectionStats>
                 (SELECT COUNT(*) FROM collection_nodes
                  WHERE collection_id = collections.id AND kind = 'folder'),
                 (SELECT COUNT(*) FROM environments
-                 WHERE collection_id = collections.id AND NOT EXISTS (
-                     SELECT 1 FROM repository_environments re WHERE re.environment_id = environments.id AND re.active = 0
-                ))
+                 WHERE collection_id = collections.id AND archived = 0)
          FROM collections ORDER BY updated_at DESC",
     )?;
     let rows = statement.query_map([], |row| {
@@ -128,11 +126,6 @@ pub fn delete_collection(
     state: State<'_, AppState>,
 ) -> Result<Vec<CollectionSummary>, CommandError> {
     Ok(state.database.with_connection(|connection| {
-        if repository::linked(connection, &collection_id)? {
-            return Err(StorageError::InvalidInput(
-                "Repository collections keep local values. Use Relink to update the folder.".into(),
-            ));
-        }
         remove_collection(connection, &collection_id)?;
         read_collections(connection)
     })?)

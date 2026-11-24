@@ -56,11 +56,12 @@ import {
   normalizeVariables,
 } from "@/features/variables/variableChanges";
 import { useSaveVariables } from "@/features/variables/useSaveVariables";
-import { useWorkspaceStore } from "@/features/workspace/workspaceStore";
+import { SharedVariableDialog } from "@/features/variables/SharedVariableDialog";
+import { VariableOrigin } from "@/features/variables/VariableOrigin";
 import {
-  activeEnvironmentIdFor,
-  useWorkspaceUiStore,
-} from "@/features/workspace/workspaceUiStore";
+  useActiveEnvironment,
+  useWorkspaceStore,
+} from "@/features/workspace/workspaceStore";
 import {
   drawerAction,
   EditableTitle,
@@ -70,6 +71,7 @@ import {
 } from "./SettingsParts";
 
 const columns = "grid-cols-[minmax(0,.8fr)_minmax(0,1.4fr)_108px]";
+const linkedColumns = "grid-cols-[minmax(0,.8fr)_minmax(0,1.4fr)_164px]";
 
 // Row actions stay out of the way until the row is hovered or focused.
 const onRowHover =
@@ -88,6 +90,7 @@ const outlineButton =
  */
 type Session = {
   target: VariableTarget;
+  repositoryBacked: boolean;
   saved: VariableEntry[];
   rows: VariableEntry[];
 };
@@ -118,10 +121,7 @@ export function VariablesPane({
     (collection) => collection.id === selectedCollectionId,
   );
   const linked = Boolean(selectedCollection?.repository);
-  const repositoryEnvironments = linked ? allEnvironments : undefined;
-  const activeEnvironmentId = useWorkspaceUiStore((state) =>
-    activeEnvironmentIdFor(state.workspaceUi, selectedCollectionId),
-  );
+  const activeEnvironmentId = useActiveEnvironment(selectedCollectionId)?.id;
   const environments = allEnvironments.filter(
     (environment) => environment.collectionId === selectedCollectionId,
   );
@@ -138,9 +138,19 @@ export function VariablesPane({
     ) ??
     environments[0];
   const selectedEnvironmentId = selectedEnvironment?.id ?? "";
+  const repositoryBacked = linked && scope !== "global";
+  const repositoryVersion = useWorkspaceStore((state) =>
+    repositoryBacked
+      ? state.repositoryCollectionVersions.get(selectedCollectionId)
+      : undefined,
+  );
   const [variables, setVariables] = useState<VariableEntry[]>([]);
   const [status, setStatus] = useState<SaveStatus>("idle");
-  const { save: saveVariables } = useSaveVariables();
+  const { save: saveVariables, error: saveError } = useSaveVariables();
+  const [sharedEdit, setSharedEdit] = useState<{
+    target: VariableTarget;
+    key?: string;
+  }>();
   const session = useRef<Session | null>(null);
   // The row whose key field takes focus after the next render: a row just
   // added or duplicated, or the one that takes a deleted row's place.
@@ -155,14 +165,32 @@ export function VariablesPane({
     // Rust rejects a table with a key twice; the rows show the clash and the
     // save waits until it is resolved.
     if (duplicateKeys(current.rows).size) return;
-    const changes = diffVariables(current.saved, current.rows);
+    const rows = current.rows;
+    const changes = diffVariables(current.saved, rows);
     if (!changes.upserts.length && !changes.deletes.length) return;
-    const sent = normalizeVariables(current.rows);
+    const sent = normalizeVariables(rows);
     const isShown = () => session.current === current;
     if (isShown()) setStatus("saving");
-    const saved = await saveVariables([{ target: current.target, ...changes }]);
+    const updatedKeys = new Set(changes.upserts.map((row) => row.key));
+    const baseline = current.repositoryBacked
+      ? current.saved.filter((row) => updatedKeys.has(row.key))
+      : undefined;
+    const saved = await saveVariables([
+      { target: current.target, ...changes, baseline },
+    ]);
     if (saved) current.saved = sent;
     if (isShown()) setStatus(saved ? "saved" : "failed");
+    if (!saved || !current.repositoryBacked || !isShown()) return;
+    try {
+      const loaded = await api.listVariables(current.target);
+      if (!isShown() || current.rows !== rows) return;
+      current.saved = loaded;
+      current.rows = [...loaded, ...rows.filter((row) => !row.key.trim())];
+      setVariables(current.rows);
+      setRevealed({});
+    } catch (error) {
+      if (isShown()) useWorkspaceStore.getState().setError(error);
+    }
   }
 
   const [autosaver] = useState(() =>
@@ -193,7 +221,8 @@ export function VariablesPane({
     session.current = null;
     setStatus("idle");
     const show = (rows: VariableEntry[]) => {
-      if (target) session.current = { target, saved: rows, rows };
+      if (target)
+        session.current = { target, repositoryBacked, saved: rows, rows };
       setVariables(rows);
       setRevealed({});
     };
@@ -220,10 +249,10 @@ export function VariablesPane({
     };
     // persist only reads refs and stable setters.
     // oxlint-disable-next-line react/exhaustive-deps
-  }, [target, autosaver]);
+  }, [target, autosaver, repositoryBacked]);
 
   useEffect(() => {
-    if (!repositoryEnvironments || target?.scope !== "environment") return;
+    if (repositoryVersion === undefined) return;
     const current = session.current;
     if (!current || current.target !== target) return;
     let mounted = true;
@@ -247,7 +276,7 @@ export function VariablesPane({
     return () => {
       mounted = false;
     };
-  }, [autosaver, repositoryEnvironments, target]);
+  }, [autosaver, repositoryVersion, target]);
 
   function edit(rows: VariableEntry[], when: "typing" | "now") {
     setVariables(rows);
@@ -289,6 +318,13 @@ export function VariablesPane({
 
   function removeVariable(index: number, refocus = false) {
     const rows = session.current?.rows ?? variables;
+    const row = rows[index];
+    if (
+      !row ||
+      row.origin === "shared" ||
+      (row.origin === "missingSecret" && !row.value)
+    )
+      return;
     if (refocus && rows.length > 1) {
       focusRow.current = Math.min(index, rows.length - 2);
     }
@@ -307,7 +343,16 @@ export function VariablesPane({
     if (!copy) return;
     focusRow.current = index + 1;
     edit(
-      [...rows.slice(0, index + 1), { ...copy }, ...rows.slice(index + 1)],
+      [
+        ...rows.slice(0, index + 1),
+        {
+          key: copy.key,
+          value: copy.value,
+          enabled: copy.enabled,
+          sensitive: copy.sensitive,
+        },
+        ...rows.slice(index + 1),
+      ],
       "typing",
     );
     shiftRevealed(index + 1, 1);
@@ -526,10 +571,13 @@ export function VariablesPane({
         {variables.map((variable, index) => {
           const duplicate = duplicates.has(variable.key.trim());
           const masked = variable.sensitive && !revealed[index];
+          const missingSecret = variable.origin === "missingSecret";
+          const shared = variable.origin === "shared";
+          const unfilled = missingSecret && !variable.value;
           return (
             <Row
               key={index}
-              columns={columns}
+              columns={repositoryBacked ? linkedColumns : columns}
               className="group relative hover:bg-[var(--app-panel-2)]"
             >
               <CellInput
@@ -541,26 +589,51 @@ export function VariablesPane({
                 value={variable.key}
                 placeholder="Key"
                 title={duplicate ? "This key is used twice" : undefined}
+                readOnly={Boolean(
+                  shared || variable.hasSharedValue || variable.requiredSecret,
+                )}
                 onChange={(event) =>
                   updateVariable(index, { key: event.target.value }, "typing")
                 }
               />
-              <CellInput
-                data-variable-index={index}
-                className={cn(
-                  !variable.enabled && "text-[var(--app-dim)] line-through",
-                )}
-                type={masked ? "password" : "text"}
-                value={variable.value}
-                placeholder={
-                  linked && scope !== "global" ? "Local value" : "Value"
-                }
-                onChange={(event) =>
-                  updateVariable(index, { value: event.target.value }, "typing")
-                }
-              />
+              <div className="min-w-0">
+                <CellInput
+                  data-variable-index={index}
+                  className={cn(
+                    !variable.enabled && "text-[var(--app-dim)] line-through",
+                    variable.origin && "h-6",
+                  )}
+                  type={masked ? "password" : "text"}
+                  value={variable.value}
+                  aria-label={
+                    variable.key ? `Value for ${variable.key}` : "Value"
+                  }
+                  placeholder={
+                    missingSecret
+                      ? "Enter required secret"
+                      : repositoryBacked
+                        ? "Local value"
+                        : "Value"
+                  }
+                  onChange={(event) =>
+                    updateVariable(
+                      index,
+                      {
+                        value: event.target.value,
+                        enabled: missingSecret || variable.enabled,
+                      },
+                      "typing",
+                    )
+                  }
+                />
+                {variable.origin ? (
+                  <div className="-mt-1 px-3 pb-1 leading-none">
+                    <VariableOrigin origin={variable.origin} />
+                  </div>
+                ) : null}
+              </div>
               <div className="flex items-center justify-end gap-0.5 pr-1">
-                {variable.sensitive ? (
+                {variable.sensitive && !unfilled ? (
                   <RowAction
                     className={onRowHover}
                     onClick={() =>
@@ -574,54 +647,86 @@ export function VariablesPane({
                     {revealed[index] ? <EyeOff /> : <Eye />}
                   </RowAction>
                 ) : null}
-                <RowAction
-                  className={cn(
-                    variable.sensitive
-                      ? "text-[var(--app-accent)] hover:text-[var(--app-accent)]"
-                      : onRowHover,
-                    variable.sensitive && !variable.enabled && "opacity-50",
-                  )}
-                  onClick={() =>
-                    updateVariable(
-                      index,
-                      { sensitive: !variable.sensitive },
-                      "now",
-                    )
-                  }
-                  title={
-                    variable.sensitive
-                      ? "Secret. Click to unmark"
-                      : "Mark as secret"
-                  }
-                >
-                  {variable.sensitive ? <Lock /> : <LockOpen />}
-                </RowAction>
-                <RowAction
-                  // A disabled row keeps it in sight: imports can bring
-                  // disabled rows, and this is the way back.
-                  className={
-                    variable.enabled
-                      ? onRowHover
-                      : "text-[var(--app-accent)] hover:text-[var(--app-accent)]"
-                  }
-                  onClick={() =>
-                    updateVariable(index, { enabled: !variable.enabled }, "now")
-                  }
-                  title={
-                    variable.enabled
-                      ? "Disable variable"
-                      : "Disabled. Click to enable"
-                  }
-                >
-                  <Power />
-                </RowAction>
-                <RowAction
-                  className={cn(onRowHover, "hover:text-destructive")}
-                  onClick={() => removeVariable(index)}
-                  title="Remove variable (⌘⌫)"
-                >
-                  <Trash2 />
-                </RowAction>
+                {variable.requiredSecret ? null : (
+                  <RowAction
+                    className={cn(
+                      variable.sensitive
+                        ? "text-[var(--app-accent)] hover:text-[var(--app-accent)]"
+                        : onRowHover,
+                      variable.sensitive && !variable.enabled && "opacity-50",
+                    )}
+                    onClick={() =>
+                      updateVariable(
+                        index,
+                        { sensitive: !variable.sensitive },
+                        "now",
+                      )
+                    }
+                    title={
+                      variable.sensitive
+                        ? "Secret. Click to unmark"
+                        : "Mark as secret"
+                    }
+                  >
+                    {variable.sensitive ? <Lock /> : <LockOpen />}
+                  </RowAction>
+                )}
+                {unfilled ? null : (
+                  <RowAction
+                    className={
+                      variable.enabled
+                        ? onRowHover
+                        : "text-[var(--app-accent)] hover:text-[var(--app-accent)]"
+                    }
+                    onClick={() =>
+                      updateVariable(
+                        index,
+                        { enabled: !variable.enabled },
+                        "now",
+                      )
+                    }
+                    title={
+                      variable.enabled
+                        ? "Disable variable"
+                        : "Disabled. Click to enable"
+                    }
+                  >
+                    <Power />
+                  </RowAction>
+                )}
+                {repositoryBacked &&
+                variable.hasSharedValue &&
+                !variable.requiredSecret ? (
+                  <RowAction
+                    className={onRowHover}
+                    onClick={() => setSharedEdit({ target, key: variable.key })}
+                    title="Edit shared value"
+                  >
+                    <Pencil />
+                  </RowAction>
+                ) : null}
+                {variable.hasSharedValue && variable.origin === "local" ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 gap-1 px-1 text-[11px] text-[var(--app-dim)]"
+                    onClick={() => removeVariable(index)}
+                  >
+                    Use shared value
+                  </Button>
+                ) : !shared && !unfilled ? (
+                  <RowAction
+                    className={cn(onRowHover, "hover:text-destructive")}
+                    onClick={() => removeVariable(index)}
+                    title={
+                      variable.origin
+                        ? "Remove local value (⌘⌫)"
+                        : "Remove variable (⌘⌫)"
+                    }
+                  >
+                    <Trash2 />
+                  </RowAction>
+                ) : null}
               </div>
             </Row>
           );
@@ -684,12 +789,33 @@ export function VariablesPane({
           />
         </div>
       </div>
-      {scope !== "global" && linked ? (
-        <p className="mb-3 text-xs text-[var(--app-dim)]">
-          {scope === "environment"
-            ? "Environment names are shared. Values edited here stay on this device and override the defaults in .conductor."
-            : "Collection variable values stay on this device."}
+      {status === "failed" && saveError ? (
+        <p role="alert" className="mb-3 text-xs text-destructive">
+          {saveError}
         </p>
+      ) : null}
+      {repositoryBacked && target ? (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <p className="text-xs text-[var(--app-dim)]">
+            Table edits are saved in .conductor/local.json.
+          </p>
+          <Button
+            variant="ghost"
+            className={outlineButton}
+            onClick={() => setSharedEdit({ target })}
+          >
+            <Lock className="size-3.5" />
+            Declare required secret
+          </Button>
+        </div>
+      ) : null}
+      {sharedEdit ? (
+        <SharedVariableDialog
+          target={sharedEdit.target}
+          variableKey={sharedEdit.key}
+          prepare={autosaver.flush}
+          onClose={() => setSharedEdit(undefined)}
+        />
       ) : null}
       {scope === "global" ? (
         <>
